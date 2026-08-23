@@ -44,7 +44,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatINR } from '@/lib/constants';
-import { formatWhatsAppMessage, getWhatsAppShareUrl } from '@/lib/whatsapp';
+import { sharePdfToWhatsApp } from '@/lib/whatsapp';
 
 export type Seat = {
   id: string;
@@ -336,24 +336,23 @@ export function GuestsClient({
           handleDownloadPdf(targetSeatIds[0], res.passCode);
         }
 
-        // Handle WhatsApp Share
+        // Handle WhatsApp Share with PDF
         if (action === 'share_whatsapp') {
           const selectedSeatObjects = availableSeats.filter(s => targetSeatIds.includes(s.id));
           const rows = Array.from(new Set(selectedSeatObjects.map(s => s.row_label)));
           const seatNumbers = selectedSeatObjects.map(s => s.seat_no).join(', ');
 
-          const msg = formatWhatsAppMessage({
+          await sharePdfToWhatsApp({
+            seatId: targetSeatIds[0],
+            passCode: res.passCode,
             guestName: guestName.trim(),
             phone: guestPhone.trim(),
-            passCode: res.passCode,
             section: wizardSection,
             rows,
             seatNumbers,
             totalSeats: targetSeatIds.length,
             paymentStatus
           });
-          const url = getWhatsAppShareUrl(guestPhone.trim(), msg);
-          window.open(url, '_blank');
         }
 
         // Switch to Issued Passes tab
@@ -406,20 +405,30 @@ export function GuestsClient({
     });
   };
 
-  // 1-Click WhatsApp Share for an existing pass
-  const handleWhatsAppShare = (pass: GroupedPass) => {
-    const msg = formatWhatsAppMessage({
-      guestName: pass.guestName,
-      phone: pass.guestPhone,
-      passCode: pass.passCode,
-      section: pass.section,
-      rows: pass.rows,
-      seatNumbers: pass.seatNumbers,
-      totalSeats: pass.totalSeats,
-      paymentStatus: pass.paymentStatus
-    });
-    const url = getWhatsAppShareUrl(pass.guestPhone, msg);
-    window.open(url, '_blank');
+  // 1-Click WhatsApp Share with PDF for an existing pass
+  const handleWhatsAppShare = async (pass: GroupedPass) => {
+    try {
+      toast.loading("Preparing ticket PDF...", { id: 'wa-share' });
+      const result = await sharePdfToWhatsApp({
+        seatId: pass.seatIds[0],
+        passCode: pass.passCode,
+        guestName: pass.guestName,
+        phone: pass.guestPhone,
+        section: pass.section,
+        rows: pass.rows,
+        seatNumbers: pass.seatNumbers,
+        totalSeats: pass.totalSeats,
+        paymentStatus: pass.paymentStatus
+      });
+
+      if (result.sharedNatively) {
+        toast.success("Shared directly with PDF ticket attached!", { id: 'wa-share' });
+      } else {
+        toast.success("Ticket PDF downloaded! Drag and drop into WhatsApp.", { id: 'wa-share' });
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to share on WhatsApp", { id: 'wa-share' });
+    }
   };
 
   // Download PDF E-Ticket
@@ -429,7 +438,7 @@ export function GuestsClient({
       const res = await fetch('/api/tickets/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ seatId }),
+        body: JSON.stringify({ seatId, passCode }),
       });
 
       if (!res.ok) {
@@ -540,7 +549,7 @@ export function GuestsClient({
           return s;
         }));
 
-        toast.success(`Pass ${revokingPass.passCode} revoked. ${revokingPass.totalSeats} seat(s) moved to Available Inventory.`);
+        toast.success(`Pass ${revokingPass.passCode} revoked. QR code invalidated.`);
         setRevokeModalOpen(false);
         setRevokingPass(null);
       } catch (err: any) {
@@ -869,16 +878,16 @@ export function GuestsClient({
                           {/* Actions */}
                           <TableCell className="text-right pr-6">
                             <div className="flex items-center justify-end gap-1.5">
-                              {/* 1-Click WhatsApp Share */}
+                              {/* 1-Click WhatsApp Share with PDF */}
                               <Button
                                 size="xs"
                                 variant="outline"
                                 className="h-7 px-2 text-emerald-300 bg-emerald-950/60 border-emerald-800 hover:bg-emerald-900 hover:text-white text-[11px] gap-1"
                                 onClick={() => handleWhatsAppShare(pass)}
-                                title="Share Pass link & details on WhatsApp"
+                                title="Share ticket PDF on WhatsApp"
                               >
                                 <MessageSquare className="w-3 h-3 text-emerald-400" />
-                                <span>WhatsApp</span>
+                                <span>WhatsApp PDF</span>
                               </Button>
 
                               {/* PDF Download */}
@@ -1353,7 +1362,7 @@ export function GuestsClient({
                 </div>
 
                 <div className="space-y-1">
-                  <Label className="text-xs font-medium text-slate-300">Mobile Phone (for WhatsApp Share)</Label>
+                  <Label className="text-xs font-medium text-slate-300">Mobile Phone (for WhatsApp PDF Share)</Label>
                   <Input 
                     type="tel" 
                     placeholder="10-digit mobile number" 
@@ -1410,7 +1419,7 @@ export function GuestsClient({
               onClick={() => handleIssuePass('share_whatsapp')}
             >
               <MessageSquare className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Issue & Share WhatsApp</span>
+              <span>Issue & WhatsApp PDF</span>
             </Button>
 
             <Button 
@@ -1420,7 +1429,7 @@ export function GuestsClient({
               onClick={() => handleIssuePass('download_pdf')}
             >
               <Download className="w-3.5 h-3.5 text-amber-400" />
-              <span>Issue & PDF</span>
+              <span>Issue & Download PDF</span>
             </Button>
 
             <Button 
@@ -1515,7 +1524,7 @@ export function GuestsClient({
               Revoke Pass {revokingPass?.passCode}?
             </DialogTitle>
             <DialogDescription className="text-xs text-slate-400">
-              This will unassign the guest and return all associated seats to the Available Inventory.
+              This will unassign the guest, permanently invalidate the QR barcode, and return seats to Available Inventory.
             </DialogDescription>
           </DialogHeader>
 
@@ -1534,9 +1543,9 @@ export function GuestsClient({
             <p>
               Seats to free: <span className="font-mono text-amber-400 font-bold">{revokingPass?.seatIds.join(', ')}</span> ({revokingPass?.totalSeats} seats)
             </p>
-            <p className="text-slate-400 text-[11px] pt-1">
-              The existing QR code will be permanently invalidated at the door scanner.
-            </p>
+            <div className="p-2.5 bg-red-950/40 border border-red-800/60 rounded-xl text-[11px] text-red-300 font-medium">
+              ⚠️ Invalidation Notice: Any printed or saved QR code for Pass {revokingPass?.passCode} will be immediately rejected at the door check-in scanner.
+            </div>
           </div>
 
           <DialogFooter className="gap-2 sm:gap-0">
@@ -1549,7 +1558,7 @@ export function GuestsClient({
               onClick={handleConfirmRevoke} 
               disabled={isPending}
             >
-              {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Revoke & Free Seats"}
+              {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Revoke & Invalidate QR"}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyQrToken } from '@/lib/tokens';
 
 export async function POST(req: Request) {
@@ -11,7 +12,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { data: profile } = await supabase
+    const adminClient = createAdminClient();
+
+    const { data: profile } = await adminClient
       .from('profiles')
       .select('role, door_duty')
       .eq('id', user.id)
@@ -29,7 +32,10 @@ export async function POST(req: Request) {
     if (token) {
       const decoded = await verifyQrToken(token);
       if (!decoded) {
-        return NextResponse.json({ success: false, error: 'Invalid or expired QR token' }, { status: 400 });
+        return NextResponse.json({ 
+          success: false, 
+          error: 'Invalid or corrupted QR token. This code does not exist.' 
+        }, { status: 400 });
       }
       targetPassCode = decoded.passCode;
     }
@@ -38,14 +44,18 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: 'No pass code provided' }, { status: 400 });
     }
 
-// Lookup seats
-    const { data: seats, error: seatError } = await supabase
+    // Lookup active seats by pass_code
+    const { data: seats, error: seatError } = await adminClient
       .from('seats')
       .select('*')
       .eq('pass_code', targetPassCode);
 
-    if (seatError || !seats || seats.length === 0) {
-      return NextResponse.json({ success: false, error: 'Pass not found' }, { status: 404 });
+    // If no seats match, or guest_name was cleared (revoked/cancelled)
+    if (seatError || !seats || seats.length === 0 || !seats[0].guest_name) {
+      return NextResponse.json({ 
+        success: false, 
+        error: 'CANCELLED / REVOKED PASS: This QR code is no longer valid. The ticket was cancelled and the seats have been released.' 
+      }, { status: 404 });
     }
 
     const firstSeat = seats[0];
@@ -58,25 +68,28 @@ export async function POST(req: Request) {
     if (!isSuperAdmin && !hasDoorDuty && !isOwner) {
       return NextResponse.json({ 
         success: false, 
-        error: 'You do not have permission to check in this guest' 
+        error: 'You do not have door check-in permission for this section.' 
       }, { status: 403 });
     }
 
-    // Check duplicate
+    // Check duplicate check-in
     if (firstSeat.checked_in) {
       return NextResponse.json({
         success: false,
         duplicate: true,
         guestName: firstSeat.guest_name,
         originalScanTime: firstSeat.checked_in_at,
-        admitCount: seats.length
+        admitCount: seats.length,
+        section: firstSeat.section,
+        row: firstSeat.row_label,
+        seatNo: String(firstSeat.seat_no)
       });
     }
 
-    // Mark all as checked in
+    // Mark all seats in this pass as checked in
     const now = new Date().toISOString();
     const seatIds = seats.map(s => s.id);
-    const { error: updateError } = await supabase
+    const { error: updateError } = await adminClient
       .from('seats')
       .update({ 
         checked_in: true,
@@ -96,15 +109,15 @@ export async function POST(req: Request) {
     return NextResponse.json({
       success: true,
       guestName: firstSeat.guest_name,
-      seatId: firstSeat.id, // Primary seat ID for reference
+      seatId: firstSeat.id,
       section: firstSeat.section,
       row: displayRow,
       seatNo: displaySeat,
       admitCount: seats.length
     });
 
-  } catch (error) {
+  } catch (error: any) {
     console.error('Check-in error:', error);
-    return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
+    return NextResponse.json({ success: false, error: error.message || 'Internal server error' }, { status: 500 });
   }
 }

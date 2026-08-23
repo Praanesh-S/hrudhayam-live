@@ -1,7 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateQrDataUrl } from '@/lib/qrcode';
-import { notFound } from 'next/navigation';
-import { Ticket, MapPin, Calendar, Clock, Download, CheckCircle2, Heart, ShieldCheck } from 'lucide-react';
+import { Ticket, MapPin, Calendar, Download, CheckCircle2, Heart, AlertOctagon, XCircle } from 'lucide-react';
 import { formatINR } from '@/lib/constants';
 
 export const dynamic = 'force-dynamic';
@@ -19,14 +18,38 @@ export default async function PublicPassPage({ params }: { params: Promise<{ pas
   const adminClient = createAdminClient();
 
   // Look up seats by pass_code
-  const { data: seats, error } = await adminClient
+  const { data: seats } = await adminClient
     .from('seats')
     .select('*')
     .eq('pass_code', passCode)
     .order('seat_no', { ascending: true });
 
-  if (error || !seats || seats.length === 0) {
-    notFound();
+  const isRevoked = !seats || seats.length === 0 || !seats[0].guest_name;
+
+  if (isRevoked) {
+    return (
+      <div className="min-h-screen bg-[#07111C] text-white flex flex-col items-center justify-center p-4 sm:p-6 font-sans">
+        <div className="w-full max-w-md bg-[#0F2031] rounded-3xl border-2 border-red-500/40 shadow-2xl overflow-hidden text-center p-8 space-y-5">
+          <div className="w-16 h-16 rounded-full bg-red-500/10 border-2 border-red-500/30 flex items-center justify-center mx-auto text-red-400">
+            <XCircle className="w-8 h-8" />
+          </div>
+
+          <div className="space-y-2">
+            <h1 className="text-2xl font-black text-white">Pass Revoked / Cancelled</h1>
+            <p className="text-xs text-red-300 font-mono font-bold">
+              Pass Code: {passCode}
+            </p>
+            <p className="text-xs text-slate-400 leading-relaxed pt-2">
+              This admission ticket has been cancelled or revoked. The seats associated with this barcode have been released back to the venue inventory.
+            </p>
+          </div>
+
+          <div className="p-3.5 bg-[#081522] rounded-xl border border-[#1E3A4C] text-[11px] text-slate-400">
+            If you believe this is an error, please contact your Rotary Club event coordinator.
+          </div>
+        </div>
+      </div>
+    );
   }
 
   const primarySeat = seats[0];
@@ -134,10 +157,9 @@ export default async function PublicPassPage({ params }: { params: Promise<{ pas
           </div>
 
           {/* Download PDF Action */}
-          <a
-            href={`/api/tickets/generate`}
-            onClick={async (e) => {
-              e.preventDefault();
+          <button
+            type="button"
+            onClick={async () => {
               try {
                 const res = await fetch('/api/tickets/generate', {
                   method: 'POST',
@@ -162,7 +184,7 @@ export default async function PublicPassPage({ params }: { params: Promise<{ pas
           >
             <Download className="w-4 h-4" />
             <span>Download Printable PDF Ticket</span>
-          </a>
+          </button>
         </div>
 
         {/* Footer */}

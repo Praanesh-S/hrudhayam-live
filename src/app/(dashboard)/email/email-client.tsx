@@ -24,9 +24,10 @@ import {
   Copy, 
   ExternalLink,
   PlusCircle,
-  Clock
+  Clock,
+  Download
 } from 'lucide-react';
-import { formatWhatsAppMessage, getWhatsAppShareUrl } from '@/lib/whatsapp';
+import { formatWhatsAppMessage, getWhatsAppShareUrl, sharePdfToWhatsApp } from '@/lib/whatsapp';
 import { formatINR } from '@/lib/constants';
 
 interface GuestRecord {
@@ -245,20 +246,30 @@ export function EmailClient({ isSuperAdmin, teamMembers, userId, initialGuests }
     return list;
   }, [initialGuests, waSearch, waSectionFilter]);
 
-  // Trigger WhatsApp share
-  const handleLaunchWhatsApp = (item: any) => {
-    const msg = formatWhatsAppMessage({
-      guestName: item.guestName,
-      phone: item.phone,
-      passCode: item.passCode,
-      section: item.section,
-      rows: item.rows,
-      seatNumbers: item.seatNumbers,
-      totalSeats: item.totalSeats,
-      paymentStatus: item.paymentStatus
-    });
-    const url = getWhatsAppShareUrl(item.phone, msg);
-    window.open(url, '_blank');
+  // Trigger WhatsApp share with attached PDF
+  const handleLaunchWhatsApp = async (item: any) => {
+    try {
+      toast.loading("Preparing ticket PDF for WhatsApp...", { id: 'wa-hub-share' });
+      const result = await sharePdfToWhatsApp({
+        seatId: item.rawSeats[0].id,
+        passCode: item.passCode,
+        guestName: item.guestName,
+        phone: item.phone,
+        section: item.section,
+        rows: item.rows,
+        seatNumbers: item.seatNumbers,
+        totalSeats: item.totalSeats,
+        paymentStatus: item.paymentStatus
+      });
+
+      if (result.sharedNatively) {
+        toast.success("Shared directly with PDF ticket attached!", { id: 'wa-hub-share' });
+      } else {
+        toast.success("Ticket PDF downloaded! Drag and drop into WhatsApp.", { id: 'wa-hub-share' });
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to share on WhatsApp", { id: 'wa-hub-share' });
+    }
   };
 
   // Copy WhatsApp message text to clipboard
@@ -544,7 +555,7 @@ export function EmailClient({ isSuperAdmin, teamMembers, userId, initialGuests }
                 1-Click WhatsApp Ticket & Pass Dispatcher
               </h2>
               <p className="text-xs text-slate-400 mt-1">
-                Dispatch personalized concert E-Passes with live QR code links directly to donors on WhatsApp with 1 click.
+                Dispatch personalized concert E-Passes with attached PDF tickets directly to donors on WhatsApp with 1 click.
               </p>
             </div>
 
@@ -643,7 +654,7 @@ export function EmailClient({ isSuperAdmin, teamMembers, userId, initialGuests }
                               onClick={() => handleLaunchWhatsApp(item)}
                             >
                               <MessageSquare className="w-3.5 h-3.5" />
-                              <span>Open WhatsApp</span>
+                              <span>Send WhatsApp PDF</span>
                             </Button>
                           </div>
                         </TableCell>
