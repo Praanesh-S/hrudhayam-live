@@ -7,10 +7,14 @@ export interface WhatsAppPassDetails {
   seatNumbers: string;
   totalSeats: number;
   paymentStatus: string;
+  baseUrl?: string;
 }
 
 export function formatWhatsAppMessage(details: WhatsAppPassDetails): string {
-  return `🎟️ *HRUDHAYAM LIVE 2026 - Official Donor E-Pass*
+  const domain = details.baseUrl || (typeof window !== 'undefined' ? window.location.origin : 'https://hrudhayam-live.vercel.app');
+  const passUrl = `${domain}/pass/${details.passCode}`;
+
+  return `🎟️ *HRUDHAYAM LIVE 2026 - Donor Admission Pass*
 ---------------------------------------
 Dear *${details.guestName}*,
 
@@ -18,7 +22,7 @@ Thank you for your generous contribution to the Rotary Club of Aarch City Madras
 
 📍 *Venue:* The Music Academy, TTK Road, Alwarpet, Chennai
 🗓️ *Date:* Friday, 9 October 2026
-⏰ *Gates Open:* 5:30 PM • *Concert Begins:* 6:30 PM
+⏰ *Gates Open:* 5:30 PM • *Concert:* 6:30 PM
 
 🎫 *Pass Code:* *${details.passCode}* (${details.totalSeats > 1 ? `Admit ${details.totalSeats} Guests` : 'Admit 1 Guest'})
 💺 *Section:* ${details.section}
@@ -26,8 +30,10 @@ Thank you for your generous contribution to the Rotary Club of Aarch City Madras
 💺 *Seat(s):* ${details.seatNumbers}
 💳 *Payment:* ${details.paymentStatus === 'received' ? '✓ Paid' : 'Pending'}
 
-📄 *Please find your official E-Ticket PDF with admission barcode attached.*
-_Present the barcode at venue entrance for door check-in._`;
+🔗 *View Digital Pass & Live QR Barcode:*
+${passUrl}
+
+_Please present the digital pass or QR barcode at venue entrance for barcode scan._`;
 }
 
 export function getWhatsAppShareUrl(phone: string | undefined | null, message: string): string {
@@ -38,49 +44,15 @@ export function getWhatsAppShareUrl(phone: string | undefined | null, message: s
   
   const encodedText = encodeURIComponent(message);
   if (cleanPhone) {
-    return `https://wa.me/${cleanPhone}?text=${encodedText}`;
+    return `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodedText}`;
   }
-  return `https://wa.me/?text=${encodedText}`;
+  return `https://api.whatsapp.com/send?text=${encodedText}`;
 }
 
 /**
- * Universal Native / WhatsApp File Sharing:
- * Attempts native Web Share API with PDF file attachment (supported on iOS / Android / Mac).
- * Fallback: Downloads PDF locally and opens WhatsApp with pre-filled text.
+ * Download ticket PDF helper
  */
-export async function sharePdfToWhatsApp({
-  seatId,
-  passCode,
-  guestName,
-  phone,
-  section,
-  rows,
-  seatNumbers,
-  totalSeats,
-  paymentStatus,
-}: {
-  seatId: string;
-  passCode: string;
-  guestName: string;
-  phone?: string | null;
-  section: string;
-  rows: string[];
-  seatNumbers: string;
-  totalSeats: number;
-  paymentStatus: string;
-}) {
-  const messageText = formatWhatsAppMessage({
-    guestName,
-    phone,
-    passCode,
-    section,
-    rows,
-    seatNumbers,
-    totalSeats,
-    paymentStatus,
-  });
-
-  // Fetch the PDF blob from generator endpoint
+export async function downloadTicketPdf(seatId: string, passCode: string) {
   const res = await fetch('/api/tickets/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -93,28 +65,6 @@ export async function sharePdfToWhatsApp({
 
   const blob = await res.blob();
   const pdfFileName = `Hrudhayam-Pass-${passCode}.pdf`;
-  const pdfFile = new File([blob], pdfFileName, { type: 'application/pdf' });
-
-  // 1. Try Native Web Share with attached PDF (Mobile iOS / Android / Desktop Safari / Edge)
-  if (
-    typeof navigator !== 'undefined' &&
-    navigator.canShare &&
-    navigator.canShare({ files: [pdfFile] })
-  ) {
-    try {
-      await navigator.share({
-        files: [pdfFile],
-        title: `Hrudhayam LIVE E-Pass - ${passCode}`,
-        text: messageText,
-      });
-      return { sharedNatively: true };
-    } catch (e: any) {
-      if (e.name === 'AbortError') return { sharedNatively: true }; // user cancelled
-      console.warn('Native share failed, falling back to download + wa.me', e);
-    }
-  }
-
-  // 2. Desktop Fallback: Download PDF file & open WhatsApp
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -123,10 +73,5 @@ export async function sharePdfToWhatsApp({
   a.click();
   window.URL.revokeObjectURL(url);
   document.body.removeChild(a);
-
-  // Open WhatsApp with text
-  const waUrl = getWhatsAppShareUrl(phone, messageText);
-  window.open(waUrl, '_blank');
-
-  return { sharedNatively: false, downloaded: true };
+  return pdfFileName;
 }

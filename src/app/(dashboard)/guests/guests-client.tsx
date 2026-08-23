@@ -40,11 +40,13 @@ import {
   AlertTriangle,
   QrCode,
   Sparkles,
-  MessageSquare
+  MessageSquare,
+  Copy,
+  ExternalLink
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatINR } from '@/lib/constants';
-import { sharePdfToWhatsApp } from '@/lib/whatsapp';
+import { formatWhatsAppMessage, getWhatsAppShareUrl, downloadTicketPdf } from '@/lib/whatsapp';
 
 export type Seat = {
   id: string;
@@ -126,6 +128,20 @@ export function GuestsClient({
   const [guestEmail, setGuestEmail] = useState('');
   const [guestPhone, setGuestPhone] = useState('');
   const [paymentStatus, setPaymentStatus] = useState<'pending' | 'received'>('pending');
+
+  // WhatsApp Dispatch Modal State
+  const [waModalOpen, setWaModalOpen] = useState(false);
+  const [waTargetPass, setWaTargetPass] = useState<{
+    passCode: string;
+    seatId: string;
+    guestName: string;
+    phone: string;
+    section: string;
+    rows: string[];
+    seatNumbers: string;
+    totalSeats: number;
+    paymentStatus: string;
+  } | null>(null);
 
   // Edit Pass Modal State
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -336,15 +352,15 @@ export function GuestsClient({
           handleDownloadPdf(targetSeatIds[0], res.passCode);
         }
 
-        // Handle WhatsApp Share with PDF
+        // Handle WhatsApp Share Modal
         if (action === 'share_whatsapp') {
           const selectedSeatObjects = availableSeats.filter(s => targetSeatIds.includes(s.id));
           const rows = Array.from(new Set(selectedSeatObjects.map(s => s.row_label)));
           const seatNumbers = selectedSeatObjects.map(s => s.seat_no).join(', ');
 
-          await sharePdfToWhatsApp({
-            seatId: targetSeatIds[0],
+          setWaTargetPass({
             passCode: res.passCode,
+            seatId: targetSeatIds[0],
             guestName: guestName.trim(),
             phone: guestPhone.trim(),
             section: wizardSection,
@@ -353,6 +369,7 @@ export function GuestsClient({
             totalSeats: targetSeatIds.length,
             paymentStatus
           });
+          setWaModalOpen(true);
         }
 
         // Switch to Issued Passes tab
@@ -405,56 +422,27 @@ export function GuestsClient({
     });
   };
 
-  // 1-Click WhatsApp Share with PDF for an existing pass
-  const handleWhatsAppShare = async (pass: GroupedPass) => {
-    try {
-      toast.loading("Preparing ticket PDF...", { id: 'wa-share' });
-      const result = await sharePdfToWhatsApp({
-        seatId: pass.seatIds[0],
-        passCode: pass.passCode,
-        guestName: pass.guestName,
-        phone: pass.guestPhone,
-        section: pass.section,
-        rows: pass.rows,
-        seatNumbers: pass.seatNumbers,
-        totalSeats: pass.totalSeats,
-        paymentStatus: pass.paymentStatus
-      });
-
-      if (result.sharedNatively) {
-        toast.success("Shared directly with PDF ticket attached!", { id: 'wa-share' });
-      } else {
-        toast.success("Ticket PDF downloaded! Drag and drop into WhatsApp.", { id: 'wa-share' });
-      }
-    } catch (err: any) {
-      toast.error(err.message || "Failed to share on WhatsApp", { id: 'wa-share' });
-    }
+  // Open WhatsApp Dispatch Modal for an existing pass
+  const openWhatsAppModal = (pass: GroupedPass) => {
+    setWaTargetPass({
+      passCode: pass.passCode,
+      seatId: pass.seatIds[0],
+      guestName: pass.guestName,
+      phone: pass.guestPhone || '',
+      section: pass.section,
+      rows: pass.rows,
+      seatNumbers: pass.seatNumbers,
+      totalSeats: pass.totalSeats,
+      paymentStatus: pass.paymentStatus
+    });
+    setWaModalOpen(true);
   };
 
   // Download PDF E-Ticket
   const handleDownloadPdf = async (seatId: string, passCode: string) => {
     setGeneratingPdfPassCode(passCode);
     try {
-      const res = await fetch('/api/tickets/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ seatId, passCode }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Failed to generate PDF');
-      }
-
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `Hrudhayam-Pass-${passCode}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      await downloadTicketPdf(seatId, passCode);
       toast.success('Ticket PDF downloaded');
     } catch (err: any) {
       toast.error(err.message || 'Failed to download PDF ticket');
@@ -564,6 +552,21 @@ export function GuestsClient({
     if (tier === 1500) return <Badge className="bg-slate-800 text-slate-300 border border-slate-600 text-[10px] font-mono font-bold">₹1,500</Badge>;
     return <Badge variant="outline" className="text-purple-400 border-purple-800/60 bg-purple-950/30 text-[10px]">VIP</Badge>;
   };
+
+  // WhatsApp formatted message computed for the active modal
+  const waFormattedMessage = useMemo(() => {
+    if (!waTargetPass) return '';
+    return formatWhatsAppMessage({
+      guestName: waTargetPass.guestName,
+      phone: waTargetPass.phone,
+      passCode: waTargetPass.passCode,
+      section: waTargetPass.section,
+      rows: waTargetPass.rows,
+      seatNumbers: waTargetPass.seatNumbers,
+      totalSeats: waTargetPass.totalSeats,
+      paymentStatus: waTargetPass.paymentStatus
+    });
+  }, [waTargetPass]);
 
   return (
     <div className="space-y-6">
@@ -878,16 +881,16 @@ export function GuestsClient({
                           {/* Actions */}
                           <TableCell className="text-right pr-6">
                             <div className="flex items-center justify-end gap-1.5">
-                              {/* 1-Click WhatsApp Share with PDF */}
+                              {/* 1-Click WhatsApp Share Modal */}
                               <Button
                                 size="xs"
                                 variant="outline"
                                 className="h-7 px-2 text-emerald-300 bg-emerald-950/60 border-emerald-800 hover:bg-emerald-900 hover:text-white text-[11px] gap-1"
-                                onClick={() => handleWhatsAppShare(pass)}
-                                title="Share ticket PDF on WhatsApp"
+                                onClick={() => openWhatsAppModal(pass)}
+                                title="Share ticket & message via WhatsApp"
                               >
                                 <MessageSquare className="w-3 h-3 text-emerald-400" />
-                                <span>WhatsApp PDF</span>
+                                <span>WhatsApp</span>
                               </Button>
 
                               {/* PDF Download */}
@@ -1419,7 +1422,7 @@ export function GuestsClient({
               onClick={() => handleIssuePass('share_whatsapp')}
             >
               <MessageSquare className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Issue & WhatsApp PDF</span>
+              <span>Issue & WhatsApp Pass</span>
             </Button>
 
             <Button 
@@ -1439,6 +1442,97 @@ export function GuestsClient({
             >
               {isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
               <span>Issue & Email</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ========================================================================= */}
+      {/* DEDICATED WHATSAPP DISPATCH MODAL */}
+      {/* ========================================================================= */}
+      <Dialog open={waModalOpen} onOpenChange={setWaModalOpen}>
+        <DialogContent className="sm:max-w-lg bg-[#131F2E] rounded-2xl border border-[#223345] text-white shadow-2xl">
+          <DialogHeader className="border-b border-[#223345] pb-3">
+            <DialogTitle className="text-base font-bold text-white flex items-center gap-2">
+              <MessageSquare className="w-5 h-5 text-emerald-400" />
+              Send E-Pass via WhatsApp
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-400">
+              Pass Code: <span className="text-amber-400 font-mono font-bold">{waTargetPass?.passCode}</span> • {waTargetPass?.guestName}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Phone Number Input */}
+            <div className="space-y-1">
+              <Label className="text-xs font-semibold text-slate-300">Donor Mobile Phone</Label>
+              <div className="relative">
+                <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                <Input 
+                  placeholder="10-digit mobile (e.g. 9840012345)" 
+                  value={waTargetPass?.phone || ''}
+                  onChange={(e) => {
+                    if (waTargetPass) {
+                      setWaTargetPass({ ...waTargetPass, phone: e.target.value });
+                    }
+                  }}
+                  className="pl-9 h-9 text-xs bg-[#1A2839] border-[#2A3F55] text-white font-mono"
+                />
+              </div>
+            </div>
+
+            {/* Live Message Preview */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold text-slate-300">Message Content Preview</Label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(waFormattedMessage);
+                    toast.success("Message text copied to clipboard!");
+                  }}
+                  className="text-[11px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 font-semibold"
+                >
+                  <Copy className="w-3 h-3" />
+                  <span>Copy Text</span>
+                </button>
+              </div>
+              <div className="p-3 bg-[#0E1724] rounded-xl border border-[#223345] text-[11px] text-slate-300 font-mono whitespace-pre-wrap max-h-48 overflow-y-auto leading-relaxed">
+                {waFormattedMessage}
+              </div>
+            </div>
+
+            {/* Quick Helper Tip */}
+            <div className="p-3 bg-emerald-950/30 border border-emerald-800/40 rounded-xl text-[11px] text-emerald-300 leading-relaxed">
+              💡 <strong>Instant Delivery:</strong> Clicking <strong>Open in WhatsApp</strong> opens the donor's chat with the complete concert pass & live QR barcode link ready to send! You can also download the PDF ticket to drag and drop into the chat.
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-2 flex-wrap border-t border-[#223345] pt-3">
+            <Button
+              variant="outline"
+              className="bg-[#1A2839] border-[#2A3F55] text-slate-300 text-xs gap-1"
+              onClick={async () => {
+                if (waTargetPass) {
+                  await handleDownloadPdf(waTargetPass.seatId, waTargetPass.passCode);
+                }
+              }}
+            >
+              <Download className="w-3.5 h-3.5 text-amber-400" />
+              <span>Download PDF</span>
+            </Button>
+
+            <Button
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5 shadow-md shadow-emerald-950/40 px-5 flex-1"
+              onClick={() => {
+                const url = getWhatsAppShareUrl(waTargetPass?.phone, waFormattedMessage);
+                window.open(url, '_blank');
+                setWaModalOpen(false);
+              }}
+            >
+              <MessageSquare className="w-4 h-4" />
+              <span>Open in WhatsApp</span>
+              <ExternalLink className="w-3 h-3 ml-0.5" />
             </Button>
           </DialogFooter>
         </DialogContent>

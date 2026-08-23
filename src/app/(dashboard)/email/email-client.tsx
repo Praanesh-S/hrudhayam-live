@@ -8,27 +8,31 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { sendCustomMassEmail, getQueueStatus, TargetRecipient } from './actions';
 import { 
   Mail, 
   Users, 
   Send, 
-  Sparkles, 
-  Filter, 
   Search, 
   MessageSquare, 
   Phone, 
   CheckCircle2, 
   Copy, 
   ExternalLink,
-  PlusCircle,
   Clock,
   Download
 } from 'lucide-react';
-import { formatWhatsAppMessage, getWhatsAppShareUrl, sharePdfToWhatsApp } from '@/lib/whatsapp';
-import { formatINR } from '@/lib/constants';
+import { formatWhatsAppMessage, getWhatsAppShareUrl, downloadTicketPdf } from '@/lib/whatsapp';
+import { 
+  Dialog, 
+  DialogContent, 
+  DialogHeader, 
+  DialogTitle, 
+  DialogFooter, 
+  DialogDescription 
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 
 interface GuestRecord {
   id: string;
@@ -71,6 +75,18 @@ export function EmailClient({ isSuperAdmin, teamMembers, userId, initialGuests }
   // WhatsApp Hub state
   const [waSearch, setWaSearch] = useState('');
   const [waSectionFilter, setWaSectionFilter] = useState<'All' | 'Ground Floor' | 'Balcony'>('All');
+  const [waModalOpen, setWaModalOpen] = useState(false);
+  const [waTargetItem, setWaTargetItem] = useState<{
+    passCode: string;
+    seatId: string;
+    guestName: string;
+    phone: string;
+    section: string;
+    rows: string[];
+    seatNumbers: string;
+    totalSeats: number;
+    paymentStatus: string;
+  } | null>(null);
 
   const [isSending, setIsSending] = useState(false);
   const [queueStats, setQueueStats] = useState<{ queued: number; sent: number; failed: number } | null>(null);
@@ -246,47 +262,36 @@ export function EmailClient({ isSuperAdmin, teamMembers, userId, initialGuests }
     return list;
   }, [initialGuests, waSearch, waSectionFilter]);
 
-  // Trigger WhatsApp share with attached PDF
-  const handleLaunchWhatsApp = async (item: any) => {
-    try {
-      toast.loading("Preparing ticket PDF for WhatsApp...", { id: 'wa-hub-share' });
-      const result = await sharePdfToWhatsApp({
-        seatId: item.rawSeats[0].id,
-        passCode: item.passCode,
-        guestName: item.guestName,
-        phone: item.phone,
-        section: item.section,
-        rows: item.rows,
-        seatNumbers: item.seatNumbers,
-        totalSeats: item.totalSeats,
-        paymentStatus: item.paymentStatus
-      });
-
-      if (result.sharedNatively) {
-        toast.success("Shared directly with PDF ticket attached!", { id: 'wa-hub-share' });
-      } else {
-        toast.success("Ticket PDF downloaded! Drag and drop into WhatsApp.", { id: 'wa-hub-share' });
-      }
-    } catch (err: any) {
-      toast.error(err.message || "Failed to share on WhatsApp", { id: 'wa-hub-share' });
-    }
-  };
-
-  // Copy WhatsApp message text to clipboard
-  const handleCopyMessage = (item: any) => {
-    const msg = formatWhatsAppMessage({
+  // Open WhatsApp Dispatch Modal
+  const openWhatsAppModal = (item: any) => {
+    setWaTargetItem({
+      passCode: item.passCode,
+      seatId: item.rawSeats[0].id,
       guestName: item.guestName,
       phone: item.phone,
-      passCode: item.passCode,
       section: item.section,
       rows: item.rows,
       seatNumbers: item.seatNumbers,
       totalSeats: item.totalSeats,
       paymentStatus: item.paymentStatus
     });
-    navigator.clipboard.writeText(msg);
-    toast.success("WhatsApp message copied to clipboard!");
+    setWaModalOpen(true);
   };
+
+  // WhatsApp formatted message computed for modal
+  const waModalMessage = useMemo(() => {
+    if (!waTargetItem) return '';
+    return formatWhatsAppMessage({
+      guestName: waTargetItem.guestName,
+      phone: waTargetItem.phone,
+      passCode: waTargetItem.passCode,
+      section: waTargetItem.section,
+      rows: waTargetItem.rows,
+      seatNumbers: waTargetItem.seatNumbers,
+      totalSeats: waTargetItem.totalSeats,
+      paymentStatus: waTargetItem.paymentStatus
+    });
+  }, [waTargetItem]);
 
   return (
     <div className="space-y-6">
@@ -555,7 +560,7 @@ export function EmailClient({ isSuperAdmin, teamMembers, userId, initialGuests }
                 1-Click WhatsApp Ticket & Pass Dispatcher
               </h2>
               <p className="text-xs text-slate-400 mt-1">
-                Dispatch personalized concert E-Passes with attached PDF tickets directly to donors on WhatsApp with 1 click.
+                Dispatch personalized concert E-Passes with live QR pass links and PDF tickets directly to donors on WhatsApp.
               </p>
             </div>
 
@@ -641,7 +646,20 @@ export function EmailClient({ isSuperAdmin, teamMembers, userId, initialGuests }
                               size="xs"
                               variant="outline"
                               className="h-7 text-xs bg-[#1A2839] border-[#2A3F55] text-slate-300 hover:text-white"
-                              onClick={() => handleCopyMessage(item)}
+                              onClick={() => {
+                                const msg = formatWhatsAppMessage({
+                                  guestName: item.guestName,
+                                  phone: item.phone,
+                                  passCode: item.passCode,
+                                  section: item.section,
+                                  rows: item.rows,
+                                  seatNumbers: item.seatNumbers,
+                                  totalSeats: item.totalSeats,
+                                  paymentStatus: item.paymentStatus
+                                });
+                                navigator.clipboard.writeText(msg);
+                                toast.success("WhatsApp message copied to clipboard!");
+                              }}
                               title="Copy pre-formatted message text"
                             >
                               <Copy className="w-3 h-3 mr-1 text-slate-400" />
@@ -651,10 +669,10 @@ export function EmailClient({ isSuperAdmin, teamMembers, userId, initialGuests }
                             <Button
                               size="xs"
                               className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-1 shadow-sm"
-                              onClick={() => handleLaunchWhatsApp(item)}
+                              onClick={() => openWhatsAppModal(item)}
                             >
                               <MessageSquare className="w-3.5 h-3.5" />
-                              <span>Send WhatsApp PDF</span>
+                              <span>Send WhatsApp</span>
                             </Button>
                           </div>
                         </TableCell>
@@ -667,6 +685,96 @@ export function EmailClient({ isSuperAdmin, teamMembers, userId, initialGuests }
           </div>
         </div>
       )}
+
+      {/* DEDICATED WHATSAPP DISPATCH MODAL */}
+      <Dialog open={waModalOpen} onOpenChange={setWaModalOpen}>
+        <DialogContent className="sm:max-w-lg bg-[#131F2E] rounded-2xl border border-[#223345] text-white shadow-2xl">
+          <DialogHeader className="border-b border-[#223345] pb-3">
+            <DialogTitle className="text-base font-bold text-white flex items-center gap-2">
+              <MessageSquare className="w-5 h-5 text-emerald-400" />
+              Send E-Pass via WhatsApp
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-400">
+              Pass Code: <span className="text-amber-400 font-mono font-bold">{waTargetItem?.passCode}</span> • {waTargetItem?.guestName}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Phone Number Input */}
+            <div className="space-y-1">
+              <Label className="text-xs font-semibold text-slate-300">Donor Mobile Phone</Label>
+              <div className="relative">
+                <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                <Input 
+                  placeholder="10-digit mobile (e.g. 9840012345)" 
+                  value={waTargetItem?.phone || ''}
+                  onChange={(e) => {
+                    if (waTargetItem) {
+                      setWaTargetItem({ ...waTargetItem, phone: e.target.value });
+                    }
+                  }}
+                  className="pl-9 h-9 text-xs bg-[#1A2839] border-[#2A3F55] text-white font-mono"
+                />
+              </div>
+            </div>
+
+            {/* Live Message Preview */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold text-slate-300">Message Content Preview</Label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(waModalMessage);
+                    toast.success("Message text copied to clipboard!");
+                  }}
+                  className="text-[11px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 font-semibold"
+                >
+                  <Copy className="w-3 h-3" />
+                  <span>Copy Text</span>
+                </button>
+              </div>
+              <div className="p-3 bg-[#0E1724] rounded-xl border border-[#223345] text-[11px] text-slate-300 font-mono whitespace-pre-wrap max-h-48 overflow-y-auto leading-relaxed">
+                {waModalMessage}
+              </div>
+            </div>
+
+            {/* Quick Helper Tip */}
+            <div className="p-3 bg-emerald-950/30 border border-emerald-800/40 rounded-xl text-[11px] text-emerald-300 leading-relaxed">
+              💡 <strong>Instant Delivery:</strong> Clicking <strong>Open in WhatsApp</strong> opens the donor's chat with the complete concert pass & live QR barcode link ready to send! You can also download the PDF ticket to drag and drop into the chat.
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-2 flex-wrap border-t border-[#223345] pt-3">
+            <Button
+              variant="outline"
+              className="bg-[#1A2839] border-[#2A3F55] text-slate-300 text-xs gap-1"
+              onClick={async () => {
+                if (waTargetItem) {
+                  await downloadTicketPdf(waTargetItem.seatId, waTargetItem.passCode);
+                  toast.success("Ticket PDF downloaded!");
+                }
+              }}
+            >
+              <Download className="w-3.5 h-3.5 text-amber-400" />
+              <span>Download PDF</span>
+            </Button>
+
+            <Button
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5 shadow-md shadow-emerald-950/40 px-5 flex-1"
+              onClick={() => {
+                const url = getWhatsAppShareUrl(waTargetItem?.phone, waModalMessage);
+                window.open(url, '_blank');
+                setWaModalOpen(false);
+              }}
+            >
+              <MessageSquare className="w-4 h-4" />
+              <span>Open in WhatsApp</span>
+              <ExternalLink className="w-3 h-3 ml-0.5" />
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
