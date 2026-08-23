@@ -42,11 +42,18 @@ import {
   Sparkles,
   MessageSquare,
   Copy,
-  ExternalLink
+  ExternalLink,
+  Image as ImageIcon
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatINR } from '@/lib/constants';
-import { formatWhatsAppMessage, getWhatsAppShareUrl, downloadTicketPdf } from '@/lib/whatsapp';
+import { 
+  formatWhatsAppMessage, 
+  getWhatsAppShareUrl, 
+  downloadTicketImage, 
+  downloadTicketPdf, 
+  shareTicketImageToWhatsApp 
+} from '@/lib/whatsapp';
 
 export type Seat = {
   id: string;
@@ -155,8 +162,8 @@ export function GuestsClient({
   const [revokeModalOpen, setRevokeModalOpen] = useState(false);
   const [revokingPass, setRevokingPass] = useState<GroupedPass | null>(null);
 
-  // PDF Generation loading tracking
-  const [generatingPdfPassCode, setGeneratingPdfPassCode] = useState<string | null>(null);
+  // Loading tracking
+  const [generatingActionPassCode, setGeneratingActionPassCode] = useState<string | null>(null);
 
   // Derive Available vs Allocated Seats
   const availableSeats = useMemo(() => {
@@ -297,7 +304,7 @@ export function GuestsClient({
   };
 
   // Submit Issue Pass
-  const handleIssuePass = async (action: 'issue' | 'download_pdf' | 'send_email' | 'share_whatsapp') => {
+  const handleIssuePass = async (action: 'issue' | 'download_image' | 'download_pdf' | 'send_email' | 'share_whatsapp') => {
     const targetSeatIds = passMode === 'single' 
       ? (wizardSingleSeat ? [wizardSingleSeat] : []) 
       : wizardSelectedSeats;
@@ -347,8 +354,10 @@ export function GuestsClient({
           return s;
         }));
 
-        // Handle Download PDF
-        if (action === 'download_pdf') {
+        // Handle Download Actions
+        if (action === 'download_image') {
+          handleDownloadImage(targetSeatIds[0], res.passCode);
+        } else if (action === 'download_pdf') {
           handleDownloadPdf(targetSeatIds[0], res.passCode);
         }
 
@@ -438,16 +447,60 @@ export function GuestsClient({
     setWaModalOpen(true);
   };
 
+  // Direct WhatsApp Share (with attached PNG image)
+  const handleWhatsAppImageShare = async (target: typeof waTargetPass) => {
+    if (!target) return;
+    setGeneratingActionPassCode(target.passCode);
+    try {
+      toast.loading("Preparing ticket image for WhatsApp...", { id: 'wa-share' });
+      const res = await shareTicketImageToWhatsApp({
+        seatId: target.seatId,
+        passCode: target.passCode,
+        guestName: target.guestName,
+        phone: target.phone,
+        section: target.section,
+        rows: target.rows,
+        seatNumbers: target.seatNumbers,
+        totalSeats: target.totalSeats,
+        paymentStatus: target.paymentStatus,
+      });
+
+      if (res.sharedNatively) {
+        toast.success("Shared directly with Ticket Image attached!", { id: 'wa-share' });
+      } else {
+        toast.success("Ticket image copied! Press Cmd+V (or Ctrl+V) in WhatsApp to paste.", { id: 'wa-share', duration: 6000 });
+      }
+      setWaModalOpen(false);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to share on WhatsApp', { id: 'wa-share' });
+    } finally {
+      setGeneratingActionPassCode(null);
+    }
+  };
+
+  // Download Ticket Image (PNG)
+  const handleDownloadImage = async (seatId: string, passCode: string) => {
+    setGeneratingActionPassCode(passCode);
+    try {
+      await downloadTicketImage(seatId, passCode);
+      toast.success('Ticket Image (PNG) downloaded');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to generate ticket image');
+    } finally {
+      setGeneratingActionPassCode(null);
+    }
+  };
+
   // Download PDF E-Ticket
   const handleDownloadPdf = async (seatId: string, passCode: string) => {
-    setGeneratingPdfPassCode(passCode);
+    setGeneratingActionPassCode(passCode);
     try {
       await downloadTicketPdf(seatId, passCode);
       toast.success('Ticket PDF downloaded');
     } catch (err: any) {
       toast.error(err.message || 'Failed to download PDF ticket');
     } finally {
-      setGeneratingPdfPassCode(null);
+      setGeneratingActionPassCode(null);
     }
   };
 
@@ -553,7 +606,7 @@ export function GuestsClient({
     return <Badge variant="outline" className="text-purple-400 border-purple-800/60 bg-purple-950/30 text-[10px]">VIP</Badge>;
   };
 
-  // WhatsApp formatted message computed for the active modal
+  // WhatsApp formatted message computed for the active modal (WITHOUT website link)
   const waFormattedMessage = useMemo(() => {
     if (!waTargetPass) return '';
     return formatWhatsAppMessage({
@@ -746,7 +799,7 @@ export function GuestsClient({
                     {userRole === 'super_admin' && (
                       <TableHead className="w-32 text-slate-300">Assigned Member</TableHead>
                     )}
-                    <TableHead className="min-w-[240px] text-right pr-6 text-slate-300">Pass Actions</TableHead>
+                    <TableHead className="min-w-[260px] text-right pr-6 text-slate-300">Pass Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -885,12 +938,29 @@ export function GuestsClient({
                               <Button
                                 size="xs"
                                 variant="outline"
-                                className="h-7 px-2 text-emerald-300 bg-emerald-950/60 border-emerald-800 hover:bg-emerald-900 hover:text-white text-[11px] gap-1"
+                                className="h-7 px-2 text-emerald-300 bg-emerald-950/60 border-emerald-800 hover:bg-emerald-900 hover:text-white text-[11px] gap-1 font-semibold"
                                 onClick={() => openWhatsAppModal(pass)}
-                                title="Share ticket & message via WhatsApp"
+                                title="Share ticket image & details via WhatsApp"
                               >
                                 <MessageSquare className="w-3 h-3 text-emerald-400" />
                                 <span>WhatsApp</span>
+                              </Button>
+
+                              {/* Ticket Image (PNG) Download */}
+                              <Button
+                                size="xs"
+                                variant="outline"
+                                className="h-7 px-2 text-amber-300 bg-amber-950/40 border-amber-800/60 hover:bg-amber-900/60 hover:text-white text-[11px] gap-1"
+                                disabled={generatingActionPassCode === pass.passCode}
+                                onClick={() => handleDownloadImage(pass.seatIds[0], pass.passCode)}
+                                title="Download high-resolution Ticket Image (PNG)"
+                              >
+                                {generatingActionPassCode === pass.passCode ? (
+                                  <Loader2 className="w-3 h-3 animate-spin text-amber-400" />
+                                ) : (
+                                  <ImageIcon className="w-3 h-3 text-amber-400" />
+                                )}
+                                <span>PNG</span>
                               </Button>
 
                               {/* PDF Download */}
@@ -898,15 +968,11 @@ export function GuestsClient({
                                 size="xs"
                                 variant="outline"
                                 className="h-7 px-2 text-slate-300 bg-[#1A2839] border-[#2A3F55] hover:bg-[#24364A] hover:text-white text-[11px] gap-1"
-                                disabled={generatingPdfPassCode === pass.passCode}
+                                disabled={generatingActionPassCode === pass.passCode}
                                 onClick={() => handleDownloadPdf(pass.seatIds[0], pass.passCode)}
                                 title="Download printable PDF E-Ticket"
                               >
-                                {generatingPdfPassCode === pass.passCode ? (
-                                  <Loader2 className="w-3 h-3 animate-spin text-[#E8913A]" />
-                                ) : (
-                                  <Download className="w-3 h-3 text-slate-400" />
-                                )}
+                                <Download className="w-3 h-3 text-slate-400" />
                                 <span>PDF</span>
                               </Button>
 
@@ -1144,7 +1210,7 @@ export function GuestsClient({
               Issue Concert Admission Pass
             </DialogTitle>
             <DialogDescription className="text-xs text-slate-400">
-              Select ticket mode, pick available seats, and generate single or unified group E-Tickets.
+              Select ticket mode, pick available seats, and generate single or unified group tickets.
             </DialogDescription>
           </DialogHeader>
 
@@ -1365,7 +1431,7 @@ export function GuestsClient({
                 </div>
 
                 <div className="space-y-1">
-                  <Label className="text-xs font-medium text-slate-300">Mobile Phone (for WhatsApp PDF Share)</Label>
+                  <Label className="text-xs font-medium text-slate-300">Mobile Phone (for WhatsApp Dispatch)</Label>
                   <Input 
                     type="tel" 
                     placeholder="10-digit mobile number" 
@@ -1429,10 +1495,10 @@ export function GuestsClient({
               variant="outline"
               className="bg-[#1A2839] border-amber-600/40 text-amber-300 hover:bg-amber-950/40 text-xs gap-1"
               disabled={isPending || !guestName}
-              onClick={() => handleIssuePass('download_pdf')}
+              onClick={() => handleIssuePass('download_image')}
             >
-              <Download className="w-3.5 h-3.5 text-amber-400" />
-              <span>Issue & Download PDF</span>
+              <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
+              <span>Issue & Download Image</span>
             </Button>
 
             <Button 
@@ -1497,18 +1563,31 @@ export function GuestsClient({
                   <span>Copy Text</span>
                 </button>
               </div>
-              <div className="p-3 bg-[#0E1724] rounded-xl border border-[#223345] text-[11px] text-slate-300 font-mono whitespace-pre-wrap max-h-48 overflow-y-auto leading-relaxed">
+              <div className="p-3 bg-[#0E1724] rounded-xl border border-[#223345] text-[11px] text-slate-300 font-mono whitespace-pre-wrap max-h-40 overflow-y-auto leading-relaxed">
                 {waFormattedMessage}
               </div>
             </div>
 
             {/* Quick Helper Tip */}
             <div className="p-3 bg-emerald-950/30 border border-emerald-800/40 rounded-xl text-[11px] text-emerald-300 leading-relaxed">
-              💡 <strong>Instant Delivery:</strong> Clicking <strong>Open in WhatsApp</strong> opens the donor's chat with the complete concert pass & live QR barcode link ready to send! You can also download the PDF ticket to drag and drop into the chat.
+              📸 <strong>Attached Ticket Image:</strong> Clicking <strong>Send WhatsApp with Ticket Image</strong> attaches the high-res concert admission ticket with QR barcode directly into WhatsApp! On desktop, the image is automatically copied so you can press <strong>Cmd+V / Ctrl+V</strong> in the chat.
             </div>
           </div>
 
           <DialogFooter className="gap-2 sm:gap-2 flex-wrap border-t border-[#223345] pt-3">
+            <Button
+              variant="outline"
+              className="bg-[#1A2839] border-amber-800/60 text-amber-300 text-xs gap-1"
+              onClick={async () => {
+                if (waTargetPass) {
+                  await handleDownloadImage(waTargetPass.seatId, waTargetPass.passCode);
+                }
+              }}
+            >
+              <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
+              <span>Download Image (PNG)</span>
+            </Button>
+
             <Button
               variant="outline"
               className="bg-[#1A2839] border-[#2A3F55] text-slate-300 text-xs gap-1"
@@ -1518,20 +1597,16 @@ export function GuestsClient({
                 }
               }}
             >
-              <Download className="w-3.5 h-3.5 text-amber-400" />
+              <Download className="w-3.5 h-3.5 text-slate-400" />
               <span>Download PDF</span>
             </Button>
 
             <Button
-              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5 shadow-md shadow-emerald-950/40 px-5 flex-1"
-              onClick={() => {
-                const url = getWhatsAppShareUrl(waTargetPass?.phone, waFormattedMessage);
-                window.open(url, '_blank');
-                setWaModalOpen(false);
-              }}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5 shadow-md shadow-emerald-950/40 px-4 flex-1"
+              onClick={() => handleWhatsAppImageShare(waTargetPass)}
             >
               <MessageSquare className="w-4 h-4" />
-              <span>Open in WhatsApp</span>
+              <span>Send WhatsApp Ticket</span>
               <ExternalLink className="w-3 h-3 ml-0.5" />
             </Button>
           </DialogFooter>

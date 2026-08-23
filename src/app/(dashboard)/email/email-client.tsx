@@ -21,9 +21,16 @@ import {
   Copy, 
   ExternalLink,
   Clock,
-  Download
+  Download,
+  Image as ImageIcon
 } from 'lucide-react';
-import { formatWhatsAppMessage, getWhatsAppShareUrl, downloadTicketPdf } from '@/lib/whatsapp';
+import { 
+  formatWhatsAppMessage, 
+  getWhatsAppShareUrl, 
+  downloadTicketImage, 
+  downloadTicketPdf, 
+  shareTicketImageToWhatsApp 
+} from '@/lib/whatsapp';
 import { 
   Dialog, 
   DialogContent, 
@@ -210,7 +217,6 @@ export function EmailClient({ isSuperAdmin, teamMembers, userId, initialGuests }
 
   // Filter guests with phone numbers for WhatsApp Hub
   const filteredWhatsAppGuests = useMemo(() => {
-    // Group seats by pass_code or phone
     const map = new Map<string, GuestRecord[]>();
     for (const g of initialGuests) {
       if (!g.guest_phone || g.guest_phone.trim() === '') continue;
@@ -278,7 +284,35 @@ export function EmailClient({ isSuperAdmin, teamMembers, userId, initialGuests }
     setWaModalOpen(true);
   };
 
-  // WhatsApp formatted message computed for modal
+  // Direct WhatsApp Share (with attached PNG image)
+  const handleWhatsAppImageShare = async (target: typeof waTargetItem) => {
+    if (!target) return;
+    try {
+      toast.loading("Preparing ticket image for WhatsApp...", { id: 'wa-share' });
+      const res = await shareTicketImageToWhatsApp({
+        seatId: target.seatId,
+        passCode: target.passCode,
+        guestName: target.guestName,
+        phone: target.phone,
+        section: target.section,
+        rows: target.rows,
+        seatNumbers: target.seatNumbers,
+        totalSeats: target.totalSeats,
+        paymentStatus: target.paymentStatus,
+      });
+
+      if (res.sharedNatively) {
+        toast.success("Shared directly with Ticket Image attached!", { id: 'wa-share' });
+      } else {
+        toast.success("Ticket image copied! Press Cmd+V (or Ctrl+V) in WhatsApp to paste.", { id: 'wa-share', duration: 6000 });
+      }
+      setWaModalOpen(false);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to share on WhatsApp', { id: 'wa-share' });
+    }
+  };
+
+  // WhatsApp formatted message computed for modal (WITHOUT links)
   const waModalMessage = useMemo(() => {
     if (!waTargetItem) return '';
     return formatWhatsAppMessage({
@@ -560,7 +594,7 @@ export function EmailClient({ isSuperAdmin, teamMembers, userId, initialGuests }
                 1-Click WhatsApp Ticket & Pass Dispatcher
               </h2>
               <p className="text-xs text-slate-400 mt-1">
-                Dispatch personalized concert E-Passes with live QR pass links and PDF tickets directly to donors on WhatsApp.
+                Dispatch personalized concert E-Passes with high-res ticket images and entry QR barcodes directly to donors on WhatsApp.
               </p>
             </div>
 
@@ -734,18 +768,32 @@ export function EmailClient({ isSuperAdmin, teamMembers, userId, initialGuests }
                   <span>Copy Text</span>
                 </button>
               </div>
-              <div className="p-3 bg-[#0E1724] rounded-xl border border-[#223345] text-[11px] text-slate-300 font-mono whitespace-pre-wrap max-h-48 overflow-y-auto leading-relaxed">
+              <div className="p-3 bg-[#0E1724] rounded-xl border border-[#223345] text-[11px] text-slate-300 font-mono whitespace-pre-wrap max-h-40 overflow-y-auto leading-relaxed">
                 {waModalMessage}
               </div>
             </div>
 
             {/* Quick Helper Tip */}
             <div className="p-3 bg-emerald-950/30 border border-emerald-800/40 rounded-xl text-[11px] text-emerald-300 leading-relaxed">
-              💡 <strong>Instant Delivery:</strong> Clicking <strong>Open in WhatsApp</strong> opens the donor's chat with the complete concert pass & live QR barcode link ready to send! You can also download the PDF ticket to drag and drop into the chat.
+              📸 <strong>Attached Ticket Image:</strong> Clicking <strong>Send WhatsApp Ticket</strong> attaches the high-res concert admission ticket with QR barcode directly into WhatsApp! On desktop, the image is automatically copied so you can press <strong>Cmd+V / Ctrl+V</strong> in the chat.
             </div>
           </div>
 
           <DialogFooter className="gap-2 sm:gap-2 flex-wrap border-t border-[#223345] pt-3">
+            <Button
+              variant="outline"
+              className="bg-[#1A2839] border-amber-800/60 text-amber-300 text-xs gap-1"
+              onClick={async () => {
+                if (waTargetItem) {
+                  await downloadTicketImage(waTargetItem.seatId, waTargetItem.passCode);
+                  toast.success("Ticket Image (PNG) downloaded!");
+                }
+              }}
+            >
+              <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
+              <span>Download Image (PNG)</span>
+            </Button>
+
             <Button
               variant="outline"
               className="bg-[#1A2839] border-[#2A3F55] text-slate-300 text-xs gap-1"
@@ -756,20 +804,16 @@ export function EmailClient({ isSuperAdmin, teamMembers, userId, initialGuests }
                 }
               }}
             >
-              <Download className="w-3.5 h-3.5 text-amber-400" />
+              <Download className="w-3.5 h-3.5 text-slate-400" />
               <span>Download PDF</span>
             </Button>
 
             <Button
-              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5 shadow-md shadow-emerald-950/40 px-5 flex-1"
-              onClick={() => {
-                const url = getWhatsAppShareUrl(waTargetItem?.phone, waModalMessage);
-                window.open(url, '_blank');
-                setWaModalOpen(false);
-              }}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5 shadow-md shadow-emerald-950/40 px-4 flex-1"
+              onClick={() => handleWhatsAppImageShare(waTargetItem)}
             >
               <MessageSquare className="w-4 h-4" />
-              <span>Open in WhatsApp</span>
+              <span>Send WhatsApp Ticket</span>
               <ExternalLink className="w-3 h-3 ml-0.5" />
             </Button>
           </DialogFooter>
