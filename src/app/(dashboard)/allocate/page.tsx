@@ -27,12 +27,14 @@ export default async function AllocatePage() {
   const { data: venueRowsData } = await adminClient
     .from("rows")
     .select("*")
-    .order("display_order", { ascending: true });
+    .order("display_order", { ascending: true })
+    .limit(100);
 
   // All seats with owner details to map row ownership accurately
   const { data: seatsData } = await adminClient
     .from("seats")
-    .select("owner_id, row_label, section, tier, payment_status, ticket_sent, guest_name");
+    .select("owner_id, row_label, section, tier, payment_status, ticket_sent, guest_name")
+    .limit(2000);
 
   const subAdmins: Profile[] = subAdminsData || [];
   const requests: AccessRequest[] = requestsData || [];

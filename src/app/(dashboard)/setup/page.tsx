@@ -15,11 +15,13 @@ export default async function SetupPage() {
   const { data: rowsData } = await adminClient
     .from("rows")
     .select("*")
-    .order("display_order", { ascending: true });
+    .order("display_order", { ascending: true })
+    .limit(100);
 
   const { data: seatsData } = await adminClient
     .from("seats")
-    .select("id, section, row_label, seat_no, tier, obligation, guest_name, payment_status, checked_in, owner_id");
+    .select("id, section, row_label, seat_no, tier, obligation, guest_name, payment_status, checked_in, owner_id")
+    .limit(2000);
 
   const rows: VenueRow[] = rowsData || [];
   const seatMapItems: SeatMapItem[] = (seatsData || []).map((s: any) => ({

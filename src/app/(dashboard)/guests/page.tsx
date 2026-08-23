@@ -42,8 +42,8 @@ export default async function GuestsPage() {
     }
   }
 
-  // Fetch seats based on role
-  let query = adminClient.from('seats').select('*');
+  // Fetch seats based on role (explicitly fetch all up to 2000 seats to prevent 1000 limit)
+  let query = adminClient.from('seats').select('*').limit(2000);
 
   if (role === 'sub_admin') {
     query = query.eq('owner_id', user.id);

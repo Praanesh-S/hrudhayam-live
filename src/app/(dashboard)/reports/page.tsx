@@ -30,7 +30,7 @@ export default async function ReportsPage() {
 
   const isSuperAdmin = profile?.role === 'super_admin';
 
-  let query = adminClient.from('seats').select('*, profiles(full_name)');
+  let query = adminClient.from('seats').select('*, profiles(full_name)').limit(2000);
   if (!isSuperAdmin) {
     query = query.eq('owner_id', user.id);
   }

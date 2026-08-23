@@ -37,7 +37,8 @@ export default async function EmailPage() {
   let query = adminClient
     .from('seats')
     .select('id, section, row_label, seat_no, tier, owner_id, guest_name, guest_email, guest_phone, pass_code, payment_status, ticket_sent')
-    .not('guest_name', 'is', null);
+    .not('guest_name', 'is', null)
+    .limit(2000);
 
   if (!isSuperAdmin) {
     query = query.eq('owner_id', user.id);
