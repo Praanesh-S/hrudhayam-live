@@ -22,14 +22,16 @@ import {
   ExternalLink,
   Clock,
   Download,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Share2
 } from 'lucide-react';
 import { 
   formatWhatsAppMessage, 
   getWhatsAppShareUrl, 
   downloadTicketImage, 
   downloadTicketPdf, 
-  shareTicketImageToWhatsApp 
+  copyTicketImageToClipboard,
+  mobileNativeShareTicket 
 } from '@/lib/whatsapp';
 import { 
   Dialog, 
@@ -284,12 +286,12 @@ export function EmailClient({ isSuperAdmin, teamMembers, userId, initialGuests }
     setWaModalOpen(true);
   };
 
-  // Direct WhatsApp Share (with attached PNG image)
-  const handleWhatsAppImageShare = async (target: typeof waTargetItem) => {
+  // Direct Mobile WhatsApp Native Share
+  const handleMobileNativeShare = async (target: typeof waTargetItem) => {
     if (!target) return;
     try {
-      toast.loading("Preparing ticket image for WhatsApp...", { id: 'wa-share' });
-      const res = await shareTicketImageToWhatsApp({
+      toast.loading("Preparing ticket image...", { id: 'mob-share' });
+      const shared = await mobileNativeShareTicket({
         seatId: target.seatId,
         passCode: target.passCode,
         guestName: target.guestName,
@@ -301,14 +303,14 @@ export function EmailClient({ isSuperAdmin, teamMembers, userId, initialGuests }
         paymentStatus: target.paymentStatus,
       });
 
-      if (res.sharedNatively) {
-        toast.success("Shared directly with Ticket Image attached!", { id: 'wa-share' });
+      if (shared) {
+        toast.success("Shared directly via WhatsApp!", { id: 'mob-share' });
+        setWaModalOpen(false);
       } else {
-        toast.success("Ticket image copied! Press Cmd+V (or Ctrl+V) in WhatsApp to paste.", { id: 'wa-share', duration: 6000 });
+        toast.error("Native share not supported on this browser. Use the Green Launch Button.", { id: 'mob-share' });
       }
-      setWaModalOpen(false);
     } catch (err: any) {
-      toast.error(err.message || 'Failed to share on WhatsApp', { id: 'wa-share' });
+      toast.error(err.message || "Share failed", { id: 'mob-share' });
     }
   };
 
@@ -326,6 +328,12 @@ export function EmailClient({ isSuperAdmin, teamMembers, userId, initialGuests }
       paymentStatus: waTargetItem.paymentStatus
     });
   }, [waTargetItem]);
+
+  // WhatsApp direct share URL
+  const waDirectUrl = useMemo(() => {
+    if (!waTargetItem) return '';
+    return getWhatsAppShareUrl(waTargetItem.phone, waModalMessage);
+  }, [waTargetItem, waModalMessage]);
 
   return (
     <div className="space-y-6">
@@ -773,49 +781,77 @@ export function EmailClient({ isSuperAdmin, teamMembers, userId, initialGuests }
               </div>
             </div>
 
-            {/* Quick Helper Tip */}
-            <div className="p-3 bg-emerald-950/30 border border-emerald-800/40 rounded-xl text-[11px] text-emerald-300 leading-relaxed">
-              📸 <strong>Attached Ticket Image:</strong> Clicking <strong>Send WhatsApp Ticket</strong> attaches the high-res concert admission ticket with QR barcode directly into WhatsApp! On desktop, the image is automatically copied so you can press <strong>Cmd+V / Ctrl+V</strong> in the chat.
+            {/* Quick Actions Strip */}
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-8 text-xs bg-[#1A2839] border-[#2A3F55] text-amber-300 hover:bg-[#24364A] gap-1"
+                onClick={async () => {
+                  if (waTargetItem) {
+                    await downloadTicketImage(waTargetItem.seatId, waTargetItem.passCode);
+                  }
+                }}
+              >
+                <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
+                <span>Download Image</span>
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                className="h-8 text-xs bg-[#1A2839] border-[#2A3F55] text-slate-300 hover:bg-[#24364A] gap-1"
+                onClick={async () => {
+                  if (waTargetItem) {
+                    await downloadTicketPdf(waTargetItem.seatId, waTargetItem.passCode);
+                  }
+                }}
+              >
+                <Download className="w-3.5 h-3.5 text-slate-400" />
+                <span>Download PDF</span>
+              </Button>
             </div>
+
+            {/* Mobile Native Share Trigger */}
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full h-8 text-xs bg-[#1A2839] border-emerald-800 text-emerald-300 hover:bg-emerald-950/60 gap-1.5 font-semibold"
+              onClick={() => handleMobileNativeShare(waTargetItem)}
+            >
+              <Share2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>📱 Share Image directly to Mobile WhatsApp</span>
+            </Button>
           </div>
 
-          <DialogFooter className="gap-2 sm:gap-2 flex-wrap border-t border-[#223345] pt-3">
+          <DialogFooter className="gap-2 sm:gap-2 border-t border-[#223345] pt-3">
             <Button
               variant="outline"
-              className="bg-[#1A2839] border-amber-800/60 text-amber-300 text-xs gap-1"
-              onClick={async () => {
-                if (waTargetItem) {
-                  await downloadTicketImage(waTargetItem.seatId, waTargetItem.passCode);
-                  toast.success("Ticket Image (PNG) downloaded!");
-                }
-              }}
+              className="bg-[#1A2839] border-[#2A3F55] text-slate-300 text-xs"
+              onClick={() => setWaModalOpen(false)}
             >
-              <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
-              <span>Download Image (PNG)</span>
+              Close
             </Button>
 
-            <Button
-              variant="outline"
-              className="bg-[#1A2839] border-[#2A3F55] text-slate-300 text-xs gap-1"
+            {/* Direct, Unblockable Native Link Anchor to WhatsApp */}
+            <a
+              href={waDirectUrl}
+              target="_blank"
+              rel="noopener noreferrer"
               onClick={async () => {
                 if (waTargetItem) {
-                  await downloadTicketPdf(waTargetItem.seatId, waTargetItem.passCode);
-                  toast.success("Ticket PDF downloaded!");
+                  copyTicketImageToClipboard(waTargetItem.seatId, waTargetItem.passCode);
+                  downloadTicketImage(waTargetItem.seatId, waTargetItem.passCode);
                 }
+                toast.success("Opening WhatsApp! Ticket image downloaded and copied to clipboard.");
+                setWaModalOpen(false);
               }}
-            >
-              <Download className="w-3.5 h-3.5 text-slate-400" />
-              <span>Download PDF</span>
-            </Button>
-
-            <Button
-              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5 shadow-md shadow-emerald-950/40 px-4 flex-1"
-              onClick={() => handleWhatsAppImageShare(waTargetItem)}
+              className="flex-1 inline-flex items-center justify-center gap-1.5 h-9 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md shadow-emerald-950/40 px-4 transition-colors"
             >
               <MessageSquare className="w-4 h-4" />
-              <span>Send WhatsApp Ticket</span>
-              <ExternalLink className="w-3 h-3 ml-0.5" />
-            </Button>
+              <span>Launch WhatsApp Chat</span>
+              <ExternalLink className="w-3.5 h-3.5 ml-1 opacity-80" />
+            </a>
           </DialogFooter>
         </DialogContent>
       </Dialog>

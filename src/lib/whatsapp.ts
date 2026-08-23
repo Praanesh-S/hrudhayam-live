@@ -74,6 +74,32 @@ export async function downloadTicketImage(seatId: string, passCode: string): Pro
 }
 
 /**
+ * Copy ticket image to clipboard for 1-click paste (Cmd+V / Ctrl+V)
+ */
+export async function copyTicketImageToClipboard(seatId: string, passCode: string): Promise<boolean> {
+  try {
+    const res = await fetch('/api/tickets/image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ seatId, passCode }),
+    });
+
+    if (!res.ok) return false;
+    const blob = await res.blob();
+
+    if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+      await navigator.clipboard.write([
+        new ClipboardItem({ 'image/png': blob }),
+      ]);
+      return true;
+    }
+  } catch (err) {
+    console.warn('Clipboard write failed:', err);
+  }
+  return false;
+}
+
+/**
  * Fetch and download Ticket PDF
  */
 export async function downloadTicketPdf(seatId: string, passCode: string): Promise<Blob> {
@@ -101,11 +127,10 @@ export async function downloadTicketPdf(seatId: string, passCode: string): Promi
 }
 
 /**
- * Smart WhatsApp Ticket Sharing with Attached Image / PDF:
- * 1. On Mobile (iOS / Android): Native share with PNG image file (preserves text caption on WhatsApp!).
- * 2. On Desktop: Copies PNG image to clipboard for 1-paste Cmd+V into WhatsApp Web, downloads file, and opens WhatsApp chat.
+ * Mobile Native Share:
+ * For Mobile devices (iOS/Android) where native Web Share is preferred
  */
-export async function shareTicketImageToWhatsApp({
+export async function mobileNativeShareTicket({
   seatId,
   passCode,
   guestName,
@@ -137,7 +162,6 @@ export async function shareTicketImageToWhatsApp({
     paymentStatus,
   });
 
-  // 1. Fetch the PNG image blob from generator
   const res = await fetch('/api/tickets/image', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -152,50 +176,17 @@ export async function shareTicketImageToWhatsApp({
   const fileName = `Hrudhayam-Ticket-${passCode}.png`;
   const imageFile = new File([imageBlob], fileName, { type: 'image/png' });
 
-  // 2. Try Mobile Native Share (iOS / Android)
   if (
     typeof navigator !== 'undefined' &&
     navigator.canShare &&
     navigator.canShare({ files: [imageFile] })
   ) {
-    try {
-      await navigator.share({
-        files: [imageFile],
-        title: `Hrudhayam Ticket - ${passCode}`,
-        text: messageText,
-      });
-      return { sharedNatively: true };
-    } catch (e: any) {
-      if (e.name === 'AbortError') return { sharedNatively: true };
-      console.warn('Native image share fallback', e);
-    }
+    await navigator.share({
+      files: [imageFile],
+      title: `Hrudhayam Ticket - ${passCode}`,
+      text: messageText,
+    });
+    return true;
   }
-
-  // 3. Desktop Clipboard & Download Fallback:
-  // Copy image to clipboard so user can press Cmd+V / Ctrl+V in WhatsApp Web
-  try {
-    if (typeof ClipboardItem !== 'undefined' && navigator.clipboard) {
-      await navigator.clipboard.write([
-        new ClipboardItem({ 'image/png': imageBlob }),
-      ]);
-    }
-  } catch (e) {
-    console.warn('Clipboard image copy not permitted:', e);
-  }
-
-  // Trigger file download
-  const url = window.URL.createObjectURL(imageBlob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fileName;
-  document.body.appendChild(a);
-  a.click();
-  window.URL.revokeObjectURL(url);
-  document.body.removeChild(a);
-
-  // Open WhatsApp Web
-  const waUrl = getWhatsAppShareUrl(phone, messageText);
-  window.open(waUrl, '_blank');
-
-  return { sharedNatively: false, downloaded: true };
+  return false;
 }
