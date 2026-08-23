@@ -7,15 +7,18 @@ export type AuditAction =
   | 'update_row_obligation'
   | 'update_seat_count'
   | 'update_guest'
+  | 'issue_pass'
+  | 'revoke_pass'
   | 'toggle_payment'
   | 'send_ticket'
   | 'check_in'
   | 'approve_user'
   | 'reject_user'
   | 'invite_user'
-  | 'update_user';
+  | 'update_user'
+  | 'update_access_request';
 
-export type EntityType = 'row' | 'seat' | 'user' | 'request';
+export type EntityType = 'row' | 'seat' | 'user' | 'request' | 'access_request';
 
 export async function logAudit(
   userId: string,

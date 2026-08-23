@@ -29,19 +29,39 @@ export default async function AllocatePage() {
     .select("*")
     .order("display_order", { ascending: true });
 
-  // Current Allocations (seats owned by sub admins)
+  // All seats with owner details to map row ownership accurately
   const { data: seatsData } = await adminClient
     .from("seats")
-    .select("owner_id, row_label, tier, payment_status, ticket_sent, guest_name")
-    .not("owner_id", "is", null);
+    .select("owner_id, row_label, section, tier, payment_status, ticket_sent, guest_name");
 
   const subAdmins: Profile[] = subAdminsData || [];
   const requests: AccessRequest[] = requestsData || [];
   const venueRows: VenueRow[] = venueRowsData || [];
+  const seats = seatsData || [];
+
+  const adminMap = new Map(subAdmins.map(a => [a.id, a.full_name]));
+
+  // Map each row (by section + row_label) to its owner summary
+  const rowOwners: Record<string, { ownerId: string; ownerName: string; count: number }[]> = {};
+  for (const s of seats) {
+    if (!s.owner_id) continue;
+    const key = `${s.section}:${s.row_label}`;
+    if (!rowOwners[key]) rowOwners[key] = [];
+    const existing = rowOwners[key].find(o => o.ownerId === s.owner_id);
+    if (existing) {
+      existing.count++;
+    } else {
+      rowOwners[key].push({
+        ownerId: s.owner_id,
+        ownerName: adminMap.get(s.owner_id) || "Another Member",
+        count: 1
+      });
+    }
+  }
   
-  // Aggregate allocations
+  // Aggregate allocations for Current Allocations tab
   const currentAllocations = subAdmins.map(admin => {
-    const adminSeats = seatsData?.filter(s => s.owner_id === admin.id) || [];
+    const adminSeats = seats.filter(s => s.owner_id === admin.id);
     const uniqueRows = Array.from(new Set(adminSeats.map(s => s.row_label)));
     const filled = adminSeats.filter(s => s.guest_name).length;
     const paid = adminSeats.filter(s => (s.payment_status || '').toLowerCase() === "received").length;
@@ -72,6 +92,7 @@ export default async function AllocatePage() {
           subAdmins={subAdmins} 
           requests={requests} 
           venueRows={venueRows}
+          rowOwners={rowOwners}
           currentAllocations={currentAllocations}
         />
       </div>
