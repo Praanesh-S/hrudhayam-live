@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { generateQrPngBuffer } from '@/lib/qrcode';
 import { renderToBuffer } from '@react-pdf/renderer';
 import { TicketPdf } from '@/components/pdf/TicketPdf';
@@ -8,32 +9,34 @@ import React from 'react';
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { seatId } = body;
+    const { seatId, passCode } = body;
 
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-    const { data: seat } = await supabase
-      .from('seats')
-      .select('*')
-      .eq('id', seatId)
-      .single();
-
-    if (!seat) return NextResponse.json({ error: 'Seat not found' }, { status: 404 });
-
-    const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-    if (profile?.role !== 'super_admin' && seat.owner_id !== user.id) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (!seatId && !passCode) {
+      return NextResponse.json({ error: 'Seat ID or Pass Code required' }, { status: 400 });
     }
+
+    const adminClient = createAdminClient();
+
+    let seatQuery = adminClient.from('seats').select('*');
+    if (seatId) {
+      seatQuery = seatQuery.eq('id', seatId);
+    } else {
+      seatQuery = seatQuery.eq('pass_code', passCode);
+    }
+
+    const { data: seats } = await seatQuery;
+    if (!seats || seats.length === 0) {
+      return NextResponse.json({ error: 'Seat/Pass not found' }, { status: 404 });
+    }
+
+    const seat = seats[0];
 
     if (!seat.guest_name || !seat.pass_code || !seat.qr_token) {
       return NextResponse.json({ error: 'Guest details incomplete' }, { status: 400 });
     }
 
     // Fetch all seats with the same pass code for group tickets
-    const { data: groupSeats } = await supabase
+    const { data: groupSeats } = await adminClient
       .from('seats')
       .select('id, section, row_label, seat_no')
       .eq('pass_code', seat.pass_code)
@@ -49,10 +52,8 @@ export async function POST(req: Request) {
       displayRow = rows.join(', ');
       
       if (rows.length === 1) {
-        // all in same row
         displaySeat = groupSeats.map(s => s.seat_no).join(', ');
       } else {
-        // multiple rows
         displaySeat = 'Multiple';
       }
     }
@@ -75,11 +76,11 @@ export async function POST(req: Request) {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `inline; filename="Ticket-${seat.id}.pdf"`
+        'Content-Disposition': `inline; filename="Ticket-${seat.pass_code || seat.id}.pdf"`
       }
     });
   } catch (error: any) {
     console.error('PDF Generation Error:', error);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
   }
 }

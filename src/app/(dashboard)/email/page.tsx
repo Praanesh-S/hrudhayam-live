@@ -1,10 +1,10 @@
 export const dynamic = 'force-dynamic';
 import { createClient } from '@/lib/supabase/server';
-import { RoleGate } from '@/components/layout/RoleGate';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { EmailClient } from './email-client';
 
 export const metadata = {
-  title: 'Mass Email | Hrudhayam',
+  title: 'Broadcast & Communication | Hrudhayam LIVE',
 };
 
 export default async function EmailPage() {
@@ -13,7 +13,9 @@ export default async function EmailPage() {
 
   if (!user) return null;
 
-  const { data: profile } = await supabase
+  const adminClient = createAdminClient();
+
+  const { data: profile } = await adminClient
     .from('profiles')
     .select('role')
     .eq('id', user.id)
@@ -23,7 +25,7 @@ export default async function EmailPage() {
 
   let teamMembers = null;
   if (isSuperAdmin) {
-    const { data } = await supabase
+    const { data } = await adminClient
       .from('profiles')
       .select('id, full_name, email')
       .eq('is_active', true)
@@ -31,12 +33,27 @@ export default async function EmailPage() {
     teamMembers = data;
   }
 
+  // Fetch all assigned guests for checklist selection & WhatsApp broadcast
+  let query = adminClient
+    .from('seats')
+    .select('id, section, row_label, seat_no, tier, owner_id, guest_name, guest_email, guest_phone, pass_code, payment_status, ticket_sent')
+    .not('guest_name', 'is', null);
+
+  if (!isSuperAdmin) {
+    query = query.eq('owner_id', user.id);
+  }
+
+  const { data: seats } = await query
+    .order('section')
+    .order('row_label')
+    .order('seat_no');
+
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6 max-w-7xl mx-auto pb-16">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Mass Email</h1>
-        <p className="text-muted-foreground">
-          Send announcements or tickets to guests.
+        <h1 className="text-3xl font-bold tracking-tight text-white">Broadcast & Communication Hub</h1>
+        <p className="text-xs text-slate-400 mt-1">
+          Send mass announcements via Email or 1-Click WhatsApp messages with digital pass links.
         </p>
       </div>
       
@@ -44,6 +61,7 @@ export default async function EmailPage() {
         isSuperAdmin={isSuperAdmin} 
         teamMembers={teamMembers || []} 
         userId={user.id}
+        initialGuests={seats || []}
       />
     </div>
   );

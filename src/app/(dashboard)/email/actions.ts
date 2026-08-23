@@ -2,93 +2,60 @@
 
 import { createClient } from '@/lib/supabase/server';
 import { queueEmail, getQueueStats } from '@/lib/email';
+import { logAudit } from '@/lib/audit';
 
-type EmailFilters = {
-  section: string;
-  tier: string;
-  paymentStatus: string;
-  ticketSent: string;
-  ownerId?: string;
-};
-
-export async function getRecipientCount(filters: EmailFilters, isSuperAdmin: boolean, userId: string) {
-  const supabase = await createClient();
-  
-  let query = supabase
-    .from('seats')
-    .select('id', { count: 'exact', head: true })
-    .not('guest_email', 'is', null)
-    .not('guest_email', 'eq', '');
-
-  if (!isSuperAdmin) {
-    query = query.eq('owner_id', userId);
-  } else if (filters.ownerId && filters.ownerId !== 'All') {
-    query = query.eq('owner_id', filters.ownerId);
-  }
-
-  if (filters.section !== 'All') query = query.eq('section', filters.section);
-  if (filters.tier !== 'All') query = query.eq('tier', parseInt(filters.tier));
-  if (filters.paymentStatus !== 'All') query = query.eq('payment_status', filters.paymentStatus);
-  if (filters.ticketSent !== 'All') {
-    query = query.eq('ticket_sent', filters.ticketSent === 'Yes');
-  }
-
-  const { count, error } = await query;
-  if (error) {
-    console.error('Count error:', error);
-    return 0;
-  }
-  return count || 0;
+export interface TargetRecipient {
+  email: string;
+  name?: string;
+  seatId?: string;
 }
 
-export async function sendMassEmail(subject: string, body: string, filters: EmailFilters, isSuperAdmin: boolean, userId: string) {
-  const supabase = await createClient();
-  
-  let query = supabase
-    .from('seats')
-    .select('id, guest_email, guest_name, owner_id')
-    .not('guest_email', 'is', null)
-    .not('guest_email', 'eq', '');
-
-  if (!isSuperAdmin) {
-    query = query.eq('owner_id', userId);
-  } else if (filters.ownerId && filters.ownerId !== 'All') {
-    query = query.eq('owner_id', filters.ownerId);
+export async function sendCustomMassEmail(
+  subject: string, 
+  body: string, 
+  recipients: TargetRecipient[], 
+  userId: string
+) {
+  if (!subject || !body) {
+    throw new Error('Subject and body are required');
   }
 
-  if (filters.section !== 'All') query = query.eq('section', filters.section);
-  if (filters.tier !== 'All') query = query.eq('tier', parseInt(filters.tier));
-  if (filters.paymentStatus !== 'All') query = query.eq('payment_status', filters.paymentStatus);
-  if (filters.ticketSent !== 'All') {
-    query = query.eq('ticket_sent', filters.ticketSent === 'Yes');
+  if (!recipients || recipients.length === 0) {
+    throw new Error('No recipients provided');
   }
 
-  const { data: seats, error } = await query;
-  
-  if (error || !seats || seats.length === 0) {
-    return { queued: 0 };
-  }
-
-  // Queue emails
-  let queued = 0;
-  for (const seat of seats) {
-    if (seat.guest_email) {
-      await queueEmail({
-        to: seat.guest_email,
-        subject,
-        htmlBody: body,
-        seatId: seat.id,
-        emailType: 'mass',
-        createdBy: userId,
-      });
-      queued++;
+  // Deduplicate emails
+  const uniqueMap = new Map<string, TargetRecipient>();
+  for (const r of recipients) {
+    const clean = r.email.trim().toLowerCase();
+    if (clean && !uniqueMap.has(clean)) {
+      uniqueMap.set(clean, { ...r, email: clean });
     }
   }
 
-  // Assuming 100 per day limit
-  const days = Math.ceil(queued / 100);
-  
-  return { queued, estimatedDays: days };
+  const uniqueRecipients = Array.from(uniqueMap.values());
+  let queued = 0;
+
+  for (const r of uniqueRecipients) {
+    await queueEmail({
+      to: r.email,
+      subject,
+      htmlBody: body,
+      seatId: r.seatId || undefined,
+      emailType: 'mass',
+      createdBy: userId,
+    });
+    queued++;
+  }
+
+  await logAudit(userId, 'send_ticket', 'user', userId, {
+    action: 'mass_email_broadcast',
+    subject,
+    recipientCount: queued
+  });
+
+  const estimatedDays = Math.ceil(queued / 100);
+  return { queued, estimatedDays };
 }
 
 export async function getQueueStatus() {

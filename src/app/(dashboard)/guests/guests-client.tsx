@@ -39,10 +39,12 @@ import {
   Mail, 
   AlertTriangle,
   QrCode,
-  Sparkles
+  Sparkles,
+  MessageSquare
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatINR } from '@/lib/constants';
+import { formatWhatsAppMessage, getWhatsAppShareUrl } from '@/lib/whatsapp';
 
 export type Seat = {
   id: string;
@@ -279,7 +281,7 @@ export function GuestsClient({
   };
 
   // Submit Issue Pass
-  const handleIssuePass = async (action: 'issue' | 'download_pdf' | 'send_email') => {
+  const handleIssuePass = async (action: 'issue' | 'download_pdf' | 'send_email' | 'share_whatsapp') => {
     const targetSeatIds = passMode === 'single' 
       ? (wizardSingleSeat ? [wizardSingleSeat] : []) 
       : wizardSelectedSeats;
@@ -329,9 +331,29 @@ export function GuestsClient({
           return s;
         }));
 
-        // Trigger immediate PDF download if requested
+        // Handle Download PDF
         if (action === 'download_pdf') {
           handleDownloadPdf(targetSeatIds[0], res.passCode);
+        }
+
+        // Handle WhatsApp Share
+        if (action === 'share_whatsapp') {
+          const selectedSeatObjects = availableSeats.filter(s => targetSeatIds.includes(s.id));
+          const rows = Array.from(new Set(selectedSeatObjects.map(s => s.row_label)));
+          const seatNumbers = selectedSeatObjects.map(s => s.seat_no).join(', ');
+
+          const msg = formatWhatsAppMessage({
+            guestName: guestName.trim(),
+            phone: guestPhone.trim(),
+            passCode: res.passCode,
+            section: wizardSection,
+            rows,
+            seatNumbers,
+            totalSeats: targetSeatIds.length,
+            paymentStatus
+          });
+          const url = getWhatsAppShareUrl(guestPhone.trim(), msg);
+          window.open(url, '_blank');
         }
 
         // Switch to Issued Passes tab
@@ -382,6 +404,22 @@ export function GuestsClient({
         toast.error(err.message || "Failed to send ticket");
       }
     });
+  };
+
+  // 1-Click WhatsApp Share for an existing pass
+  const handleWhatsAppShare = (pass: GroupedPass) => {
+    const msg = formatWhatsAppMessage({
+      guestName: pass.guestName,
+      phone: pass.guestPhone,
+      passCode: pass.passCode,
+      section: pass.section,
+      rows: pass.rows,
+      seatNumbers: pass.seatNumbers,
+      totalSeats: pass.totalSeats,
+      paymentStatus: pass.paymentStatus
+    });
+    const url = getWhatsAppShareUrl(pass.guestPhone, msg);
+    window.open(url, '_blank');
   };
 
   // Download PDF E-Ticket
@@ -696,7 +734,7 @@ export function GuestsClient({
                     {userRole === 'super_admin' && (
                       <TableHead className="w-32 text-slate-300">Assigned Member</TableHead>
                     )}
-                    <TableHead className="min-w-[200px] text-right pr-6 text-slate-300">Pass Actions</TableHead>
+                    <TableHead className="min-w-[240px] text-right pr-6 text-slate-300">Pass Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -831,6 +869,18 @@ export function GuestsClient({
                           {/* Actions */}
                           <TableCell className="text-right pr-6">
                             <div className="flex items-center justify-end gap-1.5">
+                              {/* 1-Click WhatsApp Share */}
+                              <Button
+                                size="xs"
+                                variant="outline"
+                                className="h-7 px-2 text-emerald-300 bg-emerald-950/60 border-emerald-800 hover:bg-emerald-900 hover:text-white text-[11px] gap-1"
+                                onClick={() => handleWhatsAppShare(pass)}
+                                title="Share Pass link & details on WhatsApp"
+                              >
+                                <MessageSquare className="w-3 h-3 text-emerald-400" />
+                                <span>WhatsApp</span>
+                              </Button>
+
                               {/* PDF Download */}
                               <Button
                                 size="xs"
@@ -1303,10 +1353,10 @@ export function GuestsClient({
                 </div>
 
                 <div className="space-y-1">
-                  <Label className="text-xs font-medium text-slate-300">Mobile Phone (Optional)</Label>
+                  <Label className="text-xs font-medium text-slate-300">Mobile Phone (for WhatsApp Share)</Label>
                   <Input 
                     type="tel" 
-                    placeholder="10-digit mobile" 
+                    placeholder="10-digit mobile number" 
                     value={guestPhone} 
                     onChange={e => setGuestPhone(e.target.value)} 
                     className="h-9 text-xs bg-[#1A2839] border-[#2A3F55] text-white"
@@ -1355,12 +1405,12 @@ export function GuestsClient({
 
             <Button 
               variant="outline"
-              className="bg-[#1A2839] border-slate-700 text-white hover:bg-slate-800 text-xs gap-1"
+              className="bg-[#1A2839] border-emerald-700 text-emerald-300 hover:bg-emerald-950/60 text-xs gap-1"
               disabled={isPending || !guestName}
-              onClick={() => handleIssuePass('issue')}
+              onClick={() => handleIssuePass('share_whatsapp')}
             >
-              {isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ticket className="w-3.5 h-3.5" />}
-              <span>Issue Pass Only</span>
+              <MessageSquare className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Issue & Share WhatsApp</span>
             </Button>
 
             <Button 
@@ -1370,7 +1420,7 @@ export function GuestsClient({
               onClick={() => handleIssuePass('download_pdf')}
             >
               <Download className="w-3.5 h-3.5 text-amber-400" />
-              <span>Issue & Download PDF</span>
+              <span>Issue & PDF</span>
             </Button>
 
             <Button 
@@ -1379,7 +1429,7 @@ export function GuestsClient({
               onClick={() => handleIssuePass('send_email')}
             >
               {isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-              <span>Issue & Send Email</span>
+              <span>Issue & Email</span>
             </Button>
           </DialogFooter>
         </DialogContent>
