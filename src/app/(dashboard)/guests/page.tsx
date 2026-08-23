@@ -2,7 +2,8 @@ export const dynamic = 'force-dynamic';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { GuestsClient } from './guests-client';
+import { GuestsClient, Seat } from './guests-client';
+import { fetchAllSeats } from '@/lib/seat-utils';
 
 export default async function GuestsPage() {
   const supabase = await createClient();
@@ -42,26 +43,15 @@ export default async function GuestsPage() {
     }
   }
 
-  // Fetch seats based on role (explicitly fetch all up to 2000 seats to prevent 1000 limit)
-  let query = adminClient.from('seats').select('*').limit(2000);
-
-  if (role === 'sub_admin') {
-    query = query.eq('owner_id', user.id);
-  }
-
-  const { data: seats, error } = await query
-    .order('section', { ascending: true })
-    .order('row_label', { ascending: true })
-    .order('seat_no', { ascending: true });
-
-  if (error) {
-    console.error('Error fetching seats:', error);
-  }
+  // Fetch ALL seats (all 1,448) using multi-range pagination helper
+  const seats = await fetchAllSeats<Seat>(adminClient, {
+    ownerId: role === 'sub_admin' ? user.id : undefined,
+  });
 
   return (
     <div className="flex-1 space-y-4 p-4 md:p-8 pt-6 max-w-7xl mx-auto pb-16">
       <GuestsClient 
-        initialSeats={seats || []} 
+        initialSeats={seats} 
         userRole={role} 
         userId={user.id} 
         ownerMap={ownerMap}

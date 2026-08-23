@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { EmailClient } from './email-client';
+import { fetchAllSeats } from '@/lib/seat-utils';
 
 export const metadata = {
   title: 'Broadcast & Communication | Hrudhayam LIVE',
@@ -34,20 +35,11 @@ export default async function EmailPage() {
   }
 
   // Fetch all assigned guests for checklist selection & WhatsApp broadcast
-  let query = adminClient
-    .from('seats')
-    .select('id, section, row_label, seat_no, tier, owner_id, guest_name, guest_email, guest_phone, pass_code, payment_status, ticket_sent')
-    .not('guest_name', 'is', null)
-    .limit(2000);
+  const allSeats = await fetchAllSeats(adminClient, {
+    ownerId: isSuperAdmin ? undefined : user.id,
+  });
 
-  if (!isSuperAdmin) {
-    query = query.eq('owner_id', user.id);
-  }
-
-  const { data: seats } = await query
-    .order('section')
-    .order('row_label')
-    .order('seat_no');
+  const seats = allSeats.filter((s: any) => s.guest_name && s.guest_name.trim() !== '');
 
   return (
     <div className="flex flex-col gap-6 max-w-7xl mx-auto pb-16">

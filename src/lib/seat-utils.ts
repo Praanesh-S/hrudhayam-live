@@ -143,3 +143,41 @@ export function getSeatColor(seat: {
       return "#E2E8F0";
   }
 }
+
+/**
+ * Robust helper to fetch all 1,448 venue seats without being capped by PostgREST's 1000 row max limit.
+ * Queries in parallel ranges (0..999 and 1000..1999).
+ */
+export async function fetchAllSeats<T = any>(
+  supabaseClient: any,
+  options: {
+    select?: string;
+    ownerId?: string;
+  } = {}
+): Promise<T[]> {
+  const selectFields = options.select || '*';
+
+  const buildQuery = (from: number, to: number) => {
+    let q = supabaseClient.from('seats').select(selectFields).range(from, to);
+    if (options.ownerId) {
+      q = q.eq('owner_id', options.ownerId);
+    }
+    return q
+      .order('section', { ascending: true })
+      .order('row_label', { ascending: true })
+      .order('seat_no', { ascending: true });
+  };
+
+  const [batch1, batch2] = await Promise.all([
+    buildQuery(0, 999),
+    buildQuery(1000, 1999)
+  ]);
+
+  if (batch1.error) console.error('fetchAllSeats batch 1 error:', batch1.error);
+  if (batch2.error) console.error('fetchAllSeats batch 2 error:', batch2.error);
+
+  const data1 = (batch1.data || []) as T[];
+  const data2 = (batch2.data || []) as T[];
+
+  return [...data1, ...data2];
+}

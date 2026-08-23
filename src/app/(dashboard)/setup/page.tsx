@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { SetupClient } from "./setup-client";
 import { SeatMapItem, VenueRow } from "@/lib/types";
+import { fetchAllSeats } from "@/lib/seat-utils";
 
 export const dynamic = 'force-dynamic';
 
@@ -15,13 +16,11 @@ export default async function SetupPage() {
   const { data: rowsData } = await adminClient
     .from("rows")
     .select("*")
-    .order("display_order", { ascending: true })
-    .limit(100);
+    .order("display_order", { ascending: true });
 
-  const { data: seatsData } = await adminClient
-    .from("seats")
-    .select("id, section, row_label, seat_no, tier, obligation, guest_name, payment_status, checked_in, owner_id")
-    .limit(2000);
+  const seatsData = await fetchAllSeats(adminClient, {
+    select: "id, section, row_label, seat_no, tier, obligation, guest_name, payment_status, checked_in, owner_id"
+  });
 
   const rows: VenueRow[] = rowsData || [];
   const seatMapItems: SeatMapItem[] = (seatsData || []).map((s: any) => ({

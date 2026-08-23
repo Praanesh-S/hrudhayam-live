@@ -24,6 +24,7 @@ import {
   Tag
 } from 'lucide-react';
 import { formatINR } from '@/lib/constants';
+import { fetchAllSeats } from '@/lib/seat-utils';
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -46,14 +47,9 @@ export default async function DashboardPage() {
   }
 
   const isSuperAdmin = profile.role === 'super_admin';
-  let query = adminClient.from('seats').select('*').limit(2000);
-  
-  if (!isSuperAdmin) {
-    query = query.eq('owner_id', user.id);
-  }
-
-  const { data: seatsData } = await query;
-  const seats = seatsData || [];
+  const seats = await fetchAllSeats(adminClient, {
+    ownerId: isSuperAdmin ? undefined : user.id,
+  });
 
   // Calculate live statistics
   const totalCapacity = 1448;

@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Download, FileSpreadsheet, TrendingUp, Users, CheckCircle2, Clock, IndianRupee } from 'lucide-react';
 import { formatINR } from '@/lib/constants';
+import { fetchAllSeats } from '@/lib/seat-utils';
 
 export const metadata = {
   title: 'Financial Reports | Hrudhayam LIVE',
@@ -30,13 +31,9 @@ export default async function ReportsPage() {
 
   const isSuperAdmin = profile?.role === 'super_admin';
 
-  let query = adminClient.from('seats').select('*, profiles(full_name)').limit(2000);
-  if (!isSuperAdmin) {
-    query = query.eq('owner_id', user.id);
-  }
-
-  const { data: seatsData } = await query;
-  const seats = seatsData || [];
+  const seats = await fetchAllSeats(adminClient, {
+    ownerId: isSuperAdmin ? undefined : user.id,
+  });
 
   // Compute stats safely with case-insensitive payment_status
   const totalSeats = seats.length;

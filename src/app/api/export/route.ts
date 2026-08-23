@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import ExcelJS from 'exceljs';
+import { fetchAllSeats } from '@/lib/seat-utils';
 
 export async function GET(req: Request) {
   const supabase = await createClient();
@@ -21,19 +22,12 @@ export async function GET(req: Request) {
 
   const isSuperAdmin = profile?.role === 'super_admin';
 
-  let query = adminClient.from('seats').select('*, profiles(full_name)').limit(2000);
-  if (!isSuperAdmin) {
-    query = query.eq('owner_id', user.id);
-  }
+  const { data: allProfiles } = await adminClient.from('profiles').select('id, full_name');
+  const profileMap = new Map((allProfiles || []).map((p: any) => [p.id, p.full_name]));
 
-  const { data: seats, error } = await query
-    .order('section', { ascending: true })
-    .order('row_label', { ascending: true })
-    .order('seat_no', { ascending: true });
-
-  if (error || !seats) {
-    return NextResponse.json({ error: 'Failed to fetch data' }, { status: 500 });
-  }
+  const seats = await fetchAllSeats(adminClient, {
+    ownerId: isSuperAdmin ? undefined : user.id,
+  });
 
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Hrudhayam App';
@@ -74,7 +68,7 @@ export async function GET(req: Request) {
       row_label: s.row_label,
       seat_no: s.seat_no,
       tier: s.tier,
-      owner: s.profiles?.full_name || 'Unassigned',
+      owner: s.owner_id ? (profileMap.get(s.owner_id) || 'Team Member') : 'Unassigned',
       obligation: s.obligation,
       guest_name: s.guest_name || '',
       guest_email: s.guest_email || '',

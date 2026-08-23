@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { AllocateClient } from "./allocate-client";
 import { Profile, AccessRequest, VenueRow } from "@/lib/types";
+import { fetchAllSeats } from "@/lib/seat-utils";
 
 export const dynamic = 'force-dynamic';
 
@@ -27,14 +28,12 @@ export default async function AllocatePage() {
   const { data: venueRowsData } = await adminClient
     .from("rows")
     .select("*")
-    .order("display_order", { ascending: true })
-    .limit(100);
+    .order("display_order", { ascending: true });
 
-  // All seats with owner details to map row ownership accurately
-  const { data: seatsData } = await adminClient
-    .from("seats")
-    .select("owner_id, row_label, section, tier, payment_status, ticket_sent, guest_name")
-    .limit(2000);
+  // All seats with owner details to map row ownership accurately (all 1,448)
+  const seatsData = await fetchAllSeats(adminClient, {
+    select: "owner_id, row_label, section, tier, payment_status, ticket_sent, guest_name"
+  });
 
   const subAdmins: Profile[] = subAdminsData || [];
   const requests: AccessRequest[] = requestsData || [];
