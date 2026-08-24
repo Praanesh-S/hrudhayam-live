@@ -14,6 +14,41 @@ export type EmailJobStatus =
   | "sent"
   | "failed"
   | "deferred";
+export type SponsorTier =
+  | "title_sponsor"
+  | "powered_by"
+  | "co_sponsor"
+  | "platinum_sponsor"
+  | "diamond_sponsor"
+  | "gold_sponsor"
+  | "special_sponsor"
+  | "other_sponsor"
+  | "event_supporters";
+export type AuditAction =
+  | "PRICE_SET"
+  | "RESERVE"
+  | "ALLOT"
+  | "RELEASE"
+  | "GUEST_EDIT"
+  | "PASS_SENT"
+  | "SPONSOR_TAG"
+  | "GROUP_ASSIGN"
+  | "CHECK_IN"
+  | "OVERRIDE"
+  | "ROW_SEATCOUNT_EDIT"
+  | "PAYMENT_STATUS_CHANGE"
+  | "PASS_REVOKE"
+  | "SPONSOR_CREATE"
+  | "SPONSOR_UPDATE"
+  | "SPONSOR_DELETE"
+  | "GROUP_CREATE"
+  | "GROUP_UPDATE"
+  | "GROUP_DELETE"
+  | "ACCESS_REQUEST_UPDATE"
+  | "USER_INVITE"
+  | "update_access_request"
+  | "invite_user"
+  | "send_ticket";
 
 // ── Database row types ──
 
@@ -79,11 +114,53 @@ export interface Seat {
   payment_status: PaymentStatus;
   checked_in: boolean;
   checked_in_at: string | null;
+  checked_in_by: string | null;
+  sponsor_id: string | null;
+  group_id: string | null;
   created_at: string;
   updated_at: string;
   // Joined fields
   owner?: Profile;
   row?: VenueRow;
+  sponsor?: Sponsor;
+  group?: Group;
+}
+
+export interface Sponsor {
+  id: string;
+  name: string;
+  sponsor_tier: SponsorTier;
+  complimentary_pass_count: number;
+  contact_name: string | null;
+  contact_phone: string | null;
+  contact_email: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Group {
+  id: string;
+  group_name: string;
+  lead_contact_name: string;
+  lead_contact_phone: string | null;
+  lead_contact_email: string | null;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AuditLog {
+  id: string;
+  user_id: string | null;
+  action: AuditAction;
+  entity_type: string;
+  entity_id: string | null;
+  details: Record<string, unknown> | null;
+  created_at: string;
+  // Joined
+  profiles?: { full_name: string; email: string; role: AppRole | null };
 }
 
 export interface EmailJob {

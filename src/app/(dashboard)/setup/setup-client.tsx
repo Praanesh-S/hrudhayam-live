@@ -315,7 +315,7 @@ export function SetupClient({ initialRows, seatMapItems }: { initialRows: VenueR
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="bg-[#131F2E] border-[#223345] text-white">
-                  <SelectItem value="Ground Floor">Ground Floor (698 seats)</SelectItem>
+                  <SelectItem value="Ground Floor">Ground Floor (648 seats)</SelectItem>
                   <SelectItem value="Balcony">Balcony (750 seats)</SelectItem>
                 </SelectContent>
               </Select>
@@ -403,7 +403,7 @@ export function SetupClient({ initialRows, seatMapItems }: { initialRows: VenueR
               Total Venue Capacity
             </span>
             <div className="text-2xl font-extrabold text-white mt-1.5">{totalSeats} Seats</div>
-            <p className="text-xs text-slate-400 mt-1">Ground: 698 • Balcony: 750</p>
+            <p className="text-xs text-slate-400 mt-1">Ground: 648 • Balcony: 750</p>
           </CardContent>
         </Card>
 
@@ -432,7 +432,7 @@ export function SetupClient({ initialRows, seatMapItems }: { initialRows: VenueR
       <Tabs defaultValue="ground-floor" className="space-y-4">
         <TabsList className="bg-[#131F2E] border border-[#223345] p-1 rounded-xl">
           <TabsTrigger value="ground-floor" className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#1A2839] data-[state=active]:text-white">
-            Ground Floor (698 seats)
+            Ground Floor (648 seats)
           </TabsTrigger>
           <TabsTrigger value="balcony" className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#1A2839] data-[state=active]:text-white">
             Balcony (750 seats)
@@ -449,7 +449,7 @@ export function SetupClient({ initialRows, seatMapItems }: { initialRows: VenueR
                 Ground Floor Rows & Tier Pricing
               </CardTitle>
               <CardDescription className="text-xs text-slate-400">
-                Click any price tier button or edit seat count for Rows A–N and SPL VIP.
+                Click any price tier button or edit seat count for Rows A–N.
               </CardDescription>
             </CardHeader>
             <CardContent className="p-4 sm:p-6">

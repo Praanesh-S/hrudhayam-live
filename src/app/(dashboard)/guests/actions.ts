@@ -90,7 +90,7 @@ export async function issuePass(params: IssuePassParams) {
 
   if (updateError) throw new Error(updateError.message);
 
-  await logAudit(user.id, "issue_pass", "seat", passCode, {
+  await logAudit(user.id, "ALLOT", "seat", passCode, {
     pass_code: passCode,
     seatIds: params.seatIds,
     seatCount: params.seatIds.length,
@@ -156,7 +156,7 @@ export async function revokePass(passCodeOrSeatId: string) {
 
   if (error) throw new Error(error.message);
 
-  await logAudit(user.id, "revoke_pass", "seat", passCode, { seatIds });
+  await logAudit(user.id, "PASS_REVOKE", "seat", passCode, { seatIds });
   revalidatePath("/", "layout");
   return { success: true, count: seatIds.length };
 }
@@ -193,7 +193,7 @@ export async function updateGuest(seatId: string, data: any) {
   const { error } = await targetQuery;
   if (error) throw new Error(error.message);
 
-  await logAudit(user.id, "update_guest", "seat", seat.pass_code || seatId, updates);
+  await logAudit(user.id, "GUEST_EDIT", "seat", seat.pass_code || seatId, updates);
   revalidatePath("/", "layout");
   return true;
 }
@@ -227,7 +227,7 @@ export async function togglePayment(seatIdOrPassCode: string, status: 'pending' 
 
   if (error) throw new Error(error.message);
 
-  await logAudit(user.id, "toggle_payment", "seat", seatIdOrPassCode, { status, seatIds });
+  await logAudit(user.id, "PAYMENT_STATUS_CHANGE", "seat", seatIdOrPassCode, { status, seatIds });
   revalidatePath("/", "layout");
   return { success: true };
 }
@@ -263,7 +263,7 @@ export async function sendTicket(seatId: string) {
     throw new Error(data.error || 'Failed to send ticket');
   }
 
-  await logAudit(user.id, "send_ticket", "seat", seatId, {});
+  await logAudit(user.id, "PASS_SENT", "seat", seatId, {});
   revalidatePath("/", "layout");
   return true;
 }

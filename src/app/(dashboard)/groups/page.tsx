@@ -5,16 +5,15 @@ import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { RoleGate } from '@/components/layout/RoleGate';
 import { fetchAllSeats } from '@/lib/seat-utils';
-import { ReportsClient } from './reports-client';
+import { GroupsClient } from './groups-client';
 
 export const metadata = {
-  title: 'Financial & Operational Reports | Hrudhayam LIVE',
+  title: 'Group Seating | Hrudhayam LIVE',
 };
 
-export default async function ReportsPage() {
+export default async function GroupsPage() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-
   if (!user) redirect('/login');
 
   const adminClient = createAdminClient();
@@ -29,33 +28,24 @@ export default async function ReportsPage() {
     redirect('/onboard');
   }
 
-  const isSuperAdmin = profile.role === 'super_admin';
+  // Fetch groups
+  const { data: groupsData } = await adminClient
+    .from('groups')
+    .select('*')
+    .order('created_at', { ascending: false });
 
-  // 1. Fetch all seats
+  // Fetch seats
+  const isSuperAdmin = profile.role === 'super_admin';
   const seats = await fetchAllSeats(adminClient, {
     ownerId: isSuperAdmin ? undefined : user.id,
   });
 
-  // 2. Fetch all team members (profiles)
-  const { data: teamMembers } = await adminClient
-    .from('profiles')
-    .select('*')
-    .eq('is_active', true)
-    .order('full_name');
-
-  // 3. Fetch all sponsors
-  const { data: sponsors } = await adminClient
-    .from('sponsors')
-    .select('*')
-    .order('created_at', { ascending: false });
-
   return (
     <RoleGate allowedRoles={['super_admin', 'sub_admin']}>
-      <ReportsClient
-        seats={seats}
-        teamMembers={teamMembers || []}
-        sponsors={sponsors || []}
-        isSuperAdmin={isSuperAdmin}
+      <GroupsClient 
+        groups={groupsData || []} 
+        seats={seats} 
+        userProfile={profile} 
       />
     </RoleGate>
   );

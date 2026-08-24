@@ -14,7 +14,9 @@ import {
   UserCog,
   ClipboardList,
   Sparkles,
-  Heart
+  Heart,
+  Building2,
+  FolderKanban
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Profile } from '@/lib/types';
@@ -31,12 +33,14 @@ export function SidebarContent({ profile, onNavigate }: { profile: Profile; onNa
     { name: 'Set Up Hall', href: '/setup', icon: Settings2, roles: ['super_admin'] },
     { name: 'Allocate Rows', href: '/allocate', icon: Users, roles: ['super_admin'] },
     { name: 'Guests & Passes', href: '/guests', icon: UserCheck, roles: ['super_admin', 'sub_admin', null] },
+    { name: 'Group Seating', href: '/groups', icon: FolderKanban, roles: ['super_admin', 'sub_admin', null] },
     { name: 'Reports', href: '/reports', icon: BarChart3, roles: ['super_admin', 'sub_admin', null] },
     { name: 'Door Check-in', href: '/checkin', icon: ScanLine, roles: ['super_admin', 'sub_admin', null] },
     { name: 'Mass Email', href: '/email', icon: Mail, roles: ['super_admin', 'sub_admin', null] },
   ];
 
   const adminNavItems = [
+    { name: 'Sponsors', href: '/admin/sponsors', icon: Building2, roles: ['super_admin'] },
     { name: 'User Management', href: '/admin/users', icon: UserCog, roles: ['super_admin'] },
     { name: 'Access Requests', href: '/admin/requests', icon: ClipboardList, roles: ['super_admin'] },
     { name: 'Audit Logs', href: '/admin/audit-logs', icon: History, roles: ['super_admin'] },

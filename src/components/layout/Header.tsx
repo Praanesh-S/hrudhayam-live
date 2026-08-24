@@ -10,6 +10,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { SidebarContent } from './Sidebar';
 import { useState } from 'react';
+import { ThemeToggle } from '@/components/theme-toggle';
 
 interface HeaderProps {
   profile: Profile;
@@ -81,7 +82,10 @@ export function Header({ profile }: HeaderProps) {
           </div>
         </div>
 
-        <div className="flex items-center gap-3 sm:gap-4">
+        <div className="flex items-center gap-2.5 sm:gap-3">
+          {/* Light / Dark Mode Toggle */}
+          <ThemeToggle />
+
           {/* User Profile Pill */}
           <div className="flex items-center gap-2.5 bg-[#132B3E] px-3 py-1.5 rounded-full border border-slate-700/80">
             <Avatar className="h-6 w-6 border border-amber-400/40">

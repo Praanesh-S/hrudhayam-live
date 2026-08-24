@@ -49,6 +49,49 @@
 }
 
 :root {
+  /* Eye-friendly Aesthetic Light Mode (Soft Warm Slate) */
+  --background: #F8FAFC;
+  --foreground: #0F172A;
+  
+  /* Cards: Pure crisp white with soft borders */
+  --card: #FFFFFF;
+  --card-foreground: #0F172A;
+  
+  --popover: #FFFFFF;
+  --popover-foreground: #0F172A;
+  
+  /* Primary: Warm Gold & Royal Navy */
+  --primary: #D97706;
+  --primary-foreground: #FFFFFF;
+  
+  --secondary: #F1F5F9;
+  --secondary-foreground: #1E293B;
+  
+  --muted: #F1F5F9;
+  --muted-foreground: #64748B;
+  
+  --accent: #FEF3C7;
+  --accent-foreground: #92400E;
+  
+  --destructive: #EF4444;
+  --border: #E2E8F0;
+  --input: #E2E8F0;
+  --ring: #D97706;
+  
+  --radius: 0.75rem;
+  
+  /* Sidebar */
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: #0F172A;
+  --sidebar-primary: #D97706;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #F8FAFC;
+  --sidebar-accent-foreground: #0F172A;
+  --sidebar-border: #E2E8F0;
+  --sidebar-ring: #D97706;
+}
+
+.dark {
   /* Eye-friendly Luxury Dark Slate / Matte Navy Theme */
   --background: #0B131E;
   --foreground: #F1F5F9;
@@ -96,19 +139,19 @@
     @apply border-border outline-ring/50;
   }
   body {
-    background-color: #0B131E;
-    color: #F1F5F9;
+    background-color: var(--background);
+    color: var(--foreground);
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 }
 
-/* Custom scrollbars for clean look */
+/* Custom scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #0B131E;
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: #24364A;

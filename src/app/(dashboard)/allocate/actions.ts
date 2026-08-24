@@ -139,7 +139,7 @@ export async function allocateRows(
     .update({ lock_status: "Locked" })
     .in("id", rowIds);
 
-  await logAudit(user.id, "allocate_rows", "user", userId, { 
+  await logAudit(user.id, "RESERVE", "user", userId, { 
     section, 
     rows: rowsToAllocate, 
     allocatedCount: seatsToUpdate?.length || 0,
@@ -219,7 +219,10 @@ export async function releaseSeats(userId: string, rowLabels: string[], force: b
       .in("id", rowIds);
   }
 
-  await logAudit(user.id, "release_rows", "user", userId, { rows: rowLabels, force });
+  await logAudit(user.id, "RELEASE", "user", userId, { 
+    rowLabels, 
+    force 
+  });
   revalidatePath("/", "layout");
   return { success: true };
 }

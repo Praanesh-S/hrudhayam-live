@@ -52,6 +52,9 @@ type ScanResult = {
   seatNumbers?: string;
   originalScanTime?: string;
   previouslyAdmittedAt?: string | null;
+  checkedInBy?: string | null;
+  overridden?: boolean;
+  message?: string;
   seatsList?: Array<{
     id: string;
     row_label: string;
@@ -133,24 +136,59 @@ export function CheckinClient({ isSuperAdmin, hasDoorDuty }: { isSuperAdmin: boo
         body: JSON.stringify({
           passCode: result.passCode,
           action: 'admit',
-          count: countToAdmit
+          count: countToAdmit,
         }),
       });
 
       const json: ScanResult = await res.json();
       setResult(json);
-      setCountdown(5);
-
       if (json.success) {
-        toast.success(`Admitted ${countToAdmit} guest(s) for ${json.guestName}!`);
+        setCountdown(5);
+        toast.success(`Batch check-in complete: Admitted ${json.admittedNow} of ${json.totalSeats}`);
       } else {
-        toast.error(json.error || 'Batch admission failed');
+        toast.error(json.error || 'Failed to admit guests');
+        setCountdown(6);
       }
     } catch (err) {
       console.error(err);
-      toast.error('Failed to process batch admission');
-      setResult({ success: false, error: 'Failed to process check-in' });
+      toast.error('Network error during batch admission');
       setCountdown(4);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Super Admin Override
+  const handleSuperAdminOverride = async () => {
+    if (!result?.passCode && !result?.seatId) return;
+    const targetCode = result.passCode || result.seatId;
+    if (!confirm(`Are you sure you want to OVERRIDE and reset check-in status for pass ${targetCode}? This will be logged in the permanent audit trail.`)) {
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const res = await fetch('/api/checkin/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          passCode: targetCode,
+          action: 'override',
+          reason: 'Super Admin manual door override'
+        }),
+      });
+
+      const json = await res.json();
+      if (json.success) {
+        toast.success('Check-in status successfully overridden and reset.');
+        setResult(null);
+        setIsScannerPaused(false);
+      } else {
+        toast.error(json.error || 'Failed to override check-in');
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Network error during override');
     } finally {
       setIsLoading(false);
     }
@@ -355,15 +393,33 @@ export function CheckinClient({ isSuperAdmin, hasDoorDuty }: { isSuperAdmin: boo
                       <p className="text-[11px] text-slate-400">
                         First entry: {result.originalScanTime ? new Date(result.originalScanTime).toLocaleTimeString() : 'Earlier'}
                       </p>
+                      {result.checkedInBy && (
+                        <p className="text-[11px] text-amber-300">
+                          Scanned by: <strong>{result.checkedInBy}</strong>
+                        </p>
+                      )}
                     </div>
 
-                    <div className="pt-2">
+                    <div className="pt-2 flex flex-col gap-2">
                       <Button 
                         className="bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-bold text-xs" 
                         onClick={resetScanner}
                       >
                         Scan Next Pass ({countdown}s)
                       </Button>
+
+                      {isSuperAdmin && (
+                        <Button 
+                          variant="destructive"
+                          size="sm"
+                          className="bg-red-900/80 hover:bg-red-800 text-white text-xs border border-red-700" 
+                          onClick={handleSuperAdminOverride}
+                          disabled={isLoading}
+                        >
+                          <ShieldCheck className="w-3.5 h-3.5 mr-1" />
+                          Super Admin: Override & Re-admit
+                        </Button>
+                      )}
                     </div>
                   </div>
                 ) : (

@@ -87,7 +87,7 @@ export default function SeatMap({
   }, [seats, selectedFloor]);
 
   const floorStats = useMemo(() => {
-    const total = selectedFloor === 'Ground Floor' ? 698 : 750;
+    const total = selectedFloor === 'Ground Floor' ? 648 : 750;
     const filled = floorSeats.filter(s => s.guest_name && s.guest_name.trim() !== '').length;
     const paid = floorSeats.filter(s => (s.payment_status || '').toLowerCase() === 'received').length;
     const checkedIn = floorSeats.filter(s => s.checked_in).length;
@@ -106,7 +106,7 @@ export default function SeatMap({
     if (activeFilter === '5000') return seat.tier === 5000;
     if (activeFilter === '3000') return seat.tier === 3000;
     if (activeFilter === '1500') return seat.tier === 1500;
-    if (activeFilter === 'vip') return seat.obligation != null || seat.row_label === 'SPL VIP';
+    if (activeFilter === 'vip') return seat.obligation != null;
     if (activeFilter === 'paid') return (seat.payment_status || '').toLowerCase() === 'received';
     if (activeFilter === 'unpaid') return seat.guest_name && (seat.payment_status || '').toLowerCase() === 'pending';
     if (activeFilter === 'empty') return !seat.guest_name;
@@ -117,21 +117,13 @@ export default function SeatMap({
   const rowsConfig = selectedFloor === 'Ground Floor' ? GROUND_FLOOR_LAYOUT : BALCONY_LAYOUT;
   const rowLabels = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N'];
 
-  // SPL VIP seats for Ground Floor
-  const vipSeats = useMemo(() => {
-    if (selectedFloor !== 'Ground Floor') return [];
-    return floorSeats
-      .filter(s => s.row_label === 'SPL VIP')
-      .sort((a, b) => Number(a.seat_no) - Number(b.seat_no));
-  }, [floorSeats, selectedFloor]);
-
   // Color resolver for each individual seat pill
   const getSeatPillBg = (seat?: SeatData) => {
     if (!seat) return '#334E68';
     if (seat.checked_in) return '#0284C7'; // Sky Blue
     if ((seat.payment_status || '').toLowerCase() === 'received') return '#10B981'; // Emerald
     if (seat.guest_name && seat.guest_name.trim() !== '') return '#E8913A'; // Warm Amber
-    if (seat.obligation != null || seat.row_label === 'SPL VIP') return '#8B5CF6'; // Royal Purple
+    if (seat.obligation != null) return '#8B5CF6'; // Royal Purple
     if (seat.tier === 5000) return '#F59E0B'; // Platinum Gold
     if (seat.tier === 3000) return '#0D9488'; // Teal
     if (seat.tier === 1500) return '#64748B'; // Steel Slate
@@ -360,152 +352,92 @@ export default function SeatMap({
             )}
           </div>
 
-          {/* GROUND FLOOR: SPL VIP BOX + 3-BLOCK SEATING GRID */}
+          {/* GROUND FLOOR: 3-BLOCK SEATING GRID */}
           {selectedFloor === 'Ground Floor' ? (
-            <div className="grid grid-cols-12 gap-4 items-start pt-4">
-              {/* Left Column: SPL VIP Section (50 seats) */}
-              <div className="col-span-2 bg-[#08121D] p-3 rounded-2xl border border-purple-900/50 shadow-inner space-y-2">
-                <div className="flex items-center gap-1.5 pb-1 border-b border-purple-900/40">
-                  <Crown className="w-3.5 h-3.5 text-purple-400" />
-                  <span className="text-xs font-bold text-purple-300">SPL VIP</span>
-                </div>
-                <div className="text-[10px] text-slate-400">50 Seats (Reserved)</div>
-                
-                <div className="grid grid-cols-5 gap-1 pt-1">
-                  {vipSeats.length > 0 ? (
-                    vipSeats.map(seat => {
-                      const isDimmed = activeFilter !== 'all' && !matchesFilter(seat);
-                      const seatBg = getSeatPillBg(seat);
-                      return (
-                        <SeatPill
-                          key={seat.id}
-                          seat={seat}
-                          isDimmed={isDimmed}
-                          seatBg={seatBg}
-                          onClick={() => {
-                            setSelectedSeat(seat);
-                            onSeatClick?.(seat);
-                          }}
-                        />
-                      );
-                    })
-                  ) : (
-                    Array.from({ length: 50 }, (_, i) => {
-                      const seatNum = i + 1;
-                      const dummySeat: SeatData = {
-                        id: `GF-SPL VIP-${seatNum}`,
-                        section: 'Ground Floor',
-                        row_label: 'SPL VIP',
-                        seat_no: seatNum,
-                        tier: null,
-                        obligation: 'chief',
-                        guest_name: null,
-                        payment_status: 'pending',
-                        checked_in: false,
-                      };
-                      return (
-                        <SeatPill
-                          key={seatNum}
-                          seat={dummySeat}
-                          isDimmed={activeFilter !== 'all' && activeFilter !== 'vip'}
-                          seatBg="#8B5CF6"
-                          onClick={() => setSelectedSeat(dummySeat)}
-                        />
-                      );
-                    })
-                  )}
-                </div>
-                <div className="text-[9px] text-slate-500 text-center pt-2 font-mono uppercase tracking-wider">
-                  ← VIP Entrance
-                </div>
-              </div>
+            <div className="space-y-1.5 bg-[#08121D] p-5 rounded-2xl border border-slate-800">
+              {rowLabels.map(rowLetter => {
+                const config = GROUND_FLOOR_LAYOUT[rowLetter];
+                if (!config) return null;
 
-              {/* Center 10 Columns: Main Ground Floor Rows A to N */}
-              <div className="col-span-10 space-y-1.5 bg-[#08121D] p-4 rounded-2xl border border-slate-800">
-                {rowLabels.map(rowLetter => {
-                  const config = GROUND_FLOOR_LAYOUT[rowLetter];
-                  if (!config) return null;
+                return (
+                  <div key={rowLetter} className="flex items-center gap-2 group">
+                    {/* Left Row Label */}
+                    <span className="text-xs font-mono font-bold text-amber-400 w-5 text-center shrink-0">
+                      {rowLetter}
+                    </span>
 
-                  return (
-                    <div key={rowLetter} className="flex items-center gap-2 group">
-                      {/* Left Row Label */}
-                      <span className="text-xs font-mono font-bold text-amber-400 w-5 text-center shrink-0">
-                        {rowLetter}
-                      </span>
+                    {/* Row Blocks Container */}
+                    <div className="flex-1 flex items-center justify-between gap-3">
+                      {config.blocks.map((block, bIdx) => (
+                        <React.Fragment key={block.blockName}>
+                          <div className="flex items-center gap-1 flex-1 justify-center">
+                            {Array.from({ length: block.endSeat - block.startSeat + 1 }, (_, i) => {
+                              const seatNum = block.startSeat + i;
+                              const seat = seatLookup.get(`Ground Floor-${rowLetter}-${seatNum}`) || 
+                                           seatLookup.get(`GF-${rowLetter}-${seatNum}`) ||
+                                           seatLookup.get(`GF-${rowLetter}-${String(seatNum).padStart(2, '0')}`);
+                              
+                              const isDimmed = activeFilter !== 'all' && !matchesFilter(seat);
+                              const seatBg = getSeatPillBg(seat);
 
-                      {/* Row Blocks Container */}
-                      <div className="flex-1 flex items-center justify-between gap-3">
-                        {config.blocks.map((block, bIdx) => (
-                          <React.Fragment key={block.blockName}>
-                            <div className="flex items-center gap-1 flex-1 justify-center">
-                              {Array.from({ length: block.endSeat - block.startSeat + 1 }, (_, i) => {
-                                const seatNum = block.startSeat + i;
-                                const seat = seatLookup.get(`Ground Floor-${rowLetter}-${seatNum}`) || 
-                                             seatLookup.get(`GF-${rowLetter}-${seatNum}`) ||
-                                             seatLookup.get(`GF-${rowLetter}-${String(seatNum).padStart(2, '0')}`);
-                                
-                                const isDimmed = activeFilter !== 'all' && !matchesFilter(seat);
-                                const seatBg = getSeatPillBg(seat);
+                              return (
+                                <SeatPill
+                                  key={seatNum}
+                                  seat={seat || {
+                                    id: `GF-${rowLetter}-${seatNum}`,
+                                    section: 'Ground Floor',
+                                    row_label: rowLetter,
+                                    seat_no: seatNum,
+                                    tier: null,
+                                    obligation: null,
+                                    guest_name: null,
+                                    payment_status: 'pending',
+                                    checked_in: false,
+                                  }}
+                                  isDimmed={isDimmed}
+                                  seatBg={seatBg}
+                                  onClick={() => {
+                                    if (seat) {
+                                      setSelectedSeat(seat);
+                                      onSeatClick?.(seat);
+                                    }
+                                  }}
+                                />
+                              );
+                            })}
+                          </div>
 
-                                return (
-                                  <SeatPill
-                                    key={seatNum}
-                                    seat={seat || {
-                                      id: `GF-${rowLetter}-${seatNum}`,
-                                      section: 'Ground Floor',
-                                      row_label: rowLetter,
-                                      seat_no: seatNum,
-                                      tier: null,
-                                      obligation: null,
-                                      guest_name: null,
-                                      payment_status: 'pending',
-                                      checked_in: false,
-                                    }}
-                                    isDimmed={isDimmed}
-                                    seatBg={seatBg}
-                                    onClick={() => {
-                                      if (seat) {
-                                        setSelectedSeat(seat);
-                                        onSeatClick?.(seat);
-                                      }
-                                    }}
-                                  />
-                                );
-                              })}
+                          {/* Aisle Walkway Spacer */}
+                          {bIdx < config.blocks.length - 1 && (
+                            <div className="w-5 h-6 flex items-center justify-center shrink-0">
+                              <span className="text-[8px] font-mono text-slate-600 rotate-90 tracking-tighter">
+                                AISLE
+                              </span>
                             </div>
-
-                            {/* Aisle Walkway Spacer */}
-                            {bIdx < config.blocks.length - 1 && (
-                              <div className="w-5 h-6 flex items-center justify-center shrink-0">
-                                <span className="text-[8px] font-mono text-slate-600 rotate-90 tracking-tighter">
-                                  AISLE
-                                </span>
-                              </div>
-                            )}
-                          </React.Fragment>
-                        ))}
-                      </div>
-
-                      {/* Right Row Label */}
-                      <span className="text-xs font-mono font-bold text-amber-400 w-5 text-center shrink-0">
-                        {rowLetter}
-                      </span>
+                          )}
+                        </React.Fragment>
+                      ))}
                     </div>
-                  );
-                })}
 
-                {/* Audio Console & Rear Aisle */}
-                <div className="pt-4 flex flex-col items-center justify-center space-y-2">
-                  <div className="w-1/3 max-w-xs py-2 px-4 rounded-xl bg-[#0E1C2B] border border-slate-700 text-center">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                      AUDIO CONSOLE BOOTH
+                    {/* Right Row Label */}
+                    <span className="text-xs font-mono font-bold text-amber-400 w-5 text-center shrink-0">
+                      {rowLetter}
                     </span>
                   </div>
-                  <div className="w-full py-1 text-center border-t border-dashed border-slate-800">
-                    <span className="text-[9px] font-mono text-slate-500 uppercase tracking-widest">
-                      REAR AISLE & REAR EXITS
-                    </span>
-                  </div>
+                );
+              })}
+
+              {/* Audio Console & Rear Aisle */}
+              <div className="pt-4 flex flex-col items-center justify-center space-y-2">
+                <div className="w-1/3 max-w-xs py-2 px-4 rounded-xl bg-[#0E1C2B] border border-slate-700 text-center">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                    AUDIO CONSOLE BOOTH
+                  </span>
+                </div>
+                <div className="w-full py-1 text-center border-t border-dashed border-slate-800">
+                  <span className="text-[9px] font-mono text-slate-500 uppercase tracking-widest">
+                    REAR AISLE & REAR EXITS
+                  </span>
                 </div>
               </div>
             </div>

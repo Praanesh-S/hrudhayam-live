@@ -1,6 +1,6 @@
 /**
  * Architectural Seating Plan Configuration for The Music Academy, Madras
- * Ground Floor: 698 Seats (3 Seating Blocks + SPL VIP Box + Audio Console)
+ * Ground Floor: 648 Seats (3 Seating Blocks + Audio Console across Rows A–N)
  * Balcony: 750 Seats (4 Seating Columns / Blocks across Rows A–N)
  */
 

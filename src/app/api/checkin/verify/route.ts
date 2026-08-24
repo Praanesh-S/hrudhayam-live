@@ -93,6 +93,66 @@ export async function POST(req: Request) {
     const displayRow = rows.join(', ');
     const displaySeat = rows.length === 1 ? seats.map(s => s.seat_no).join(', ') : 'Multiple';
 
+    // 0. SUPER ADMIN OVERRIDE ACTION
+    if (action === 'override') {
+      if (profile.role !== 'super_admin') {
+        return NextResponse.json({ success: false, error: 'Only Super Admins can override check-in status.' }, { status: 403 });
+      }
+
+      const seatIds = seats.map(s => s.id);
+      const { error: overrideError } = await adminClient
+        .from('seats')
+        .update({
+          checked_in: false,
+          checked_in_at: null,
+          checked_in_by: null,
+        })
+        .in('id', seatIds);
+
+      if (overrideError) {
+        return NextResponse.json({ success: false, error: 'Failed to override check-in status.' }, { status: 500 });
+      }
+
+      // Record in audit log
+      try {
+        await adminClient.from('audit_logs').insert({
+          user_id: user.id,
+          action: 'OVERRIDE',
+          entity_type: 'pass',
+          entity_id: firstSeat.pass_code || firstSeat.id,
+          details: {
+            guest_name: firstSeat.guest_name,
+            overridden_by: profile.full_name || user.email,
+            seat_ids: seatIds,
+            reason: body.reason || 'Manual Super Admin check-in reset'
+          }
+        });
+      } catch (e) {
+        console.warn('Audit log write error:', e);
+      }
+
+      return NextResponse.json({
+        success: true,
+        overridden: true,
+        message: `Pass ${firstSeat.pass_code || firstSeat.id} successfully reset for re-admission.`,
+        totalSeats,
+        remainingCount: totalSeats,
+        checkedInCount: 0,
+      });
+    }
+
+    // Lookup who checked in the already-admitted seat
+    let checkerName: string | null = null;
+    const checkedInWithChecker = checkedInSeats.find(s => s.checked_in_by);
+    if (checkedInWithChecker?.checked_in_by) {
+      const { data: checkerProfile } = await adminClient
+        .from('profiles')
+        .select('full_name, email')
+        .eq('id', checkedInWithChecker.checked_in_by)
+        .maybeSingle();
+      checkerName = checkerProfile?.full_name || checkerProfile?.email || null;
+    }
+
     // 1. ALL SEATS ALREADY CHECKED IN -> Duplicate Rejection
     if (remainingCount === 0) {
       return NextResponse.json({
@@ -100,7 +160,9 @@ export async function POST(req: Request) {
         duplicate: true,
         allAdmitted: true,
         guestName: firstSeat.guest_name,
+        passCode: firstSeat.pass_code,
         originalScanTime: checkedInSeats[0]?.checked_in_at || new Date().toISOString(),
+        checkedInBy: checkerName,
         totalSeats,
         checkedInCount,
         remainingCount: 0,
@@ -118,7 +180,8 @@ export async function POST(req: Request) {
         .from('seats')
         .update({ 
           checked_in: true,
-          checked_in_at: now
+          checked_in_at: now,
+          checked_in_by: user.id
         })
         .eq('id', firstSeat.id);
 
@@ -130,7 +193,7 @@ export async function POST(req: Request) {
       try {
         await adminClient.from('audit_logs').insert({
           user_id: user.id,
-          action: 'CHECKIN_VERIFIED',
+          action: 'CHECK_IN',
           entity_type: 'seat',
           entity_id: firstSeat.id,
           details: {
@@ -154,6 +217,7 @@ export async function POST(req: Request) {
         checkedInCount: 1,
         remainingCount: 0,
         guestName: firstSeat.guest_name,
+        passCode: firstSeat.pass_code,
         seatId: firstSeat.id,
         section: firstSeat.section,
         row: firstSeat.row_label,
@@ -173,7 +237,8 @@ export async function POST(req: Request) {
         .from('seats')
         .update({ 
           checked_in: true,
-          checked_in_at: now
+          checked_in_at: now,
+          checked_in_by: user.id
         })
         .in('id', seatIdsToAdmit);
 
@@ -185,7 +250,7 @@ export async function POST(req: Request) {
       try {
         await adminClient.from('audit_logs').insert({
           user_id: user.id,
-          action: 'GROUP_CHECKIN_BATCH',
+          action: 'CHECK_IN',
           entity_type: 'pass',
           entity_id: firstSeat.pass_code || firstSeat.id,
           details: {
@@ -233,6 +298,7 @@ export async function POST(req: Request) {
       rows,
       seatNumbers: seats.map(s => s.seat_no).join(', '),
       previouslyAdmittedAt: checkedInSeats[0]?.checked_in_at || null,
+      checkedInBy: checkerName,
       seatsList: seats.map(s => ({
         id: s.id,
         row_label: s.row_label,

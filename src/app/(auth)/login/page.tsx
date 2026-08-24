@@ -120,15 +120,15 @@ export default function LoginPage() {
   return (
     <Card className="w-full max-w-md shadow-xl bg-[#131F2E] border-0">
       <CardHeader className="space-y-2 text-center pb-3">
-        <div className="w-14 h-14 mx-auto bg-slate-100 rounded-full flex items-center justify-center mb-1">
+        <div className="w-14 h-14 mx-auto bg-slate-800 border border-amber-500/30 rounded-full flex items-center justify-center mb-1">
           <KeyRound className="w-7 h-7 text-[#E8913A]" />
         </div>
         <div>
-          <CardTitle className="text-2xl font-bold tracking-tight text-[#0F2B3C]">
-            Hrudhayam LIVE
+          <CardTitle className="text-2xl font-black tracking-tight text-white">
+            Hrudhayam <span className="text-[#E8913A]">LIVE</span>
           </CardTitle>
-          <CardDescription className="text-sm font-medium text-slate-400 mt-0.5">
-            Seat & Pass Manager
+          <CardDescription className="text-xs font-medium text-slate-400 mt-1">
+            Seat & Pass Manager • Admin Portal
           </CardDescription>
         </div>
       </CardHeader>
@@ -146,12 +146,12 @@ export default function LoginPage() {
           <div className="flex flex-col items-center justify-center space-y-4 py-4 text-center">
             <CheckCircle2 className="w-12 h-12 text-[#16A34A]" />
             <div>
-              <h3 className="font-semibold text-lg text-[#0F2B3C] mb-2">Success</h3>
+              <h3 className="font-semibold text-lg text-white mb-2">Success</h3>
               <p className="text-slate-400 text-sm">{successMessage}</p>
             </div>
             <Button 
               variant="outline" 
-              className="mt-2 w-full"
+              className="mt-2 w-full bg-[#1A2839] border-[#2A3F55] text-white"
               onClick={() => setIsSuccess(false)}
             >
               Back to Sign In
@@ -159,17 +159,17 @@ export default function LoginPage() {
           </div>
         ) : (
           <Tabs defaultValue="signin" className="w-full">
-            <TabsList className="grid w-full grid-cols-3 mb-4 text-xs">
-              <TabsTrigger value="signin">Sign In</TabsTrigger>
-              <TabsTrigger value="signup">Register</TabsTrigger>
-              <TabsTrigger value="magiclink">Email Link</TabsTrigger>
+            <TabsList className="grid w-full grid-cols-3 mb-4 text-xs bg-[#1A2839] border border-[#2A3F55]">
+              <TabsTrigger value="signin" className="data-[state=active]:bg-[#E8913A] data-[state=active]:text-slate-950 font-bold">Sign In</TabsTrigger>
+              <TabsTrigger value="signup" className="data-[state=active]:bg-[#E8913A] data-[state=active]:text-slate-950 font-bold">Register</TabsTrigger>
+              <TabsTrigger value="magiclink" className="data-[state=active]:bg-[#E8913A] data-[state=active]:text-slate-950 font-bold">Email Link</TabsTrigger>
             </TabsList>
 
             {/* Tab 1: Sign In with Password */}
             <TabsContent value="signin">
               <form onSubmit={handlePasswordLogin} className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="email" className="text-sm font-medium">Email address</Label>
+                  <Label htmlFor="email" className="text-xs font-medium text-slate-300">Email address</Label>
                   <div className="relative">
                     <Mail className="absolute left-3 top-2.5 h-5 w-5 text-slate-400" />
                     <Input
@@ -180,13 +180,13 @@ export default function LoginPage() {
                       required
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      className="pl-10 h-11"
+                      className="pl-10 h-11 bg-[#1A2839] border-[#2A3F55] text-white text-xs"
                     />
                   </div>
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="password" className="text-sm font-medium">Password</Label>
+                  <Label htmlFor="password" className="text-xs font-medium text-slate-300">Password</Label>
                   <div className="relative">
                     <Lock className="absolute left-3 top-2.5 h-5 w-5 text-slate-400" />
                     <Input
@@ -197,14 +197,14 @@ export default function LoginPage() {
                       required
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className="pl-10 h-11"
+                      className="pl-10 h-11 bg-[#1A2839] border-[#2A3F55] text-white text-xs"
                     />
                   </div>
                 </div>
                 
                 <Button 
                   type="submit" 
-                  className="w-full h-11 bg-[#0F2B3C] hover:bg-[#1A4A5E] text-white font-medium text-base transition-colors"
+                  className="w-full h-11 bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-bold text-sm transition-colors shadow-md shadow-amber-950/20"
                   disabled={isLoading || !email || !password}
                 >
                   {isLoading ? (

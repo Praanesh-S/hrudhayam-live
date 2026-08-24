@@ -32,7 +32,7 @@ export async function updateRowTier(rowId: string, tier: TierValue | null) {
     .eq("row_id", rowId)
 
   if (seatsError) return { error: seatsError.message };
-  await logAudit(user.id, "update_row_tier", "row", rowId, { tier });
+  await logAudit(user.id, "PRICE_SET", "row", rowId, { tier });
   revalidatePath("/", "layout"); return { success: true };
 }
 
@@ -68,7 +68,7 @@ export async function updateRowObligation(rowId: string, obligation: ObligationT
     .eq("row_id", rowId);
 
   if (seatsError) return { error: seatsError.message };
-  await logAudit(user.id, "update_row_obligation", "row", rowId, { obligation });
+  await logAudit(user.id, "PRICE_SET", "row", rowId, { obligation });
   revalidatePath("/", "layout"); return { success: true };
 }
 
@@ -146,7 +146,7 @@ export async function updateRowSeatCount(rowId: string, newCount: number) {
     }
   }
 
-  await logAudit(user.id, "update_seat_count", "row", rowId, { newCount });
+  await logAudit(user.id, "ROW_SEATCOUNT_EDIT", "row", rowId, { newCount });
   revalidatePath("/", "layout"); return { success: true };
 }
 
@@ -188,7 +188,7 @@ export async function bulkSetTier(section: SeatSection, fromRow: string, toRow: 
 
   if (seatError) return { error: seatError.message };
 
-  await logAudit(user.id, "update_row_tier", "row", `Bulk ${section} ${fromRow}-${toRow}`, { tier, count: unlockedRowIds.length });
+  await logAudit(user.id, "PRICE_SET", "row", `Bulk ${section} ${fromRow}-${toRow}`, { tier, count: unlockedRowIds.length });
   revalidatePath("/", "layout"); return { success: true, count: unlockedRowIds.length };
 }
 
@@ -230,6 +230,6 @@ export async function bulkSetObligation(section: SeatSection, fromRow: string, t
 
   if (seatError) return { error: seatError.message };
 
-  await logAudit(user.id, "update_row_obligation", "row", `Bulk ${section} ${fromRow}-${toRow}`, { obligation, count: unlockedRowIds.length });
+  await logAudit(user.id, "PRICE_SET", "row", `Bulk ${section} ${fromRow}-${toRow}`, { obligation, count: unlockedRowIds.length });
   revalidatePath("/", "layout"); return { success: true, count: unlockedRowIds.length };
 }

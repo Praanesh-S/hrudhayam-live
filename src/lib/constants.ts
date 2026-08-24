@@ -88,11 +88,9 @@ export const GROUND_FLOOR_ROWS: { label: string; seats: number }[] = [
   { label: "N", seats: 40 },
 ];
 
-export const SPL_VIP_SEATS = 50;
-
-export const TOTAL_GROUND_FLOOR = 698;
+export const TOTAL_GROUND_FLOOR = 648;
 export const TOTAL_BALCONY = 750;
-export const TOTAL_CAPACITY = 1448;
+export const TOTAL_CAPACITY = 1398;
 
 // ── Pass Code Prefix ──
 export const PASS_CODE_PREFIX = "HL";

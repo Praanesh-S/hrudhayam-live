@@ -52,7 +52,7 @@ export default async function DashboardPage() {
   });
 
   // Calculate live statistics
-  const totalCapacity = 1448;
+  const totalCapacity = 1398;
   const totalSeatsInScope = isSuperAdmin ? totalCapacity : seats.length;
   const confirmedSeats = seats.filter(s => s.guest_name && s.guest_name.trim() !== '').length;
   const paidSeats = seats.filter(s => (s.payment_status || '').toLowerCase() === 'received').length;
@@ -125,7 +125,7 @@ export default async function DashboardPage() {
             <div className="h-10 w-px bg-[#24364A]"></div>
             <div className="space-y-1 text-left">
               <span className="text-[11px] text-slate-300 block font-medium">Capacity</span>
-              <span className="text-sm font-bold text-white block">1,448 Passes</span>
+              <span className="text-sm font-bold text-white block">1,398 Passes</span>
             </div>
           </div>
         </div>
@@ -149,7 +149,7 @@ export default async function DashboardPage() {
                 {totalSeatsInScope.toLocaleString()}
               </div>
               <p className="text-xs text-slate-400 mt-1">
-                {isSuperAdmin ? 'Ground: 698 • Balcony: 750' : 'Across assigned rows'}
+                {isSuperAdmin ? 'Ground: 648 • Balcony: 750' : 'Across assigned rows'}
               </p>
             </div>
           </CardContent>
