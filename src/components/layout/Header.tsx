@@ -54,29 +54,29 @@ export function Header({ profile }: HeaderProps) {
   const isSuperAdmin = profile?.role === 'super_admin';
 
   return (
-    <header className="bg-[#0B1E2B] border-b border-slate-800 sticky top-0 z-20 shadow-md">
+    <header className="bg-white dark:bg-[#0B1E2B] border-b border-slate-200 dark:border-slate-800 sticky top-0 z-20 shadow-xs dark:shadow-md transition-colors">
       <div className="flex items-center justify-between px-4 sm:px-6 md:px-8 h-16">
         <div className="flex items-center gap-4">
           <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
             <SheetTrigger
               render={
-                <Button variant="ghost" size="icon" className="md:hidden text-slate-300 hover:text-white hover:bg-slate-800">
+                <Button variant="ghost" size="icon" className="md:hidden text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800">
                   <Menu className="h-5 w-5" />
                   <span className="sr-only">Open sidebar</span>
                 </Button>
               }
             />
-            <SheetContent side="left" className="p-0 w-64 bg-[#0B1E2B] border-r border-slate-800">
+            <SheetContent side="left" className="p-0 w-64 bg-white dark:bg-[#0B1E2B] border-r border-slate-200 dark:border-slate-800">
               <SheetTitle className="sr-only">Navigation Menu</SheetTitle>
               <SidebarContent profile={profile} onNavigate={() => setMobileMenuOpen(false)} />
             </SheetContent>
           </Sheet>
           
           <div>
-            <h1 className="text-base sm:text-lg font-bold text-white tracking-tight leading-none">
+            <h1 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white tracking-tight leading-none">
               {title}
             </h1>
-            <p className="text-[11px] text-slate-400 mt-1 hidden sm:block">
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 hidden sm:block">
               {subtitle}
             </p>
           </div>
@@ -87,23 +87,23 @@ export function Header({ profile }: HeaderProps) {
           <ThemeToggle />
 
           {/* User Profile Pill */}
-          <div className="flex items-center gap-2.5 bg-[#132B3E] px-3 py-1.5 rounded-full border border-slate-700/80">
-            <Avatar className="h-6 w-6 border border-amber-400/40">
+          <div className="flex items-center gap-2.5 bg-slate-100 dark:bg-[#132B3E] px-3 py-1.5 rounded-full border border-slate-200 dark:border-slate-700/80">
+            <Avatar className="h-6 w-6 border border-amber-500/40">
               <AvatarFallback className="bg-[#E8913A] text-slate-950 font-black text-[10px]">
                 {getInitials(profile?.full_name || 'Admin')}
               </AvatarFallback>
             </Avatar>
             <div className="hidden sm:block text-left">
-              <p className="text-xs font-semibold text-slate-200 leading-none">
+              <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 leading-none">
                 {profile?.full_name || 'User'}
               </p>
               <div className="flex items-center gap-1 mt-0.5">
                 {isSuperAdmin ? (
-                  <span className="text-[9px] font-bold text-[#E8913A] uppercase tracking-wider flex items-center gap-0.5">
+                  <span className="text-[9px] font-bold text-amber-600 dark:text-[#E8913A] uppercase tracking-wider flex items-center gap-0.5">
                     <Shield className="w-2.5 h-2.5" /> Super Admin
                   </span>
                 ) : (
-                  <span className="text-[9px] font-medium text-slate-400 uppercase tracking-wider flex items-center gap-0.5">
+                  <span className="text-[9px] font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-0.5">
                     <User className="w-2.5 h-2.5" /> Sub-Admin
                   </span>
                 )}
@@ -111,12 +111,12 @@ export function Header({ profile }: HeaderProps) {
             </div>
           </div>
           
-          <div className="h-5 w-px bg-slate-700 hidden sm:block"></div>
+          <div className="h-5 w-px bg-slate-200 dark:bg-slate-700 hidden sm:block"></div>
           
           <Button 
             variant="ghost" 
             size="sm" 
-            className="text-slate-300 hover:text-red-300 hover:bg-red-950/40 text-xs font-medium h-8"
+            className="text-slate-600 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 text-xs font-medium h-8"
             onClick={handleSignOut}
           >
             <LogOut className="h-3.5 w-3.5 sm:mr-1.5" />

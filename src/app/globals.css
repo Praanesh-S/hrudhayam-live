@@ -60,7 +60,7 @@
   --popover: #FFFFFF;
   --popover-foreground: #0F172A;
   
-  /* Primary: Warm Gold & Royal Navy */
+  /* Primary: Warm Gold & Amber */
   --primary: #D97706;
   --primary-foreground: #FFFFFF;
   
@@ -145,6 +145,145 @@
   }
 }
 
+/* ─────────────────────────────────────────────────────────────
+ * LIGHT MODE AESTHETIC HARMONIZATION
+ * Automatically renders all cards, inputs, tables, tabs, and shapes
+ * in clean, warm-slate light colors when Dark mode is not active.
+ * ───────────────────────────────────────────────────────────── */
+html:not(.dark) {
+  /* 1. Surfaces & Cards */
+  .bg-\[\#131F2E\],
+  .bg-\[\#0F2236\],
+  .bg-\[\#0B1E2B\],
+  .bg-\[\#132B3E\] {
+    background-color: #FFFFFF !important;
+    color: #0F172A !important;
+    border-color: #E2E8F0 !important;
+    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05), 0 1px 2px -1px rgb(0 0 0 / 0.05);
+  }
+
+  /* 2. Sub-headers & Table Headers */
+  .bg-\[\#0E1724\],
+  .bg-\[\#081522\],
+  .bg-\[\#08121D\],
+  .bg-\[\#0A1624\],
+  .bg-\[\#0A1420\],
+  .bg-\[\#060D15\] {
+    background-color: #F8FAFC !important;
+    color: #0F172A !important;
+    border-color: #E2E8F0 !important;
+  }
+
+  /* 3. Textboxes, Inputs & Select Triggers */
+  .bg-\[\#1A2839\],
+  .bg-\[\#162C42\],
+  .bg-\[\#1A344E\],
+  .bg-\[\#1E3B5A\] {
+    background-color: #FFFFFF !important;
+    color: #0F172A !important;
+    border-color: #CBD5E1 !important;
+  }
+
+  /* Input placeholders in light mode */
+  input.bg-\[\#1A2839\]::placeholder,
+  textarea.bg-\[\#1A2839\]::placeholder {
+    color: #94A3B8 !important;
+  }
+
+  /* 4. Borders */
+  .border-\[\#223345\],
+  .border-\[\#1E3A4C\],
+  .border-\[\#2A3F55\],
+  .border-\[\#243D56\],
+  .border-\[\#2A4866\],
+  .border-\[\#1E3750\],
+  .border-\[\#1E2D3D\],
+  .border-\[\#2A4D70\],
+  .border-\[\#24364A\],
+  .border-slate-800,
+  .border-slate-700 {
+    border-color: #E2E8F0 !important;
+  }
+
+  /* 5. Typography & Text Contrast */
+  .text-white {
+    color: #0F172A !important;
+  }
+
+  .text-slate-300,
+  .text-slate-200 {
+    color: #334155 !important;
+  }
+
+  .text-slate-400 {
+    color: #64748B !important;
+  }
+
+  .text-slate-500 {
+    color: #64748B !important;
+  }
+
+  /* Preserve white text on primary buttons and badges */
+  button.bg-\[\#E8913A\],
+  button.bg-\[\#D97706\],
+  .bg-gradient-to-r.from-\[\#E8913A\],
+  .bg-emerald-600,
+  .bg-red-600,
+  .bg-red-700,
+  .bg-sky-600,
+  .badge-primary,
+  .text-slate-950 {
+    color: #0B131E !important;
+  }
+
+  /* 6. Tabs & Pills in Light Mode */
+  [data-state="active"] {
+    background-color: #FFFFFF !important;
+    color: #0F172A !important;
+    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);
+  }
+
+  /* 7. Dialogs & Modals in Light Mode */
+  [role="dialog"] {
+    background-color: #FFFFFF !important;
+    color: #0F172A !important;
+    border-color: #E2E8F0 !important;
+    box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+  }
+
+  /* 8. Seat Map Architectural Canvas in Light Mode */
+  .bg-\[\#0A1624\] {
+    background-color: #F1F5F9 !important;
+    border-color: #CBD5E1 !important;
+  }
+
+  .bg-\[\#08121D\] {
+    background-color: #FFFFFF !important;
+    border-color: #E2E8F0 !important;
+    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05);
+  }
+
+  .bg-gradient-to-b.from-\[\#13283E\] {
+    background-image: linear-gradient(to bottom, #E2E8F0, #F8FAFC) !important;
+    border-color: #CBD5E1 !important;
+  }
+
+  /* 9. Hero Banner in Light Mode */
+  .bg-gradient-to-r.from-\[\#0B131E\] {
+    background-image: linear-gradient(to right, #1E293B, #0F172A) !important;
+  }
+  .bg-gradient-to-r.from-\[\#0B131E\] * {
+    color: #FFFFFF !important;
+  }
+  .bg-gradient-to-r.from-\[\#0B131E\] .text-slate-300,
+  .bg-gradient-to-r.from-\[\#0B131E\] .text-slate-400 {
+    color: #CBD5E1 !important;
+  }
+  .bg-gradient-to-r.from-\[\#0B131E\] .text-\[\#E8913A\] {
+    color: #FBBF24 !important;
+  }
+}
+
 /* Custom scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
@@ -154,9 +293,15 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #24364A;
+  background: #CBD5E1;
   border-radius: 3px;
 }
+.dark ::-webkit-scrollbar-thumb {
+  background: #24364A;
+}
 ::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
   background: #3B526B;
 }
