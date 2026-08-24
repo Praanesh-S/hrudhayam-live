@@ -180,7 +180,7 @@ export function SetupClient({ initialRows, seatMapItems }: { initialRows: VenueR
                     ₹5,000 Platinum
                   </Badge>
                 ) : row.tier === 3000 ? (
-                  <Badge className="bg-teal-100 text-teal-900 border-teal-400 dark:bg-[#0D9488]/30 dark:text-[#2DD4BF] dark:border-[#0D9488] text-xs font-bold font-mono">
+                  <Badge className="bg-purple-100 text-purple-900 border-purple-400 dark:bg-purple-900/60 dark:text-purple-200 dark:border-purple-600 text-xs font-bold font-mono">
                     ₹3,000 Gold
                   </Badge>
                 ) : row.tier === 1500 ? (
@@ -215,8 +215,8 @@ export function SetupClient({ initialRows, seatMapItems }: { initialRows: VenueR
                     onClick={() => handleUpdateTier(row.id, 3000)}
                     className={`px-2 py-1 rounded text-[11px] font-bold transition-all ${
                       row.tier === 3000 
-                        ? 'bg-teal-600 text-white shadow-xs font-bold' 
-                        : 'bg-teal-50 text-teal-900 border border-teal-300 hover:bg-teal-100 dark:bg-[#1A2839] dark:text-[#2DD4BF] dark:hover:bg-[#24364A] dark:border-[#0D9488]/40'
+                        ? 'bg-purple-600 text-white shadow-xs font-bold' 
+                        : 'bg-purple-50 text-purple-900 border border-purple-300 hover:bg-purple-100 dark:bg-[#1A2839] dark:text-purple-300 dark:hover:bg-[#24364A] dark:border-purple-800/40'
                     }`}
                   >
                     ₹3,000

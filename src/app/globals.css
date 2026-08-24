@@ -323,32 +323,28 @@ html:not(.dark) {
     color: #92400E !important;
   }
 
-  button.bg-\[\#0D9488\],
-  .bg-\[\#0D9488\]\/10 {
-    background-color: #CCFBF1 !important;
-    border-color: #0D9488 !important;
-    color: #115E59 !important;
+  button.bg-\[\#8B5CF6\] {
+    background-color: #8B5CF6 !important;
+    border-color: #7C3AED !important;
+    color: #FFFFFF !important;
   }
 
-  button.bg-\[\#8B5CF6\],
-  .bg-purple-950\/40 {
-    background-color: #F3E8FF !important;
-    border-color: #8B5CF6 !important;
-    color: #6B21A8 !important;
+  button.bg-\[\#10B981\] {
+    background-color: #10B981 !important;
+    border-color: #059669 !important;
+    color: #000000 !important;
   }
 
-  button.bg-\[\#10B981\],
-  .bg-emerald-950\/40 {
-    background-color: #D1FAE5 !important;
-    border-color: #10B981 !important;
-    color: #065F46 !important;
+  button.bg-\[\#EF4444\] {
+    background-color: #EF4444 !important;
+    border-color: #DC2626 !important;
+    color: #FFFFFF !important;
   }
 
-  button.bg-\[\#0284C7\],
-  .bg-sky-950\/40 {
-    background-color: #E0F2FE !important;
-    border-color: #0284C7 !important;
-    color: #0369A1 !important;
+  button.bg-\[\#0284C7\] {
+    background-color: #0284C7 !important;
+    border-color: #0369A1 !important;
+    color: #FFFFFF !important;
   }
 
   /* 8. Floor Switcher Toggle */

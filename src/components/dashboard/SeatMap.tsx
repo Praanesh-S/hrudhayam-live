@@ -51,7 +51,7 @@ interface SeatMapProps {
   compact?: boolean;
 }
 
-type FilterType = 'all' | '5000' | '3000' | '1500' | 'vip' | 'paid' | 'unpaid' | 'empty' | 'checked_in';
+type FilterType = 'all' | '5000' | '3000' | '1500' | 'paid' | 'unpaid' | 'empty' | 'checked_in';
 
 export default function SeatMap({
   seats,
@@ -106,9 +106,8 @@ export default function SeatMap({
     if (activeFilter === '5000') return seat.tier === 5000;
     if (activeFilter === '3000') return seat.tier === 3000;
     if (activeFilter === '1500') return seat.tier === 1500;
-    if (activeFilter === 'vip') return seat.obligation != null;
     if (activeFilter === 'paid') return (seat.payment_status || '').toLowerCase() === 'received';
-    if (activeFilter === 'unpaid') return seat.guest_name && (seat.payment_status || '').toLowerCase() === 'pending';
+    if (activeFilter === 'unpaid') return Boolean(seat.guest_name && (seat.payment_status || '').toLowerCase() === 'pending');
     if (activeFilter === 'empty') return !seat.guest_name;
     if (activeFilter === 'checked_in') return seat.checked_in;
     return true;
@@ -121,11 +120,10 @@ export default function SeatMap({
   const getSeatPillBg = (seat?: SeatData) => {
     if (!seat) return '#334E68';
     if (seat.checked_in) return '#0284C7'; // Sky Blue
-    if ((seat.payment_status || '').toLowerCase() === 'received') return '#10B981'; // Emerald
-    if (seat.guest_name && seat.guest_name.trim() !== '') return '#E8913A'; // Warm Amber
-    if (seat.obligation != null) return '#8B5CF6'; // Royal Purple
-    if (seat.tier === 5000) return '#F59E0B'; // Platinum Gold
-    if (seat.tier === 3000) return '#0D9488'; // Teal
+    if ((seat.payment_status || '').toLowerCase() === 'received') return '#10B981'; // Emerald Green
+    if (seat.guest_name && seat.guest_name.trim() !== '') return '#EF4444'; // Red for Pending but Assigned
+    if (seat.tier === 5000) return '#F59E0B'; // Amber Gold
+    if (seat.tier === 3000) return '#8B5CF6'; // Purple for ₹3,000
     if (seat.tier === 1500) return '#64748B'; // Steel Slate
     return '#334E68'; // Unassigned default slate
   };
@@ -238,7 +236,7 @@ export default function SeatMap({
             <Button
               size="xs"
               variant={activeFilter === '5000' ? 'default' : 'outline'}
-              className={activeFilter === '5000' ? 'bg-[#F59E0B] text-slate-950 font-bold' : 'text-[#FBBF24] border-[#F59E0B]/40 bg-[#F59E0B]/10 text-xs'}
+              className={activeFilter === '5000' ? 'bg-[#F59E0B] text-slate-950 font-bold' : 'text-[#F59E0B] dark:text-[#FBBF24] border-[#F59E0B]/40 bg-[#F59E0B]/10 text-xs'}
               onClick={() => setActiveFilter('5000')}
             >
               ₹5,000 Tier
@@ -246,7 +244,7 @@ export default function SeatMap({
             <Button
               size="xs"
               variant={activeFilter === '3000' ? 'default' : 'outline'}
-              className={activeFilter === '3000' ? 'bg-[#0D9488] text-white font-bold' : 'text-[#2DD4BF] border-[#0D9488]/40 bg-[#0D9488]/10 text-xs'}
+              className={activeFilter === '3000' ? 'bg-[#8B5CF6] text-white font-bold' : 'text-purple-700 dark:text-purple-300 border-purple-400 dark:border-purple-800 bg-purple-50 dark:bg-purple-950/40 text-xs font-semibold'}
               onClick={() => setActiveFilter('3000')}
             >
               ₹3,000 Tier
@@ -254,31 +252,31 @@ export default function SeatMap({
             <Button
               size="xs"
               variant={activeFilter === '1500' ? 'default' : 'outline'}
-              className={activeFilter === '1500' ? 'bg-[#64748B] text-white font-bold' : 'text-slate-300 border-slate-600 bg-slate-800 text-xs'}
+              className={activeFilter === '1500' ? 'bg-[#64748B] text-white font-bold' : 'text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-800 text-xs'}
               onClick={() => setActiveFilter('1500')}
             >
               ₹1,500 Tier
             </Button>
             <Button
               size="xs"
-              variant={activeFilter === 'vip' ? 'default' : 'outline'}
-              className={activeFilter === 'vip' ? 'bg-[#8B5CF6] text-white font-bold' : 'text-purple-300 border-purple-800 bg-purple-950/40 text-xs'}
-              onClick={() => setActiveFilter('vip')}
-            >
-              VIP / Reserved
-            </Button>
-            <Button
-              size="xs"
               variant={activeFilter === 'paid' ? 'default' : 'outline'}
-              className={activeFilter === 'paid' ? 'bg-[#10B981] text-slate-950 font-bold' : 'text-emerald-300 border-emerald-800 bg-emerald-950/40 text-xs'}
+              className={activeFilter === 'paid' ? 'bg-[#10B981] text-slate-950 font-bold' : 'text-emerald-700 dark:text-emerald-300 border-emerald-400 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-xs font-semibold'}
               onClick={() => setActiveFilter('paid')}
             >
               Paid
             </Button>
             <Button
               size="xs"
+              variant={activeFilter === 'unpaid' ? 'default' : 'outline'}
+              className={activeFilter === 'unpaid' ? 'bg-[#EF4444] text-white font-bold' : 'text-red-700 dark:text-red-300 border-red-400 dark:border-red-800 bg-red-50 dark:bg-red-950/40 text-xs font-semibold'}
+              onClick={() => setActiveFilter('unpaid')}
+            >
+              Pending (Assigned)
+            </Button>
+            <Button
+              size="xs"
               variant={activeFilter === 'checked_in' ? 'default' : 'outline'}
-              className={activeFilter === 'checked_in' ? 'bg-[#0284C7] text-white font-bold' : 'text-sky-300 border-sky-800 bg-sky-950/40 text-xs'}
+              className={activeFilter === 'checked_in' ? 'bg-[#0284C7] text-white font-bold' : 'text-sky-700 dark:text-sky-300 border-sky-400 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/40 text-xs font-semibold'}
               onClick={() => setActiveFilter('checked_in')}
             >
               Checked In
@@ -286,7 +284,7 @@ export default function SeatMap({
             <Button
               size="xs"
               variant={activeFilter === 'empty' ? 'default' : 'outline'}
-              className={activeFilter === 'empty' ? 'bg-slate-600 text-white font-bold' : 'text-slate-400 border-slate-700 bg-slate-900 text-xs'}
+              className={activeFilter === 'empty' ? 'bg-slate-600 text-white font-bold' : 'text-slate-600 dark:text-slate-400 border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-900 text-xs'}
               onClick={() => setActiveFilter('empty')}
             >
               Empty
@@ -301,7 +299,7 @@ export default function SeatMap({
             <span>₹5,000 Tier</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className="w-3 h-3 rounded-xs bg-[#0D9488] inline-block shadow-xs"></span>
+            <span className="w-3 h-3 rounded-xs bg-[#8B5CF6] inline-block shadow-xs"></span>
             <span>₹3,000 Tier</span>
           </div>
           <div className="flex items-center gap-1.5">
@@ -309,16 +307,12 @@ export default function SeatMap({
             <span>₹1,500 Tier</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className="w-3 h-3 rounded-xs bg-[#8B5CF6] inline-block shadow-xs"></span>
-            <span>VIP Box</span>
-          </div>
-          <div className="flex items-center gap-1.5">
             <span className="w-3 h-3 rounded-xs bg-[#10B981] inline-block shadow-xs"></span>
             <span>Paid</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className="w-3 h-3 rounded-xs bg-[#E8913A] inline-block shadow-xs"></span>
-            <span>Filled (Pending)</span>
+            <span className="w-3 h-3 rounded-xs bg-[#EF4444] inline-block shadow-xs"></span>
+            <span>Pending (Assigned)</span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="w-3 h-3 rounded-xs bg-[#0284C7] inline-block shadow-xs"></span>

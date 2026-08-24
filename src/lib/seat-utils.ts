@@ -128,7 +128,7 @@ export function getSeatColor(seat: {
   if (seat.guest_name) {
     if (seat.checked_in) return "#0369A1"; // checked in
     if (seat.payment_status === "received") return "#16A34A"; // paid
-    return "#E8913A"; // filled but unpaid
+    return "#EF4444"; // filled but unpaid (pending assigned)
   }
 
   // Empty but priced — show tier color
@@ -136,7 +136,7 @@ export function getSeatColor(seat: {
     case 5000:
       return "#B8860B";
     case 3000:
-      return "#0D9488";
+      return "#8B5CF6"; // Purple for ₹3,000
     case 1500:
       return "#475569";
     default:
