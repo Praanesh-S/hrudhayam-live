@@ -11,33 +11,29 @@ export default async function AllocatePage() {
   const supabase = await createClient();
   const adminClient = createAdminClient();
 
-  // Profiles (Sub-admins)
-  const { data: subAdminsData } = await adminClient
-    .from("profiles")
-    .select("*")
-    .eq("role", "sub_admin")
-    .eq("is_active", true);
+  // Fetch all data in parallel for maximum speed
+  const [subAdminsRes, requestsRes, venueRowsRes, seatsData] = await Promise.all([
+    adminClient
+      .from("profiles")
+      .select("*")
+      .eq("role", "sub_admin")
+      .eq("is_active", true),
+    adminClient
+      .from("access_requests")
+      .select("*, profile:profiles(*)")
+      .eq("status", "pending"),
+    adminClient
+      .from("rows")
+      .select("*")
+      .order("display_order", { ascending: true }),
+    fetchAllSeats(adminClient, {
+      select: "owner_id, row_label, section, tier, payment_status, ticket_sent, guest_name"
+    })
+  ]);
 
-  // Pending Requests
-  const { data: requestsData } = await adminClient
-    .from("access_requests")
-    .select("*, profile:profiles(*)")
-    .eq("status", "pending");
-
-  // Venue Rows
-  const { data: venueRowsData } = await adminClient
-    .from("rows")
-    .select("*")
-    .order("display_order", { ascending: true });
-
-  // All seats with owner details to map row ownership accurately (all 1,448)
-  const seatsData = await fetchAllSeats(adminClient, {
-    select: "owner_id, row_label, section, tier, payment_status, ticket_sent, guest_name"
-  });
-
-  const subAdmins: Profile[] = subAdminsData || [];
-  const requests: AccessRequest[] = requestsData || [];
-  const venueRows: VenueRow[] = venueRowsData || [];
+  const subAdmins: Profile[] = subAdminsRes.data || [];
+  const requests: AccessRequest[] = requestsRes.data || [];
+  const venueRows: VenueRow[] = venueRowsRes.data || [];
   const seats = seatsData || [];
 
   const adminMap = new Map(subAdmins.map(a => [a.id, a.full_name]));

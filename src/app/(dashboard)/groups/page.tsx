@@ -28,17 +28,20 @@ export default async function GroupsPage() {
     redirect('/onboard');
   }
 
-  // Fetch groups
-  const { data: groupsData } = await adminClient
-    .from('groups')
-    .select('*')
-    .order('created_at', { ascending: false });
-
-  // Fetch seats
   const isSuperAdmin = profile.role === 'super_admin';
-  const seats = await fetchAllSeats(adminClient, {
-    ownerId: isSuperAdmin ? undefined : user.id,
-  });
+
+  // Fetch groups and seats in parallel
+  const [groupsRes, seats] = await Promise.all([
+    adminClient
+      .from('groups')
+      .select('*')
+      .order('created_at', { ascending: false }),
+    fetchAllSeats(adminClient, {
+      ownerId: isSuperAdmin ? undefined : user.id,
+    })
+  ]);
+
+  const groupsData = groupsRes.data || [];
 
   return (
     <RoleGate allowedRoles={['super_admin', 'sub_admin']}>

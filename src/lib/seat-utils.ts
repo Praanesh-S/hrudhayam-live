@@ -157,12 +157,26 @@ export async function fetchAllSeats<T = any>(
 ): Promise<T[]> {
   const selectFields = options.select || '*';
 
+  // If filtered by specific owner, it's always well under 1000 rows
+  if (options.ownerId) {
+    const res = await supabaseClient
+      .from('seats')
+      .select(selectFields)
+      .eq('owner_id', options.ownerId)
+      .order('section', { ascending: true })
+      .order('row_label', { ascending: true })
+      .order('seat_no', { ascending: true });
+
+    if (res.error) console.error('fetchAllSeats owner query error:', res.error);
+    return (res.data || []) as T[];
+  }
+
+  // Fetch all 1,398 seats across 2 parallel range queries
   const buildQuery = (from: number, to: number) => {
-    let q = supabaseClient.from('seats').select(selectFields).range(from, to);
-    if (options.ownerId) {
-      q = q.eq('owner_id', options.ownerId);
-    }
-    return q
+    return supabaseClient
+      .from('seats')
+      .select(selectFields)
+      .range(from, to)
       .order('section', { ascending: true })
       .order('row_label', { ascending: true })
       .order('seat_no', { ascending: true });

@@ -17,14 +17,16 @@ export default async function SponsorsPage() {
 
   const adminClient = createAdminClient();
 
-  // Fetch all sponsors
-  const { data: sponsorsData } = await adminClient
-    .from('sponsors')
-    .select('*')
-    .order('created_at', { ascending: false });
+  // Fetch sponsors and seats in parallel
+  const [sponsorsRes, seats] = await Promise.all([
+    adminClient
+      .from('sponsors')
+      .select('*')
+      .order('created_at', { ascending: false }),
+    fetchAllSeats(adminClient)
+  ]);
 
-  // Fetch all seats to check sponsor tagging
-  const seats = await fetchAllSeats(adminClient);
+  const sponsorsData = sponsorsRes.data || [];
 
   return (
     <RoleGate allowedRoles={['super_admin']}>

@@ -226,28 +226,50 @@ html:not(.dark) {
   }
 
   /* High-Contrast Status & Metric Colors in Light Mode */
-  .text-emerald-400 {
+  .text-emerald-400,
+  .text-emerald-300,
+  .text-\[\#16A34A\] {
     color: #047857 !important; /* Deep Rich Emerald */
   }
 
-  .text-sky-400 {
+  .text-sky-400,
+  .text-sky-300,
+  .text-cyan-400,
+  .text-blue-400 {
     color: #0369A1 !important; /* Deep Ocean Blue */
   }
 
-  .text-amber-400 {
+  .text-amber-400,
+  .text-amber-300,
+  .text-yellow-400,
+  .text-yellow-300,
+  .text-\[\#FACC15\],
+  .text-\[\#FBBF24\],
+  .text-\[\#F59E0B\] {
     color: #92400E !important; /* Rich Dark Amber */
   }
 
-  .text-\[\#E8913A\] {
+  .text-\[\#2DD4BF\],
+  .text-teal-400,
+  .text-teal-300,
+  .text-\[\#14B8A6\],
+  .text-\[\#0D9488\] {
+    color: #0F766E !important; /* Rich Dark Teal */
+  }
+
+  .text-\[\#E8913A\],
+  .text-orange-400 {
     color: #B45309 !important; /* Rich Warm Bronze Amber */
   }
 
   .text-purple-300,
-  .text-purple-400 {
+  .text-purple-400,
+  .text-purple-200 {
     color: #6B21A8 !important; /* Deep Royal Purple */
   }
 
-  .text-red-400 {
+  .text-red-400,
+  .text-red-300 {
     color: #B91C1C !important; /* Deep Crimson */
   }
 

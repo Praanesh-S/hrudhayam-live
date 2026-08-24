@@ -13,16 +13,14 @@ export default async function SetupPage() {
 
   const adminClient = createAdminClient();
 
-  const { data: rowsData } = await adminClient
-    .from("rows")
-    .select("*")
-    .order("display_order", { ascending: true });
+  const [rowsRes, seatsData] = await Promise.all([
+    adminClient.from("rows").select("*").order("display_order", { ascending: true }),
+    fetchAllSeats(adminClient, {
+      select: "id, section, row_label, seat_no, tier, obligation, guest_name, payment_status, checked_in, owner_id"
+    })
+  ]);
 
-  const seatsData = await fetchAllSeats(adminClient, {
-    select: "id, section, row_label, seat_no, tier, obligation, guest_name, payment_status, checked_in, owner_id"
-  });
-
-  const rows: VenueRow[] = rowsData || [];
+  const rows: VenueRow[] = rowsRes.data || [];
   const seatMapItems: SeatMapItem[] = (seatsData || []).map((s: any) => ({
     id: s.id,
     section: s.section,

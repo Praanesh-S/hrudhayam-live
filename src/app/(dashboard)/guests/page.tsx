@@ -31,22 +31,21 @@ export default async function GuestsPage() {
     redirect('/dashboard');
   }
 
-  // Fetch all team profiles for owner display
-  const { data: allProfiles } = await adminClient
-    .from('profiles')
-    .select('id, full_name, email, role');
+  // Fetch all team profiles and seats in parallel
+  const [profilesRes, seats] = await Promise.all([
+    adminClient
+      .from('profiles')
+      .select('id, full_name, email, role'),
+    fetchAllSeats<Seat>(adminClient, {
+      ownerId: role === 'sub_admin' ? user.id : undefined,
+    })
+  ]);
 
+  const allProfiles = profilesRes.data || [];
   const ownerMap: Record<string, string> = {};
-  if (allProfiles) {
-    for (const p of allProfiles) {
-      ownerMap[p.id] = p.full_name || p.email;
-    }
+  for (const p of allProfiles) {
+    ownerMap[p.id] = p.full_name || p.email;
   }
-
-  // Fetch ALL seats (all 1,448) using multi-range pagination helper
-  const seats = await fetchAllSeats<Seat>(adminClient, {
-    ownerId: role === 'sub_admin' ? user.id : undefined,
-  });
 
   return (
     <div className="flex-1 space-y-4 p-4 md:p-8 pt-6 max-w-7xl mx-auto pb-16">

@@ -63,6 +63,7 @@ export function SidebarContent({ profile, onNavigate }: { profile: Profile; onNa
           <li key={item.name}>
             <Link
               href={item.href}
+              prefetch={true}
               onClick={onNavigate}
               className={cn(
                 'flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all duration-200',

@@ -49,6 +49,7 @@ export default async function DashboardPage() {
   const isSuperAdmin = profile.role === 'super_admin';
   const seats = await fetchAllSeats(adminClient, {
     ownerId: isSuperAdmin ? undefined : user.id,
+    select: 'id, section, row_label, seat_no, tier, obligation, owner_id, guest_name, payment_status, checked_in',
   });
 
   // Calculate live statistics

@@ -31,23 +31,24 @@ export default async function ReportsPage() {
 
   const isSuperAdmin = profile.role === 'super_admin';
 
-  // 1. Fetch all seats
-  const seats = await fetchAllSeats(adminClient, {
-    ownerId: isSuperAdmin ? undefined : user.id,
-  });
+  // Fetch all report datasets in parallel
+  const [seats, teamMembersRes, sponsorsRes] = await Promise.all([
+    fetchAllSeats(adminClient, {
+      ownerId: isSuperAdmin ? undefined : user.id,
+    }),
+    adminClient
+      .from('profiles')
+      .select('*')
+      .eq('is_active', true)
+      .order('full_name'),
+    adminClient
+      .from('sponsors')
+      .select('*')
+      .order('created_at', { ascending: false })
+  ]);
 
-  // 2. Fetch all team members (profiles)
-  const { data: teamMembers } = await adminClient
-    .from('profiles')
-    .select('*')
-    .eq('is_active', true)
-    .order('full_name');
-
-  // 3. Fetch all sponsors
-  const { data: sponsors } = await adminClient
-    .from('sponsors')
-    .select('*')
-    .order('created_at', { ascending: false });
+  const teamMembers = teamMembersRes.data || [];
+  const sponsors = sponsorsRes.data || [];
 
   return (
     <RoleGate allowedRoles={['super_admin', 'sub_admin']}>
