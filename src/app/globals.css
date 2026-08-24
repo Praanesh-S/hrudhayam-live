@@ -49,50 +49,50 @@
 }
 
 :root {
-  /* Eye-friendly Aesthetic Light Mode (Soft Warm Slate) */
-  --background: #F8FAFC;
+  /* Warm Luxury Aesthetic Light Mode (Warm Ivory & Champagne Linen) */
+  --background: #FBF9F4;
   --foreground: #0F172A;
   
-  /* Cards: Pure crisp white with soft borders */
-  --card: #FFFFFF;
+  /* Cards: Warm pearl ivory with refined warm golden-sand border */
+  --card: #FFFDF9;
   --card-foreground: #0F172A;
   
-  --popover: #FFFFFF;
+  --popover: #FFFDF9;
   --popover-foreground: #0F172A;
   
-  /* Primary: Warm Gold & Amber */
+  /* Primary: Rich Royal Amber Gold */
   --primary: #D97706;
-  --primary-foreground: #FFFFFF;
+  --primary-foreground: #000000;
   
-  --secondary: #F1F5F9;
+  --secondary: #F4EFE6;
   --secondary-foreground: #1E293B;
   
-  --muted: #F1F5F9;
-  --muted-foreground: #64748B;
+  --muted: #F3ECE0;
+  --muted-foreground: #574D3F;
   
   --accent: #FEF3C7;
-  --accent-foreground: #92400E;
+  --accent-foreground: #78350F;
   
-  --destructive: #EF4444;
-  --border: #E2E8F0;
-  --input: #E2E8F0;
+  --destructive: #DC2626;
+  --border: #E2D7C5;
+  --input: #FAF7F0;
   --ring: #D97706;
   
   --radius: 0.75rem;
   
   /* Sidebar */
-  --sidebar: #FFFFFF;
+  --sidebar: #FBF9F4;
   --sidebar-foreground: #0F172A;
   --sidebar-primary: #D97706;
   --sidebar-primary-foreground: #FFFFFF;
-  --sidebar-accent: #F8FAFC;
+  --sidebar-accent: #F4EFE6;
   --sidebar-accent-foreground: #0F172A;
-  --sidebar-border: #E2E8F0;
+  --sidebar-border: #E2D7C5;
   --sidebar-ring: #D97706;
 }
 
 .dark {
-  /* Eye-friendly Luxury Dark Slate / Matte Navy Theme */
+  /* Luxury Dark Slate / Matte Navy Theme */
   --background: #0B131E;
   --foreground: #F1F5F9;
   
@@ -146,51 +146,56 @@
 }
 
 /* ─────────────────────────────────────────────────────────────
- * LIGHT MODE AESTHETIC HARMONIZATION
- * Automatically renders all cards, inputs, tables, tabs, and shapes
- * in clean, warm-slate light colors when Dark mode is not active.
+ * WARM LUXURY LIGHT MODE AESTHETIC HARMONIZATION
+ * Transforms all elements into warm peach/champagne ivory with
+ * crisp warm borders and deep high-contrast readable typography.
  * ───────────────────────────────────────────────────────────── */
 html:not(.dark) {
-  /* 1. Surfaces & Cards */
+  /* 1. Main Cards, Panels & Outer Containers */
   .bg-\[\#131F2E\],
   .bg-\[\#0F2236\],
   .bg-\[\#0B1E2B\],
   .bg-\[\#132B3E\] {
-    background-color: #FFFFFF !important;
+    background-color: #FFFDF9 !important;
     color: #0F172A !important;
-    border-color: #E2E8F0 !important;
-    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05), 0 1px 2px -1px rgb(0 0 0 / 0.05);
+    border-color: #E2D7C5 !important;
+    border-width: 1px !important;
+    box-shadow: 0 2px 8px -2px rgba(100, 80, 50, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04) !important;
   }
 
-  /* 2. Sub-headers & Table Headers */
+  /* 2. Sub-headers, Inner Section Boxes, and Table Headers */
   .bg-\[\#0E1724\],
   .bg-\[\#081522\],
   .bg-\[\#08121D\],
   .bg-\[\#0A1624\],
   .bg-\[\#0A1420\],
   .bg-\[\#060D15\] {
-    background-color: #F8FAFC !important;
+    background-color: #F6F1E8 !important;
     color: #0F172A !important;
-    border-color: #E2E8F0 !important;
+    border-color: #E2D7C5 !important;
   }
 
-  /* 3. Textboxes, Inputs & Select Triggers */
+  /* 3. Textboxes, Search Inputs & Select Triggers (Warm Peach-Ivory with Clear Crisp Border) */
   .bg-\[\#1A2839\],
   .bg-\[\#162C42\],
   .bg-\[\#1A344E\],
   .bg-\[\#1E3B5A\] {
-    background-color: #FFFFFF !important;
+    background-color: #FAF7F0 !important;
     color: #0F172A !important;
-    border-color: #CBD5E1 !important;
+    border-color: #D2C4AF !important;
+    border-width: 1px !important;
   }
 
   /* Input placeholders in light mode */
   input.bg-\[\#1A2839\]::placeholder,
-  textarea.bg-\[\#1A2839\]::placeholder {
-    color: #94A3B8 !important;
+  textarea.bg-\[\#1A2839\]::placeholder,
+  input::placeholder,
+  textarea::placeholder {
+    color: #786B5A !important;
+    opacity: 0.85 !important;
   }
 
-  /* 4. Borders */
+  /* 4. Strong Well-Defined Warm Borders */
   .border-\[\#223345\],
   .border-\[\#1E3A4C\],
   .border-\[\#2A3F55\],
@@ -202,73 +207,169 @@ html:not(.dark) {
   .border-\[\#24364A\],
   .border-slate-800,
   .border-slate-700 {
-    border-color: #E2E8F0 !important;
+    border-color: #E2D7C5 !important;
   }
 
-  /* 5. Typography & Text Contrast */
+  /* 5. Typography & High-Contrast Readability */
   .text-white {
     color: #0F172A !important;
   }
 
   .text-slate-300,
   .text-slate-200 {
-    color: #334155 !important;
+    color: #2D3748 !important;
   }
 
-  .text-slate-400 {
-    color: #64748B !important;
-  }
-
+  .text-slate-400,
   .text-slate-500 {
-    color: #64748B !important;
+    color: #5C5243 !important;
   }
 
-  /* Preserve white text on primary buttons and badges */
+  /* High-Contrast Status & Metric Colors in Light Mode */
+  .text-emerald-400 {
+    color: #047857 !important; /* Deep Rich Emerald */
+  }
+
+  .text-sky-400 {
+    color: #0369A1 !important; /* Deep Ocean Blue */
+  }
+
+  .text-amber-400 {
+    color: #92400E !important; /* Rich Dark Amber */
+  }
+
+  .text-\[\#E8913A\] {
+    color: #B45309 !important; /* Rich Warm Bronze Amber */
+  }
+
+  .text-purple-300,
+  .text-purple-400 {
+    color: #6B21A8 !important; /* Deep Royal Purple */
+  }
+
+  .text-red-400 {
+    color: #B91C1C !important; /* Deep Crimson */
+  }
+
+  /* 6. Icon Badges & Metric Pill Backgrounds */
+  .bg-amber-950\/40 {
+    background-color: #FEF3C7 !important;
+    border-color: #FDE68A !important;
+    color: #92400E !important;
+  }
+
+  .bg-emerald-950\/40 {
+    background-color: #D1FAE5 !important;
+    border-color: #A7F3D0 !important;
+    color: #065F46 !important;
+  }
+
+  .bg-sky-950\/40 {
+    background-color: #E0F2FE !important;
+    border-color: #BAE6FD !important;
+    color: #0369A1 !important;
+  }
+
+  .bg-purple-950\/40 {
+    background-color: #F3E8FF !important;
+    border-color: #E9D5FF !important;
+    color: #6B21A8 !important;
+  }
+
+  /* 7. Action Buttons & Filter Chips */
   button.bg-\[\#E8913A\],
   button.bg-\[\#D97706\],
-  .bg-gradient-to-r.from-\[\#E8913A\],
-  .bg-emerald-600,
-  .bg-red-600,
-  .bg-red-700,
-  .bg-sky-600,
-  .badge-primary,
-  .text-slate-950 {
-    color: #0B131E !important;
+  .bg-gradient-to-r.from-\[\#E8913A\] {
+    background-color: #E8913A !important;
+    color: #000000 !important;
+    border-color: #D97706 !important;
   }
 
-  /* 6. Tabs & Pills in Light Mode */
+  /* Filter buttons in Seat Blueprint */
+  button.bg-\[\#162C42\],
+  button.bg-slate-800,
+  button.bg-slate-900 {
+    background-color: #F6F0E4 !important;
+    border-color: #D8CBBA !important;
+    color: #2D3748 !important;
+  }
+
+  button.bg-\[\#F59E0B\],
+  .bg-\[\#F59E0B\]\/10 {
+    background-color: #FEF3C7 !important;
+    border-color: #F59E0B !important;
+    color: #92400E !important;
+  }
+
+  button.bg-\[\#0D9488\],
+  .bg-\[\#0D9488\]\/10 {
+    background-color: #CCFBF1 !important;
+    border-color: #0D9488 !important;
+    color: #115E59 !important;
+  }
+
+  button.bg-\[\#8B5CF6\],
+  .bg-purple-950\/40 {
+    background-color: #F3E8FF !important;
+    border-color: #8B5CF6 !important;
+    color: #6B21A8 !important;
+  }
+
+  button.bg-\[\#10B981\],
+  .bg-emerald-950\/40 {
+    background-color: #D1FAE5 !important;
+    border-color: #10B981 !important;
+    color: #065F46 !important;
+  }
+
+  button.bg-\[\#0284C7\],
+  .bg-sky-950\/40 {
+    background-color: #E0F2FE !important;
+    border-color: #0284C7 !important;
+    color: #0369A1 !important;
+  }
+
+  /* 8. Floor Switcher Toggle */
+  .inline-flex.bg-\[\#081522\] {
+    background-color: #EDE4D5 !important;
+    border-color: #D8CBBA !important;
+  }
+
+  /* 9. Tabs in Light Mode */
   [data-state="active"] {
-    background-color: #FFFFFF !important;
+    background-color: #FFFDF9 !important;
     color: #0F172A !important;
-    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);
+    box-shadow: 0 1px 4px rgba(100, 80, 50, 0.12) !important;
+    font-weight: 700 !important;
   }
 
-  /* 7. Dialogs & Modals in Light Mode */
+  /* 10. Dialogs & Modals */
   [role="dialog"] {
-    background-color: #FFFFFF !important;
+    background-color: #FFFDF9 !important;
     color: #0F172A !important;
-    border-color: #E2E8F0 !important;
-    box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+    border-color: #E2D7C5 !important;
+    border-width: 1px !important;
+    box-shadow: 0 25px 50px -12px rgba(100, 80, 50, 0.15) !important;
   }
 
-  /* 8. Seat Map Architectural Canvas in Light Mode */
+  /* 11. Seat Map Architectural Canvas in Light Mode */
   .bg-\[\#0A1624\] {
-    background-color: #F1F5F9 !important;
-    border-color: #CBD5E1 !important;
+    background-color: #F5EFE4 !important;
+    border-color: #D8CBBA !important;
   }
 
   .bg-\[\#08121D\] {
-    background-color: #FFFFFF !important;
-    border-color: #E2E8F0 !important;
-    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05);
+    background-color: #FFFDF9 !important;
+    border-color: #E2D7C5 !important;
+    box-shadow: 0 1px 4px rgba(100, 80, 50, 0.05) !important;
   }
 
   .bg-gradient-to-b.from-\[\#13283E\] {
-    background-image: linear-gradient(to bottom, #E2E8F0, #F8FAFC) !important;
-    border-color: #CBD5E1 !important;
+    background-image: linear-gradient(to bottom, #EBE2D3, #F7F2E7) !important;
+    border-color: #D4C6B2 !important;
   }
 
-  /* 9. Hero Banner in Light Mode */
+  /* 12. Hero Concert Banner in Light Mode */
   .bg-gradient-to-r.from-\[\#0B131E\] {
     background-image: linear-gradient(to right, #1E293B, #0F172A) !important;
   }
@@ -277,10 +378,14 @@ html:not(.dark) {
   }
   .bg-gradient-to-r.from-\[\#0B131E\] .text-slate-300,
   .bg-gradient-to-r.from-\[\#0B131E\] .text-slate-400 {
-    color: #CBD5E1 !important;
+    color: #E2E8F0 !important;
   }
   .bg-gradient-to-r.from-\[\#0B131E\] .text-\[\#E8913A\] {
     color: #FBBF24 !important;
+  }
+  .bg-gradient-to-r.from-\[\#0B131E\] .bg-\[\#0E1724\]\/90 {
+    background-color: rgba(15, 23, 42, 0.9) !important;
+    border-color: #334155 !important;
   }
 }
 
@@ -293,14 +398,14 @@ html:not(.dark) {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #CBD5E1;
+  background: #D2C4AF;
   border-radius: 3px;
 }
 .dark ::-webkit-scrollbar-thumb {
   background: #24364A;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #94A3B8;
+  background: #B3A38D;
 }
 .dark ::-webkit-scrollbar-thumb:hover {
   background: #3B526B;

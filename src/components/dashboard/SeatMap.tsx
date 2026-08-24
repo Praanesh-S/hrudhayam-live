@@ -144,7 +144,7 @@ export default function SeatMap({
             </Badge>
           </div>
           <p className="text-xs text-slate-300 mt-1">
-            Exact architectural representation of Ground Floor (698 seats) and Balcony (750 seats).
+            Exact architectural representation of Ground Floor (648 seats) and Balcony (750 seats).
           </p>
         </div>
 
@@ -156,14 +156,16 @@ export default function SeatMap({
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
               selectedFloor === 'Ground Floor'
                 ? 'bg-[#E8913A] text-slate-950 shadow-md'
-                : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/60 dark:hover:bg-slate-800'
             }`}
           >
             <span>Ground Floor</span>
-            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
-              selectedFloor === 'Ground Floor' ? 'bg-slate-950 text-white' : 'bg-slate-800 text-slate-300'
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold ${
+              selectedFloor === 'Ground Floor' 
+                ? 'bg-slate-900 text-amber-300 dark:bg-slate-950 dark:text-white' 
+                : 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
             }`}>
-              698
+              648
             </span>
           </button>
 
@@ -173,12 +175,14 @@ export default function SeatMap({
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
               selectedFloor === 'Balcony'
                 ? 'bg-[#E8913A] text-slate-950 shadow-md'
-                : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/60 dark:hover:bg-slate-800'
             }`}
           >
             <span>Balcony</span>
-            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
-              selectedFloor === 'Balcony' ? 'bg-slate-950 text-white' : 'bg-slate-800 text-slate-300'
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold ${
+              selectedFloor === 'Balcony' 
+                ? 'bg-slate-900 text-amber-300 dark:bg-slate-950 dark:text-white' 
+                : 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
             }`}>
               750
             </span>
