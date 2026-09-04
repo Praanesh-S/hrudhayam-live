@@ -3,15 +3,15 @@ export const dynamic = 'force-dynamic';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { RoleGate } from '@/components/layout/RoleGate';
-import { ReportsClient } from './reports-client';
+import { SellClient } from './sell-client';
 import { fetchBandsWithMetrics } from '@/lib/band-utils';
 import { redirect } from 'next/navigation';
 
 export const metadata = {
-  title: 'Reports & Reconciliation | Hrudhayam LIVE',
+  title: 'Sell Seats | Hrudhayam LIVE',
 };
 
-export default async function ReportsPage() {
+export default async function SellPage() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
@@ -31,53 +31,50 @@ export default async function ReportsPage() {
     redirect('/onboard');
   }
 
-  // Fetch all reports data in parallel
-  const [bands, salesRes, teamRes, sponsorsRes, poolsRes] = await Promise.all([
+  // Fetch bands with remaining counts, approvers (super & system admins), and sponsors in parallel
+  const [bands, approversRes, sponsorsRes] = await Promise.all([
     fetchBandsWithMetrics(adminClient),
-    adminClient
-      .from('sales')
-      .select('*, band:bands(name, standard_price), seller:profiles!sales_sold_by_fkey(full_name, email)')
-      .order('created_at', { ascending: false }),
     adminClient
       .from('profiles')
       .select('*')
-      .eq('is_active', true)
-      .order('full_name'),
+      .in('role', ['super_admin', 'system_admin'])
+      .eq('is_active', true),
     adminClient
       .from('sponsors')
       .select('*')
       .order('name'),
-    adminClient
-      .from('reserved_pools')
-      .select('*, entries:reserved_entries(*)')
-      .order('display_order', { ascending: true }),
   ]);
 
-  const sales = salesRes.data || [];
-  const teamMembers = teamRes.data || [];
+  const approvers = approversRes.data || [];
   const sponsors = sponsorsRes.data || [];
-  const pools = poolsRes.data || [];
 
   return (
     <RoleGate allowedRoles={['super_admin', 'sub_admin', 'system_admin']}>
       <div className="flex flex-col gap-6">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">
-            Fundraising & Pass Reconciliation Reports
+            Sell Admission Passes
           </h1>
           <p className="text-slate-500 dark:text-slate-400 text-sm">
-            Comprehensive audit reports across bands, team members, sponsors, and reserved pools.
+            Select a price band, enter donor details, and issue passes via WhatsApp or printed ticket.
           </p>
         </div>
 
-        <ReportsClient 
-          bands={bands} 
-          sales={sales}
-          teamMembers={teamMembers}
-          sponsors={sponsors}
-          pools={pools}
-          userRole={profile.role || 'sub_admin'}
-        />
+        {profile.role === 'system_admin' ? (
+          <div className="p-6 bg-[#131F2E] rounded-3xl border border-[#223345] text-center max-w-xl mx-auto space-y-3">
+            <h3 className="text-lg font-bold text-white">System Admin Notice</h3>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              As the System Administrator, you manage technical configurations, band capacities, and cancellations. Commercial sales are conducted by Sub-Admins and Super Admins.
+            </p>
+          </div>
+        ) : (
+          <SellClient 
+            bands={bands} 
+            approvers={approvers}
+            sponsors={sponsors}
+            currentUser={profile}
+          />
+        )}
       </div>
     </RoleGate>
   );

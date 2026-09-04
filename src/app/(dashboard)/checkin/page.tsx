@@ -4,7 +4,7 @@ import { RoleGate } from '@/components/layout/RoleGate';
 import { CheckinClient } from './checkin-client';
 
 export const metadata = {
-  title: 'Check-in | Hrudhayam',
+  title: 'Gate Check-in | Hrudhayam LIVE',
 };
 
 export default async function CheckinPage() {
@@ -20,17 +20,18 @@ export default async function CheckinPage() {
     .single();
 
   return (
-    <RoleGate allowedRoles={['super_admin', 'sub_admin']}>
+    <RoleGate allowedRoles={['super_admin', 'sub_admin', 'system_admin']}>
       <div className="flex flex-col gap-6">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Scanner & Check-in</h1>
-          <p className="text-muted-foreground">
-            Scan guest QR codes or manually enter pass codes to check them in.
+          <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">Gate Scanner & Check-in</h1>
+          <p className="text-slate-500 dark:text-slate-400 text-sm">
+            Scan donor WhatsApp QR codes or enter pass codes for gate admission.
           </p>
         </div>
         
         <CheckinClient 
           isSuperAdmin={profile?.role === 'super_admin'} 
+          isSystemAdmin={profile?.role === 'system_admin'}
           hasDoorDuty={!!profile?.door_duty} 
         />
       </div>

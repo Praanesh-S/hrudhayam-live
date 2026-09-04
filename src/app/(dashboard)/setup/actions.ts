@@ -1,235 +1,275 @@
-"use server";
-import { revalidatePath } from "next/cache";
+'use server';
 
-import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { logAudit } from "@/lib/audit";
-import { generateSeatId } from "@/lib/seat-utils";
-import type { ObligationType, TierValue, VenueRow, SeatSection } from "@/lib/types";
+import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { logAudit } from '@/lib/audit';
+import { revalidatePath } from 'next/cache';
 
-export async function updateRowTier(rowId: string, tier: TierValue | null) {
+async function checkAdminAuth() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: "Unauthorized" };
+  if (!user) throw new Error('Unauthorized');
 
   const adminClient = createAdminClient();
+  const { data: profile } = await adminClient
+    .from('profiles')
+    .select('id, role, is_active')
+    .eq('id', user.id)
+    .single();
 
-  const { data: profile } = await adminClient.from("profiles").select("role").eq("id", user.id).maybeSingle();
-  if (profile?.role !== "super_admin") return { error: "Forbidden" };
+  if (!profile || !profile.is_active || (profile.role !== 'super_admin' && profile.role !== 'system_admin')) {
+    throw new Error('Permission denied: Only Super Admin or System Admin can configure bands and reserved pools');
+  }
 
-  const { data: row } = await adminClient.from("rows").select("*").eq("id", rowId).maybeSingle();
-  if (!row) return { error: "Row not found" };
-  if (row.lock_status === "Locked") return { error: "Row is locked" };
-
-  // Update row
-  const { error: rowError } = await adminClient.from("rows").update({ tier, obligation: null }).eq("id", rowId);
-  if (rowError) return { error: rowError.message };
-
-  // Update all unallocated seats in that row
-  const { error: seatsError } = await adminClient
-    .from("seats")
-    .update({ tier, obligation: null })
-    .eq("row_id", rowId)
-
-  if (seatsError) return { error: seatsError.message };
-  await logAudit(user.id, "PRICE_SET", "row", rowId, { tier });
-  revalidatePath("/", "layout"); return { success: true };
+  return { user, profile, adminClient };
 }
 
-export async function updateRowObligation(rowId: string, obligation: ObligationType | null) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: "Unauthorized" };
+/**
+ * Update a band's total capacity.
+ */
+export async function updateBandCapacity(bandId: string, totalCapacity: number) {
+  try {
+    const { user, profile, adminClient } = await checkAdminAuth();
 
-  const adminClient = createAdminClient();
-
-  const { data: profile } = await adminClient.from("profiles").select("role").eq("id", user.id).maybeSingle();
-  if (profile?.role !== "super_admin") return { error: "Forbidden" };
-
-  const { data: row } = await adminClient.from("rows").select("*").eq("id", rowId).maybeSingle();
-  if (!row) return { error: "Row not found" };
-
-  // Ensure no allocated seats exist if changing to obligation
-  if (obligation) {
-    const { count } = await adminClient.from("seats").select("id", { count: "exact" }).eq("row_id", rowId).not("owner_id", "is", null);
-    if (count && count > 0) {
-      return { error: "Cannot set obligation on row with allocated seats" };
+    if (totalCapacity < 0) {
+      return { success: false, error: 'Capacity cannot be negative' };
     }
-  }
 
-  // Update row
-  const { error: rowError } = await adminClient.from("rows").update({ obligation, tier: null }).eq("id", rowId);
-  if (rowError) return { error: rowError.message };
+    // 1. Check current sold count
+    const { count: soldCount } = await adminClient
+      .from('sales')
+      .select('*', { count: 'exact', head: true })
+      .eq('band_id', bandId)
+      .eq('cancelled', false);
 
-  // Update all seats in that row
-  const { error: seatsError } = await adminClient
-    .from("seats")
-    .update({ obligation, tier: null })
-    .eq("row_id", rowId);
-
-  if (seatsError) return { error: seatsError.message };
-  await logAudit(user.id, "PRICE_SET", "row", rowId, { obligation });
-  revalidatePath("/", "layout"); return { success: true };
-}
-
-export async function updateRowSeatCount(rowId: string, newCount: number) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: "Unauthorized" };
-
-  const adminClient = createAdminClient();
-
-  const { data: profile } = await adminClient.from("profiles").select("role").eq("id", user.id).maybeSingle();
-  if (profile?.role !== "super_admin") return { error: "Forbidden" };
-
-  const { data: row } = await adminClient.from("rows").select("*").eq("id", rowId).maybeSingle();
-  if (!row) return { error: "Row not found" };
-
-  // Check allocated seats
-  const { count: allocatedCount } = await adminClient
-    .from("seats")
-    .select("id", { count: "exact" })
-    .eq("row_id", rowId)
-    .not("owner_id", "is", null);
-
-  if ((allocatedCount || 0) > newCount) {
-    return { error: `Cannot reduce seats below ${allocatedCount} as they are already allocated.` };
-  }
-
-  // Check seats with guests
-  const { count: guestCount } = await adminClient
-    .from("seats")
-    .select("id", { count: "exact" })
-    .eq("row_id", rowId)
-    .not("guest_name", "is", null);
-  
-  if ((guestCount || 0) > newCount) {
-    return { error: `Cannot reduce seats below ${guestCount} as they are assigned to guests.` };
-  }
-
-  const { error: rowError } = await adminClient.from("rows").update({ seat_count: newCount }).eq("id", rowId);
-  if (rowError) return { error: rowError.message };
-
-  // Adjust seat records
-  const { data: currentSeats } = await adminClient.from("seats").select("seat_no").eq("row_id", rowId);
-  const currentCount = currentSeats?.length || 0;
-
-  if (newCount > currentCount) {
-    // Add seats
-    const seatsToInsert = [];
-    for (let i = currentCount + 1; i <= newCount; i++) {
-      seatsToInsert.push({
-        id: generateSeatId(row.section, row.row_label, i),
-        section: row.section,
-        row_label: row.row_label,
-        seat_no: i,
-        row_id: row.id,
-        tier: row.tier,
-        obligation: row.obligation,
-        payment_status: "pending",
-        checked_in: false,
-        ticket_sent: false
-      });
+    const currentSold = soldCount || 0;
+    if (totalCapacity < currentSold) {
+      return { 
+        success: false, 
+        error: `Cannot set capacity to ${totalCapacity}. Already sold ${currentSold} seats in this band.` 
+      };
     }
-    const { error: insertError } = await adminClient.from("seats").insert(seatsToInsert);
-    if (insertError) return { error: insertError.message };
-  } else if (newCount < currentCount) {
-    // Remove seats
-    const seatsToRemove = currentSeats?.filter(s => s.seat_no > newCount).map(s => s.seat_no) || [];
-    if (seatsToRemove.length > 0) {
-      const { error: delError } = await adminClient
-        .from("seats")
-        .delete()
-        .eq("row_id", rowId)
-        .in("seat_no", seatsToRemove);
-      if (delError) return { error: delError.message };
-    }
+
+    // 2. Fetch previous band state for audit
+    const { data: oldBand } = await adminClient
+      .from('bands')
+      .select('*')
+      .eq('id', bandId)
+      .single();
+
+    // 3. Update band
+    const { error: updateError } = await adminClient
+      .from('bands')
+      .update({ 
+        total_capacity: totalCapacity,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', bandId);
+
+    if (updateError) throw updateError;
+
+    // 4. Log audit
+    await logAudit(
+      user.id,
+      'BAND_CAPACITY_SET',
+      'band',
+      bandId,
+      {
+        band_name: oldBand?.name,
+        old_capacity: oldBand?.total_capacity,
+        new_capacity: totalCapacity,
+        updated_by: profile.role,
+      }
+    );
+
+    revalidatePath('/setup');
+    revalidatePath('/dashboard');
+    revalidatePath('/sell');
+    revalidatePath('/reports');
+
+    return { success: true };
+  } catch (err: any) {
+    console.error('Error updating band capacity:', err);
+    return { success: false, error: err.message || 'Failed to update band capacity' };
   }
-
-  await logAudit(user.id, "ROW_SEATCOUNT_EDIT", "row", rowId, { newCount });
-  revalidatePath("/", "layout"); return { success: true };
 }
 
-export async function bulkSetTier(section: SeatSection, fromRow: string, toRow: string, tier: TierValue | null) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: "Unauthorized" };
+/**
+ * Update a band's standard price.
+ */
+export async function updateBandPrice(bandId: string, standardPrice: number) {
+  try {
+    const { user, profile, adminClient } = await checkAdminAuth();
 
-  const adminClient = createAdminClient();
+    if (standardPrice <= 0) {
+      return { success: false, error: 'Price must be greater than zero' };
+    }
 
-  const { data: profile } = await adminClient.from("profiles").select("role").eq("id", user.id).maybeSingle();
-  if (profile?.role !== "super_admin") return { error: "Forbidden" };
+    const { data: oldBand } = await adminClient
+      .from('bands')
+      .select('*')
+      .eq('id', bandId)
+      .single();
 
-  const { data: rowsData } = await adminClient.from("rows").select("*").eq("section", section);
-  if (!rowsData || rowsData.length === 0) return { error: "Rows not found" };
+    const { error: updateError } = await adminClient
+      .from('bands')
+      .update({ 
+        standard_price: standardPrice,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', bandId);
 
-  const sortedRows = rowsData.sort((a, b) => a.display_order - b.display_order);
-  const startIdx = sortedRows.findIndex(r => r.row_label === fromRow);
-  const endIdx = sortedRows.findIndex(r => r.row_label === toRow);
-  
-  if (startIdx === -1 || endIdx === -1) return { error: "Invalid row range" };
+    if (updateError) throw updateError;
 
-  const range = sortedRows.slice(Math.min(startIdx, endIdx), Math.max(startIdx, endIdx) + 1);
-  const unlockedRowIds = range.filter(r => r.lock_status === "Unlocked").map(r => r.id);
+    await logAudit(
+      user.id,
+      'DISCOUNT_APPROVE',
+      'band',
+      bandId,
+      {
+        action_note: 'Global band price adjustment',
+        band_name: oldBand?.name,
+        old_price: oldBand?.standard_price,
+        new_price: standardPrice,
+        approved_by: profile.role,
+      }
+    );
 
-  if (unlockedRowIds.length === 0) return { error: "No unlocked rows in the selected range." };
+    revalidatePath('/setup');
+    revalidatePath('/dashboard');
+    revalidatePath('/sell');
+    revalidatePath('/reports');
 
-  const { error: rowError } = await adminClient
-    .from("rows")
-    .update({ tier, obligation: null })
-    .in("id", unlockedRowIds);
-
-  if (rowError) return { error: rowError.message };
-
-  const { error: seatError } = await adminClient
-    .from("seats")
-    .update({ tier, obligation: null })
-    .in("row_id", unlockedRowIds)
-
-  if (seatError) return { error: seatError.message };
-
-  await logAudit(user.id, "PRICE_SET", "row", `Bulk ${section} ${fromRow}-${toRow}`, { tier, count: unlockedRowIds.length });
-  revalidatePath("/", "layout"); return { success: true, count: unlockedRowIds.length };
+    return { success: true };
+  } catch (err: any) {
+    console.error('Error updating band price:', err);
+    return { success: false, error: err.message || 'Failed to update band price' };
+  }
 }
 
-export async function bulkSetObligation(section: SeatSection, fromRow: string, toRow: string, obligation: ObligationType | null) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: "Unauthorized" };
+/**
+ * Update reserved pool total count.
+ */
+export async function updateReservedPool(poolId: string, totalCount: number) {
+  try {
+    const { user, profile, adminClient } = await checkAdminAuth();
 
-  const adminClient = createAdminClient();
+    if (totalCount < 0) {
+      return { success: false, error: 'Count cannot be negative' };
+    }
 
-  const { data: profile } = await adminClient.from("profiles").select("role").eq("id", user.id).maybeSingle();
-  if (profile?.role !== "super_admin") return { error: "Forbidden" };
+    const { data: oldPool } = await adminClient
+      .from('reserved_pools')
+      .select('*')
+      .eq('id', poolId)
+      .single();
 
-  const { data: rowsData } = await adminClient.from("rows").select("*").eq("section", section);
-  if (!rowsData || rowsData.length === 0) return { error: "Rows not found" };
+    const { error } = await adminClient
+      .from('reserved_pools')
+      .update({ 
+        total_count: totalCount,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', poolId);
 
-  const sortedRows = rowsData.sort((a, b) => a.display_order - b.display_order);
-  const startIdx = sortedRows.findIndex(r => r.row_label === fromRow);
-  const endIdx = sortedRows.findIndex(r => r.row_label === toRow);
-  
-  if (startIdx === -1 || endIdx === -1) return { error: "Invalid row range" };
+    if (error) throw error;
 
-  const range = sortedRows.slice(Math.min(startIdx, endIdx), Math.max(startIdx, endIdx) + 1);
-  const unlockedRowIds = range.filter(r => r.lock_status === "Unlocked").map(r => r.id);
+    await logAudit(
+      user.id,
+      'RESERVED_POOL_SET',
+      'reserved_pool',
+      poolId,
+      {
+        pool_category: oldPool?.category,
+        pool_name: oldPool?.name,
+        old_count: oldPool?.total_count,
+        new_count: totalCount,
+      }
+    );
 
-  if (unlockedRowIds.length === 0) return { error: "No unlocked rows in the selected range." };
+    revalidatePath('/setup');
+    revalidatePath('/dashboard');
+    revalidatePath('/reports');
 
-  const { error: rowError } = await adminClient
-    .from("rows")
-    .update({ obligation, tier: null })
-    .in("id", unlockedRowIds);
+    return { success: true };
+  } catch (err: any) {
+    console.error('Error updating reserved pool:', err);
+    return { success: false, error: err.message || 'Failed to update reserved pool' };
+  }
+}
 
-  if (rowError) return { error: rowError.message };
+/**
+ * Add or update a reserved guest name entry.
+ */
+export async function saveReservedEntry(poolId: string, entryId: string | null, name: string, notes: string | null = null) {
+  try {
+    const { user, adminClient } = await checkAdminAuth();
 
-  const { error: seatError } = await adminClient
-    .from("seats")
-    .update({ obligation, tier: null })
-    .in("row_id", unlockedRowIds);
+    if (!name || name.trim() === '') {
+      return { success: false, error: 'Guest name is required' };
+    }
 
-  if (seatError) return { error: seatError.message };
+    if (entryId) {
+      const { error } = await adminClient
+        .from('reserved_entries')
+        .update({ name: name.trim(), notes: notes?.trim() || null })
+        .eq('id', entryId);
 
-  await logAudit(user.id, "PRICE_SET", "row", `Bulk ${section} ${fromRow}-${toRow}`, { obligation, count: unlockedRowIds.length });
-  revalidatePath("/", "layout"); return { success: true, count: unlockedRowIds.length };
+      if (error) throw error;
+
+      await logAudit(
+        user.id,
+        'RESERVED_NAME_FILL',
+        'reserved_entry',
+        entryId,
+        { pool_id: poolId, name: name.trim(), notes }
+      );
+    } else {
+      const { data, error } = await adminClient
+        .from('reserved_entries')
+        .insert({
+          pool_id: poolId,
+          name: name.trim(),
+          notes: notes?.trim() || null,
+        })
+        .select('id')
+        .single();
+
+      if (error) throw error;
+
+      await logAudit(
+        user.id,
+        'RESERVED_NAME_FILL',
+        'reserved_entry',
+        data.id,
+        { pool_id: poolId, name: name.trim(), notes }
+      );
+    }
+
+    revalidatePath('/setup');
+    return { success: true };
+  } catch (err: any) {
+    console.error('Error saving reserved entry:', err);
+    return { success: false, error: err.message || 'Failed to save reserved entry' };
+  }
+}
+
+/**
+ * Delete a reserved guest entry.
+ */
+export async function deleteReservedEntry(entryId: string) {
+  try {
+    const { adminClient } = await checkAdminAuth();
+    const { error } = await adminClient
+      .from('reserved_entries')
+      .delete()
+      .eq('id', entryId);
+
+    if (error) throw error;
+
+    revalidatePath('/setup');
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to delete entry' };
+  }
 }

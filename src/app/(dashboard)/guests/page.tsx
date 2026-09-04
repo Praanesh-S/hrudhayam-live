@@ -1,16 +1,19 @@
 export const dynamic = 'force-dynamic';
-import { redirect } from 'next/navigation';
+
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { GuestsClient, Seat } from './guests-client';
-import { fetchAllSeats } from '@/lib/seat-utils';
+import { RoleGate } from '@/components/layout/RoleGate';
+import { GuestsClient } from './guests-client';
+import { fetchBandsWithMetrics } from '@/lib/band-utils';
+import { redirect } from 'next/navigation';
+
+export const metadata = {
+  title: 'Team Sales & Passes | Hrudhayam LIVE',
+};
 
 export default async function GuestsPage() {
   const supabase = await createClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
     redirect('/login');
@@ -18,44 +21,52 @@ export default async function GuestsPage() {
 
   const adminClient = createAdminClient();
 
-  // Get user profile
   const { data: profile } = await adminClient
     .from('profiles')
-    .select('role, full_name')
+    .select('*')
     .eq('id', user.id)
     .single();
 
-  const role = profile?.role || 'member';
-
-  if (role !== 'super_admin' && role !== 'sub_admin') {
-    redirect('/dashboard');
+  if (!profile || !profile.is_active) {
+    redirect('/onboard');
   }
 
-  // Fetch all team profiles and seats in parallel
-  const [profilesRes, seats] = await Promise.all([
+  // Open team visibility: Fetch all sales, bands, and active profiles in parallel
+  const [salesRes, bands, teamRes] = await Promise.all([
+    adminClient
+      .from('sales')
+      .select('*, band:bands(name, standard_price), seller:profiles!sales_sold_by_fkey(full_name, email)')
+      .order('created_at', { ascending: false }),
+    fetchBandsWithMetrics(adminClient),
     adminClient
       .from('profiles')
-      .select('id, full_name, email, role'),
-    fetchAllSeats<Seat>(adminClient, {
-      ownerId: role === 'sub_admin' ? user.id : undefined,
-    })
+      .select('*')
+      .eq('is_active', true)
+      .order('full_name'),
   ]);
 
-  const allProfiles = profilesRes.data || [];
-  const ownerMap: Record<string, string> = {};
-  for (const p of allProfiles) {
-    ownerMap[p.id] = p.full_name || p.email;
-  }
+  const sales = salesRes.data || [];
+  const teamMembers = teamRes.data || [];
 
   return (
-    <div className="flex-1 space-y-4 p-4 md:p-8 pt-6 max-w-7xl mx-auto pb-16">
-      <GuestsClient 
-        initialSeats={seats} 
-        userRole={role} 
-        userId={user.id} 
-        ownerMap={ownerMap}
-        subAdmins={allProfiles?.filter(p => p.role === 'sub_admin') || []}
-      />
-    </div>
+    <RoleGate allowedRoles={['super_admin', 'sub_admin', 'system_admin']}>
+      <div className="flex flex-col gap-6">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">
+            Team Sales & Passes
+          </h1>
+          <p className="text-slate-500 dark:text-slate-400 text-sm">
+            Complete transparent list of all donor sales, payment collections, and issued WhatsApp & printed passes.
+          </p>
+        </div>
+
+        <GuestsClient 
+          initialSales={sales} 
+          bands={bands}
+          teamMembers={teamMembers}
+          currentUser={profile}
+        />
+      </div>
+    </RoleGate>
   );
 }

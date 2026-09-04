@@ -175,14 +175,21 @@ export default function OnboardForm({
                   <ShieldCheck className="w-4 h-4 text-[#E8913A]" />
                   Super Admin
                 </div>
-                <div className="text-sm text-slate-500">Full system access, manage venue hall, approve team members</div>
+                <div className="text-sm text-slate-500">Configure bands, approve members, authorize discounts, sell passes</div>
               </Label>
             </div>
             <div className="flex items-center space-x-3 p-3 border rounded-md cursor-pointer hover:bg-slate-50">
               <RadioGroupItem value="sub_admin" id="sub_admin" />
               <Label htmlFor="sub_admin" className="flex-1 cursor-pointer">
-                <div className="font-medium">Sub-Admin</div>
-                <div className="text-sm text-slate-500">Hrudhayam Team member managing assigned rows & passes</div>
+                <div className="font-medium">Sub-Admin (Team Member)</div>
+                <div className="text-sm text-slate-500">Sell passes, record donor details, issue WhatsApp & printed tickets</div>
+              </Label>
+            </div>
+            <div className="flex items-center space-x-3 p-3 border rounded-md cursor-pointer hover:bg-slate-50">
+              <RadioGroupItem value="system_admin" id="system_admin" />
+              <Label htmlFor="system_admin" className="flex-1 cursor-pointer">
+                <div className="font-medium text-purple-700">System Admin (Technical Role)</div>
+                <div className="text-sm text-slate-500">Configure bands, authorize discounts, cancel & reassign seats</div>
               </Label>
             </div>
           </RadioGroup>

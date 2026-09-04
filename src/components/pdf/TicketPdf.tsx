@@ -65,7 +65,7 @@ const styles = StyleSheet.create({
   },
   guestSection: {
     alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: 4,
   },
   guestLabel: {
     fontSize: 6,
@@ -80,9 +80,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     textAlign: 'center',
   },
-  seatContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  bandContainer: {
     width: '100%',
     backgroundColor: '#07151E',
     borderRadius: 6,
@@ -90,15 +88,9 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 8,
     marginVertical: 4,
-  },
-  seatBox: {
     alignItems: 'center',
-    flex: 1,
   },
-  seatBoxBorder: {
-    borderRight: '1pt solid #1E3A4C',
-  },
-  seatLabel: {
+  bandLabel: {
     fontSize: 6,
     color: '#E8913A',
     textTransform: 'uppercase',
@@ -106,10 +98,16 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     marginBottom: 2,
   },
-  seatValue: {
-    fontSize: 12,
+  bandValue: {
+    fontSize: 13,
     fontWeight: 'bold',
     color: '#FFFFFF',
+  },
+  seatingNote: {
+    fontSize: 5.5,
+    color: '#94A3B8',
+    marginTop: 2,
+    textTransform: 'uppercase',
   },
   qrWrapper: {
     backgroundColor: '#FFFFFF',
@@ -120,15 +118,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   qrCode: {
-    width: 95,
-    height: 95,
+    width: 90,
+    height: 90,
   },
   passCode: {
     fontSize: 10,
     fontWeight: 'bold',
     color: '#E8913A',
     letterSpacing: 2,
-    marginTop: 3,
+    marginTop: 2,
   },
   venueBlock: {
     alignItems: 'center',
@@ -147,7 +145,7 @@ const styles = StyleSheet.create({
   tearLine: {
     borderTop: '1pt dashed #475569',
     width: '100%',
-    marginVertical: 3,
+    marginVertical: 2,
   },
   footer: {
     paddingVertical: 4,
@@ -162,21 +160,17 @@ const styles = StyleSheet.create({
   },
 });
 
-interface TicketPdfProps {
-  guestName: string;
-  section: string;
-  row: string;
-  seatNo: string;
+export interface TicketPdfProps {
+  donorName: string;
+  bandName: string;
   admitCount?: number;
   passCode: string;
   qrCodeBuffer: Buffer;
 }
 
 export function TicketPdf({
-  guestName,
-  section,
-  row,
-  seatNo,
+  donorName,
+  bandName,
   admitCount = 1,
   passCode,
   qrCodeBuffer,
@@ -190,13 +184,13 @@ export function TicketPdf({
           {/* Header */}
           <View style={styles.header}>
             <Text style={styles.organizerText}>Rotary Club of Aarch City Madras</Text>
-            <Text style={styles.headerTitle}>HRUDHAYAM LIVE</Text>
+            <Text style={styles.headerTitle}>HRUDHAYAM LIVE 2026</Text>
             <Text style={styles.headerSubtitle}>Charity Musical Concert in Aid of Public-Access AEDs</Text>
           </View>
 
           {/* Golden Banner Strip */}
           <View style={styles.badgeStrip}>
-            <Text style={styles.badgeText}>OFFICIAL DONOR E-PASS • ADMIT {admitCount}</Text>
+            <Text style={styles.badgeText}>OFFICIAL DONOR ADMISSION PASS • ADMIT {admitCount}</Text>
           </View>
 
           {/* Content Body */}
@@ -204,23 +198,14 @@ export function TicketPdf({
             {/* Guest Name */}
             <View style={styles.guestSection}>
               <Text style={styles.guestLabel}>PASS ISSUED TO</Text>
-              <Text style={styles.guestName}>{guestName}</Text>
+              <Text style={styles.guestName}>{donorName}</Text>
             </View>
 
-            {/* Exact Seating Coordinates Box */}
-            <View style={styles.seatContainer}>
-              <View style={[styles.seatBox, styles.seatBoxBorder]}>
-                <Text style={styles.seatLabel}>SECTION</Text>
-                <Text style={styles.seatValue}>{section}</Text>
-              </View>
-              <View style={[styles.seatBox, styles.seatBoxBorder]}>
-                <Text style={styles.seatLabel}>ROW</Text>
-                <Text style={styles.seatValue}>{row}</Text>
-              </View>
-              <View style={styles.seatBox}>
-                <Text style={styles.seatLabel}>{admitCount > 1 ? "SEATS" : "SEAT NO"}</Text>
-                <Text style={styles.seatValue}>{seatNo}</Text>
-              </View>
+            {/* Band Container */}
+            <View style={styles.bandContainer}>
+              <Text style={styles.bandLabel}>ADMISSION SEATING CATEGORY</Text>
+              <Text style={styles.bandValue}>{bandName}</Text>
+              <Text style={styles.seatingNote}>First-come, first-served seating within band area</Text>
             </View>
 
             {/* QR Code with White Frame */}
@@ -244,10 +229,10 @@ export function TicketPdf({
           {/* Footer Terms */}
           <View style={styles.footer}>
             <Text style={styles.footerText}>
-              Present this digital pass or printed copy at gate entry. Strictly one entry scan per barcode.
+              Present this pass (printed or digital) at gate entry. Strictly one entry scan per barcode.
             </Text>
             <Text style={styles.footerText}>
-              No commercial resale. This pass represents a charitable contribution.
+              This pass represents a charitable contribution. No commercial resale.
             </Text>
           </View>
         </View>

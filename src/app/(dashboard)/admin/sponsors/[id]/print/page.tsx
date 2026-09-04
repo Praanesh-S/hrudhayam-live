@@ -24,16 +24,15 @@ export default async function SponsorPrintPage({ params }: PrintPageProps) {
     notFound();
   }
 
-  // Fetch tagged seats
-  const { data: seats } = await adminClient
-    .from('seats')
-    .select('*')
+  // Fetch tagged sales
+  const { data: sales } = await adminClient
+    .from('sales')
+    .select('*, band:bands(name, standard_price)')
     .eq('sponsor_id', id)
-    .order('section')
-    .order('row_label')
-    .order('seat_no');
+    .eq('cancelled', false)
+    .order('created_at');
 
-  const taggedSeats = seats || [];
+  const taggedSales = sales || [];
 
   return (
     <div className="bg-white text-black min-h-screen p-8 print:p-0 font-sans">
@@ -76,47 +75,47 @@ export default async function SponsorPrintPage({ params }: PrintPageProps) {
         </div>
       </div>
 
-      {/* Allocated Seats Table */}
+      {/* Allocated Passes Table */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-bold uppercase tracking-wider">
-            Allocated Seating Coordinates ({taggedSeats.length} Seats)
+            Allocated Admission Passes ({taggedSales.length} Passes)
           </h3>
-          <span className="text-xs text-gray-500">Admit One Pass Per Seat</span>
+          <span className="text-xs text-gray-500">Admit One Guest Per Pass</span>
         </div>
 
         <table className="w-full border-collapse border border-gray-400 text-xs">
           <thead>
             <tr className="bg-gray-100 border-b border-gray-400">
               <th className="border border-gray-400 p-2 text-left">#</th>
-              <th className="border border-gray-400 p-2 text-left">Seat ID</th>
-              <th className="border border-gray-400 p-2 text-left">Section</th>
-              <th className="border border-gray-400 p-2 text-left">Row</th>
-              <th className="border border-gray-400 p-2 text-left">Seat No</th>
-              <th className="border border-gray-400 p-2 text-left">Passholder Name</th>
               <th className="border border-gray-400 p-2 text-left">Pass Code</th>
-              <th className="border border-gray-400 p-2 text-left">Status</th>
+              <th className="border border-gray-400 p-2 text-left">Admission Band</th>
+              <th className="border border-gray-400 p-2 text-left">Passholder Name</th>
+              <th className="border border-gray-400 p-2 text-left">Phone</th>
+              <th className="border border-gray-400 p-2 text-left">Issuance Channel</th>
+              <th className="border border-gray-400 p-2 text-left">Gate Admission</th>
             </tr>
           </thead>
           <tbody>
-            {taggedSeats.length === 0 ? (
+            {taggedSales.length === 0 ? (
               <tr>
-                <td colSpan={8} className="p-4 text-center text-gray-500 italic">
-                  No specific physical seats have been tagged to this sponsor yet.
+                <td colSpan={7} className="p-4 text-center text-gray-500 italic">
+                  No passes have been tagged to this sponsor yet.
                 </td>
               </tr>
             ) : (
-              taggedSeats.map((seat, index) => (
-                <tr key={seat.id} className="border-b border-gray-300">
+              taggedSales.map((sale, index) => (
+                <tr key={sale.id} className="border-b border-gray-300">
                   <td className="border border-gray-400 p-2 font-mono">{index + 1}</td>
-                  <td className="border border-gray-400 p-2 font-bold font-mono">{seat.id}</td>
-                  <td className="border border-gray-400 p-2">{seat.section}</td>
-                  <td className="border border-gray-400 p-2 font-bold">Row {seat.row_label}</td>
-                  <td className="border border-gray-400 p-2 font-bold">#{seat.seat_no}</td>
-                  <td className="border border-gray-400 p-2">{seat.guest_name || 'Complimentary Donor'}</td>
-                  <td className="border border-gray-400 p-2 font-mono font-bold">{seat.pass_code || '—'}</td>
+                  <td className="border border-gray-400 p-2 font-bold font-mono text-amber-900">{sale.pass_code}</td>
+                  <td className="border border-gray-400 p-2 font-semibold">{sale.band?.name || 'Seating Band'}</td>
+                  <td className="border border-gray-400 p-2 font-bold">{sale.donor_name}</td>
+                  <td className="border border-gray-400 p-2 font-mono">{sale.donor_phone}</td>
+                  <td className="border border-gray-400 p-2 uppercase font-mono text-[10px]">
+                    {sale.issuance_type || 'Unissued'}
+                  </td>
                   <td className="border border-gray-400 p-2">
-                    {seat.checked_in ? '✓ Checked In' : 'Valid for Entry'}
+                    {sale.checked_in ? '✓ Checked In' : 'Valid for Entry'}
                   </td>
                 </tr>
               ))

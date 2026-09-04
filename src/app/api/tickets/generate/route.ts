@@ -1,74 +1,79 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateQrPngBuffer } from '@/lib/qrcode';
 import { renderToBuffer } from '@react-pdf/renderer';
 import { TicketPdf } from '@/components/pdf/TicketPdf';
 import React from 'react';
 
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const passCode = searchParams.get('passCode') || searchParams.get('pass_code');
+  const saleId = searchParams.get('saleId');
+  const seatId = searchParams.get('seatId');
+  return handleGenerate({ passCode, saleId, seatId });
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { seatId, passCode } = body;
+    return handleGenerate(body);
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+}
 
-    if (!seatId && !passCode) {
-      return NextResponse.json({ error: 'Seat ID or Pass Code required' }, { status: 400 });
+async function handleGenerate({ passCode, saleId, seatId }: { passCode?: string | null; saleId?: string | null; seatId?: string | null }) {
+  try {
+    const targetCode = passCode || seatId || saleId;
+    if (!targetCode) {
+      return NextResponse.json({ error: 'Pass code or Sale ID required' }, { status: 400 });
     }
 
     const adminClient = createAdminClient();
 
-    let seatQuery = adminClient.from('seats').select('*');
-    if (seatId) {
-      seatQuery = seatQuery.eq('id', seatId);
-    } else {
-      seatQuery = seatQuery.eq('pass_code', passCode);
-    }
+    // 1. Try finding in sales table
+    let { data: sale } = await adminClient
+      .from('sales')
+      .select('*, band:bands(name, standard_price)')
+      .or(`id.eq.${targetCode},pass_code.eq.${targetCode}`)
+      .maybeSingle();
 
-    const { data: seats } = await seatQuery;
-    if (!seats || seats.length === 0) {
-      return NextResponse.json({ error: 'Seat/Pass not found' }, { status: 404 });
-    }
+    // 2. If not found, check legacy seats table
+    if (!sale) {
+      const { data: seat } = await adminClient
+        .from('seats')
+        .select('*')
+        .or(`id.eq.${targetCode},pass_code.eq.${targetCode}`)
+        .maybeSingle();
 
-    const seat = seats[0];
-
-    if (!seat.guest_name || !seat.pass_code || !seat.qr_token) {
-      return NextResponse.json({ error: 'Guest details incomplete' }, { status: 400 });
-    }
-
-    // Fetch all seats with the same pass code for group tickets
-    const { data: groupSeats } = await adminClient
-      .from('seats')
-      .select('id, section, row_label, seat_no')
-      .eq('pass_code', seat.pass_code)
-      .order('row_label')
-      .order('seat_no');
-
-    const isGroup = groupSeats && groupSeats.length > 1;
-    let displayRow = seat.row_label;
-    let displaySeat = String(seat.seat_no);
-
-    if (isGroup) {
-      const rows = [...new Set(groupSeats.map(s => s.row_label))];
-      displayRow = rows.join(', ');
-      
-      if (rows.length === 1) {
-        displaySeat = groupSeats.map(s => s.seat_no).join(', ');
-      } else {
-        displaySeat = 'Multiple';
+      if (seat && seat.guest_name) {
+        sale = {
+          id: seat.id,
+          pass_code: seat.pass_code,
+          donor_name: seat.guest_name,
+          qr_token: seat.qr_token || seat.pass_code,
+          band: {
+            name: seat.tier === 5000 ? '₹5,000 Platinum' : seat.tier === 3000 ? '₹3,500 Gold' : '₹1,500 Bronze',
+            standard_price: seat.tier || 5000,
+          },
+        } as any;
       }
     }
 
-    const qrCodeBuffer = await generateQrPngBuffer(seat.qr_token);
-    
+    if (!sale || !sale.donor_name || !sale.pass_code) {
+      return NextResponse.json({ error: 'Valid pass record not found' }, { status: 404 });
+    }
+
+    const bandName = sale.band?.name || `₹${sale.standard_price?.toLocaleString('en-IN') || '5,000'} Band`;
+    const qrCodeBuffer = await generateQrPngBuffer(sale.qr_token || sale.pass_code);
+
     const pdfBuffer = await renderToBuffer(
       React.createElement(TicketPdf, {
-        guestName: seat.guest_name,
-        section: seat.section,
-        row: displayRow,
-        seatNo: displaySeat,
-        passCode: seat.pass_code,
+        donorName: sale.donor_name,
+        bandName,
+        passCode: sale.pass_code,
         qrCodeBuffer,
-        admitCount: groupSeats ? groupSeats.length : 1
+        admitCount: 1,
       }) as any
     );
 
@@ -76,8 +81,8 @@ export async function POST(req: Request) {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `inline; filename="Ticket-${seat.pass_code || seat.id}.pdf"`
-      }
+        'Content-Disposition': `inline; filename="Hrudhayam-Pass-${sale.pass_code}.pdf"`,
+      },
     });
   } catch (error: any) {
     console.error('PDF Generation Error:', error);

@@ -4,9 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { RoleGate } from '@/components/layout/RoleGate';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { UsersForm } from './users-form';
-import { Shield, UserPlus, Users } from 'lucide-react';
 
 export const metadata = {
   title: 'User Management | Hrudhayam LIVE',
@@ -26,15 +24,15 @@ export default async function UsersPage() {
     .order('created_at', { ascending: false });
 
   return (
-    <RoleGate allowedRoles={['super_admin']}>
+    <RoleGate allowedRoles={['super_admin', 'system_admin']}>
       <div className="space-y-6 max-w-7xl mx-auto pb-12">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-[#131F2E] p-5 rounded-2xl border border-[#223345] shadow-xs">
           <div>
             <h1 className="text-xl font-bold text-white tracking-tight">
-              User Management & Access Control
+              Team Member Management & Roles
             </h1>
             <p className="text-xs text-slate-400 mt-1">
-              Manage permissions, roles, and door verification duties for staff.
+              Manage permissions, assign 3 roles (Super Admin, Sub-Admin, System Admin), and door verification duties.
             </p>
           </div>
         </div>
@@ -47,8 +45,8 @@ export default async function UsersPage() {
                 <TableHead className="text-slate-300">Email</TableHead>
                 <TableHead className="text-slate-300">Role</TableHead>
                 <TableHead className="text-slate-300">Account Status</TableHead>
-                <TableHead className="text-slate-300">Door Duty Access</TableHead>
-                <TableHead className="text-right pr-6 text-slate-300">Actions</TableHead>
+                <TableHead className="text-slate-300">Door Duty</TableHead>
+                <TableHead className="text-right pr-6 text-slate-300">Role & Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -57,8 +55,17 @@ export default async function UsersPage() {
                   <TableCell className="font-semibold text-xs text-white">{p.full_name}</TableCell>
                   <TableCell className="text-xs text-slate-400">{p.email}</TableCell>
                   <TableCell>
-                    <Badge variant={p.role === 'super_admin' ? 'default' : 'secondary'} className={p.role === 'super_admin' ? 'bg-[#E8913A] text-slate-950 font-bold text-[10px]' : 'bg-[#1A2839] text-slate-300 text-[10px]'}>
-                      {p.role === 'super_admin' ? 'Super Admin' : 'Sub-Admin'}
+                    <Badge 
+                      variant="outline"
+                      className={`text-[10px] font-bold ${
+                        p.role === 'super_admin' 
+                          ? 'bg-amber-500/10 text-amber-400 border-amber-500/30' 
+                          : p.role === 'system_admin'
+                            ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
+                            : 'bg-[#1A2839] text-slate-300 border-slate-700'
+                      }`}
+                    >
+                      {p.role === 'system_admin' ? 'System Admin' : p.role === 'super_admin' ? 'Super Admin' : 'Sub-Admin'}
                     </Badge>
                   </TableCell>
                   <TableCell>

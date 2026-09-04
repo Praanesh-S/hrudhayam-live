@@ -6,6 +6,20 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { logAudit } from '@/lib/audit';
 import type { SponsorTier } from '@/lib/types';
 
+async function checkAdminAuth() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Unauthorized');
+
+  const adminClient = createAdminClient();
+  const { data: profile } = await adminClient.from('profiles').select('role').eq('id', user.id).single();
+  if (profile?.role !== 'super_admin' && profile?.role !== 'system_admin') {
+    throw new Error('Forbidden: Super Admin or System Admin access required');
+  }
+
+  return { user, adminClient };
+}
+
 export async function createSponsor(formData: {
   name: string;
   sponsor_tier: SponsorTier;
@@ -15,39 +29,37 @@ export async function createSponsor(formData: {
   contact_email?: string;
   notes?: string;
 }) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: 'Unauthorized' };
+  try {
+    const { user, adminClient } = await checkAdminAuth();
 
-  const adminClient = createAdminClient();
-  const { data: profile } = await adminClient.from('profiles').select('role').eq('id', user.id).single();
-  if (profile?.role !== 'super_admin') return { error: 'Forbidden: Super Admin access required' };
+    const { data: sponsor, error } = await adminClient
+      .from('sponsors')
+      .insert({
+        name: formData.name.trim(),
+        sponsor_tier: formData.sponsor_tier,
+        complimentary_pass_count: Number(formData.complimentary_pass_count) || 0,
+        contact_name: formData.contact_name?.trim() || null,
+        contact_phone: formData.contact_phone?.trim() || null,
+        contact_email: formData.contact_email?.trim() || null,
+        notes: formData.notes?.trim() || null,
+      })
+      .select()
+      .single();
 
-  const { data: sponsor, error } = await adminClient
-    .from('sponsors')
-    .insert({
-      name: formData.name.trim(),
-      sponsor_tier: formData.sponsor_tier,
-      complimentary_pass_count: Number(formData.complimentary_pass_count) || 0,
-      contact_name: formData.contact_name?.trim() || null,
-      contact_phone: formData.contact_phone?.trim() || null,
-      contact_email: formData.contact_email?.trim() || null,
-      notes: formData.notes?.trim() || null,
-    })
-    .select()
-    .single();
+    if (error) return { error: error.message };
 
-  if (error) return { error: error.message };
+    await logAudit(user.id, 'SPONSOR_CREATE', 'sponsor', sponsor.id, {
+      name: sponsor.name,
+      tier: sponsor.sponsor_tier,
+      passCount: sponsor.complimentary_pass_count,
+    });
 
-  await logAudit(user.id, 'SPONSOR_CREATE', 'sponsor', sponsor.id, {
-    name: sponsor.name,
-    tier: sponsor.sponsor_tier,
-    passCount: sponsor.complimentary_pass_count,
-  });
-
-  revalidatePath('/admin/sponsors');
-  revalidatePath('/reports');
-  return { success: true, sponsor };
+    revalidatePath('/admin/sponsors');
+    revalidatePath('/reports');
+    return { success: true, sponsor };
+  } catch (err: any) {
+    return { error: err.message };
+  }
 }
 
 export async function updateSponsor(
@@ -62,113 +74,105 @@ export async function updateSponsor(
     notes?: string;
   }
 ) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: 'Unauthorized' };
+  try {
+    const { user, adminClient } = await checkAdminAuth();
 
-  const adminClient = createAdminClient();
-  const { data: profile } = await adminClient.from('profiles').select('role').eq('id', user.id).single();
-  if (profile?.role !== 'super_admin') return { error: 'Forbidden: Super Admin access required' };
+    const { data: sponsor, error } = await adminClient
+      .from('sponsors')
+      .update({
+        name: formData.name.trim(),
+        sponsor_tier: formData.sponsor_tier,
+        complimentary_pass_count: Number(formData.complimentary_pass_count) || 0,
+        contact_name: formData.contact_name?.trim() || null,
+        contact_phone: formData.contact_phone?.trim() || null,
+        contact_email: formData.contact_email?.trim() || null,
+        notes: formData.notes?.trim() || null,
+      })
+      .eq('id', id)
+      .select()
+      .single();
 
-  const { data: sponsor, error } = await adminClient
-    .from('sponsors')
-    .update({
-      name: formData.name.trim(),
-      sponsor_tier: formData.sponsor_tier,
-      complimentary_pass_count: Number(formData.complimentary_pass_count) || 0,
-      contact_name: formData.contact_name?.trim() || null,
-      contact_phone: formData.contact_phone?.trim() || null,
-      contact_email: formData.contact_email?.trim() || null,
-      notes: formData.notes?.trim() || null,
-    })
-    .eq('id', id)
-    .select()
-    .single();
+    if (error) return { error: error.message };
 
-  if (error) return { error: error.message };
+    await logAudit(user.id, 'SPONSOR_UPDATE', 'sponsor', id, {
+      name: sponsor.name,
+      tier: sponsor.sponsor_tier,
+      passCount: sponsor.complimentary_pass_count,
+    });
 
-  await logAudit(user.id, 'SPONSOR_UPDATE', 'sponsor', id, {
-    name: sponsor.name,
-    tier: sponsor.sponsor_tier,
-    passCount: sponsor.complimentary_pass_count,
-  });
-
-  revalidatePath('/admin/sponsors');
-  revalidatePath('/reports');
-  return { success: true, sponsor };
+    revalidatePath('/admin/sponsors');
+    revalidatePath('/reports');
+    return { success: true, sponsor };
+  } catch (err: any) {
+    return { error: err.message };
+  }
 }
 
 export async function deleteSponsor(id: string) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: 'Unauthorized' };
+  try {
+    const { user, adminClient } = await checkAdminAuth();
 
-  const adminClient = createAdminClient();
-  const { data: profile } = await adminClient.from('profiles').select('role').eq('id', user.id).single();
-  if (profile?.role !== 'super_admin') return { error: 'Forbidden: Super Admin access required' };
+    // Untag sales first
+    await adminClient.from('sales').update({ sponsor_id: null }).eq('sponsor_id', id);
 
-  // Untag seats first
-  await adminClient.from('seats').update({ sponsor_id: null }).eq('sponsor_id', id);
+    const { error } = await adminClient.from('sponsors').delete().eq('id', id);
+    if (error) return { error: error.message };
 
-  const { error } = await adminClient.from('sponsors').delete().eq('id', id);
-  if (error) return { error: error.message };
+    await logAudit(user.id, 'SPONSOR_DELETE', 'sponsor', id, {});
 
-  await logAudit(user.id, 'SPONSOR_DELETE', 'sponsor', id, {});
-
-  revalidatePath('/admin/sponsors');
-  revalidatePath('/reports');
-  return { success: true };
+    revalidatePath('/admin/sponsors');
+    revalidatePath('/reports');
+    return { success: true };
+  } catch (err: any) {
+    return { error: err.message };
+  }
 }
 
-export async function tagSeatsToSponsor(seatIds: string[], sponsorId: string) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: 'Unauthorized' };
+export async function tagSalesToSponsor(saleIds: string[], sponsorId: string) {
+  try {
+    const { user, adminClient } = await checkAdminAuth();
 
-  const adminClient = createAdminClient();
-  const { data: profile } = await adminClient.from('profiles').select('role').eq('id', user.id).single();
-  if (profile?.role !== 'super_admin') return { error: 'Forbidden: Super Admin access required' };
+    const { error } = await adminClient
+      .from('sales')
+      .update({ sponsor_id: sponsorId })
+      .in('id', saleIds);
 
-  const { error } = await adminClient
-    .from('seats')
-    .update({ sponsor_id: sponsorId })
-    .in('id', seatIds);
+    if (error) return { error: error.message };
 
-  if (error) return { error: error.message };
+    await logAudit(user.id, 'SPONSOR_TAG', 'sponsor', sponsorId, {
+      saleIds,
+      count: saleIds.length,
+    });
 
-  await logAudit(user.id, 'SPONSOR_TAG', 'sponsor', sponsorId, {
-    seatIds,
-    count: seatIds.length,
-  });
-
-  revalidatePath('/admin/sponsors');
-  revalidatePath('/guests');
-  revalidatePath('/reports');
-  return { success: true, taggedCount: seatIds.length };
+    revalidatePath('/admin/sponsors');
+    revalidatePath('/guests');
+    revalidatePath('/reports');
+    return { success: true, taggedCount: saleIds.length };
+  } catch (err: any) {
+    return { error: err.message };
+  }
 }
 
-export async function untagSeatsFromSponsor(seatIds: string[]) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: 'Unauthorized' };
+export async function untagSalesFromSponsor(saleIds: string[]) {
+  try {
+    const { user, adminClient } = await checkAdminAuth();
 
-  const adminClient = createAdminClient();
-  const { data: profile } = await adminClient.from('profiles').select('role').eq('id', user.id).single();
-  if (profile?.role !== 'super_admin') return { error: 'Forbidden: Super Admin access required' };
+    const { error } = await adminClient
+      .from('sales')
+      .update({ sponsor_id: null })
+      .in('id', saleIds);
 
-  const { error } = await adminClient
-    .from('seats')
-    .update({ sponsor_id: null })
-    .in('id', seatIds);
+    if (error) return { error: error.message };
 
-  if (error) return { error: error.message };
+    await logAudit(user.id, 'SPONSOR_TAG', 'sales', null, {
+      untaggedSaleIds: saleIds,
+    });
 
-  await logAudit(user.id, 'SPONSOR_TAG', 'seats', null, {
-    untaggedSeatIds: seatIds,
-  });
-
-  revalidatePath('/admin/sponsors');
-  revalidatePath('/guests');
-  revalidatePath('/reports');
-  return { success: true };
+    revalidatePath('/admin/sponsors');
+    revalidatePath('/guests');
+    revalidatePath('/reports');
+    return { success: true };
+  } catch (err: any) {
+    return { error: err.message };
+  }
 }

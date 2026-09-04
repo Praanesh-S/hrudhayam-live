@@ -1,21 +1,42 @@
+// ──────────────────────────────────────────────
+// WhatsApp Pass Delivery Helper (Band-Based Model)
+// Generates clean WhatsApp messages with hosted pass links
+// ──────────────────────────────────────────────
+
 export interface WhatsAppPassDetails {
-  guestName: string;
+  donorName?: string;
+  guestName?: string;
+  donorPhone?: string | null;
   phone?: string | null;
   passCode: string;
-  section: string;
-  rows: string[];
-  seatNumbers: string;
-  totalSeats: number;
-  paymentStatus: string;
+  bandName?: string;
+  totalSeats?: number;
+  paymentStatus?: string;
+  collectedAmount?: number;
+  batchNote?: string | null;
+  seatId?: string;
+  section?: string;
+  row?: string;
+  rows?: string[] | string;
+  seats?: any;
+  seatNumbers?: any;
+  seatNo?: string | number;
 }
 
 /**
- * Format clean WhatsApp text message (WITHOUT any website links)
+ * Format clean WhatsApp text message with hosted pass link
  */
-export function formatWhatsAppMessage(details: WhatsAppPassDetails): string {
-  return `🎟️ *HRUDHAYAM LIVE 2026 - Donor Admission Pass*
+export function formatWhatsAppMessage(details: WhatsAppPassDetails, hostUrl?: string): string {
+  const baseUrl = hostUrl || (typeof window !== 'undefined' ? window.location.origin : 'https://hrudhayam.live');
+  const passUrl = `${baseUrl}/pass/${details.passCode}`;
+  const total = details.totalSeats || (Array.isArray(details.seats) ? details.seats.length : 1);
+  const name = details.donorName || details.guestName || 'Valued Donor';
+  const band = details.bandName || 'Admission Pass';
+  const isPaid = details.paymentStatus === 'paid' || details.paymentStatus === 'received';
+
+  return `🎟️ *HRUDHAYAM LIVE 2026 - Official Donor Pass*
 ---------------------------------------
-Dear *${details.guestName}*,
+Dear *${name}*,
 
 Thank you for your generous contribution to the Rotary Club of Aarch City Madras. Your admission pass for *HRUDHAYAM LIVE 2026* is confirmed!
 
@@ -23,23 +44,36 @@ Thank you for your generous contribution to the Rotary Club of Aarch City Madras
 🗓️ *Date:* Friday, 9 October 2026
 ⏰ *Gates Open:* 5:30 PM • *Concert Begins:* 6:30 PM
 
-🎫 *Pass Code:* *${details.passCode}* (${details.totalSeats > 1 ? `Admit ${details.totalSeats} Guests` : 'Admit 1 Guest'})
-💺 *Section:* ${details.section}
-💺 *Row(s):* ${details.rows.join(', ')}
-💺 *Seat(s):* ${details.seatNumbers}
-💳 *Payment:* ${details.paymentStatus === 'received' ? '✓ Paid' : 'Pending'}
+🎫 *Admission Pass:* *${band}*
+🔢 *Pass Code:* *${details.passCode}* (${total > 1 ? `Admit ${total} Guests` : 'Admit 1 Guest'})
+💳 *Payment:* ${isPaid ? '✓ Received / Confirmed' : 'Pending'}
 
-_Your official admission E-Ticket with QR barcode is attached._
-_Please present the QR barcode at the venue entrance for gate verification._`;
+📱 *View Your Official Mobile E-Ticket & QR Barcode:*
+👉 ${passUrl}
+
+_Please present the QR barcode on the link above at the venue entrance for gate admission._
+_Seating is on a first-come, first-served basis within the ${band} area._`;
 }
 
-export function getWhatsAppShareUrl(phone: string | undefined | null, message: string): string {
-  let cleanPhone = (phone || '').replace(/\D/g, '');
+/**
+ * Get direct WhatsApp share URL (wa.me)
+ * Accepts either (phone, message) or (message)
+ */
+export function getWhatsAppShareUrl(phoneOrMessage?: string | null, maybeMessage?: string): string {
+  let phone = '';
+  let msg = '';
+  if (maybeMessage !== undefined) {
+    phone = phoneOrMessage || '';
+    msg = maybeMessage;
+  } else {
+    msg = phoneOrMessage || '';
+  }
+  let cleanPhone = phone.replace(/\D/g, '').slice(-10);
   if (cleanPhone.length === 10) {
     cleanPhone = `91${cleanPhone}`;
   }
   
-  const encodedText = encodeURIComponent(message);
+  const encodedText = encodeURIComponent(msg);
   if (cleanPhone) {
     return `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodedText}`;
   }
@@ -47,146 +81,66 @@ export function getWhatsAppShareUrl(phone: string | undefined | null, message: s
 }
 
 /**
- * Fetch and download the High-Res PNG Ticket Image
+ * Download ticket PDF for printing / sharing
  */
-export async function downloadTicketImage(seatId: string, passCode: string): Promise<Blob> {
-  const res = await fetch('/api/tickets/image', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ seatId, passCode }),
-  });
-
-  if (!res.ok) {
-    throw new Error('Failed to generate ticket image');
-  }
-
-  const blob = await res.blob();
-  const fileName = `Hrudhayam-Ticket-${passCode}.png`;
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fileName;
-  document.body.appendChild(a);
-  a.click();
-  window.URL.revokeObjectURL(url);
-  document.body.removeChild(a);
-  return blob;
-}
-
-/**
- * Copy ticket image to clipboard for 1-click paste (Cmd+V / Ctrl+V)
- */
-export async function copyTicketImageToClipboard(seatId: string, passCode: string): Promise<boolean> {
+export async function downloadTicketPdf(passCodeOrSeatId: string, donorNameOrPassCode?: string) {
   try {
-    const res = await fetch('/api/tickets/image', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ seatId, passCode }),
-    });
-
-    if (!res.ok) return false;
+    const passCode = donorNameOrPassCode && !donorNameOrPassCode.includes(' ') ? donorNameOrPassCode : passCodeOrSeatId;
+    const res = await fetch(`/api/tickets/generate?passCode=${encodeURIComponent(passCode)}`);
+    if (!res.ok) throw new Error('Failed to generate PDF pass');
     const blob = await res.blob();
-
-    if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
-      await navigator.clipboard.write([
-        new ClipboardItem({ 'image/png': blob }),
-      ]);
-      return true;
-    }
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Hrudhayam_Pass_${passCode}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
   } catch (err) {
-    console.warn('Clipboard write failed:', err);
+    console.error('PDF download error:', err);
+    throw err;
   }
-  return false;
 }
 
 /**
- * Fetch and download Ticket PDF
+ * Download ticket image / open pass view
  */
-export async function downloadTicketPdf(seatId: string, passCode: string): Promise<Blob> {
-  const res = await fetch('/api/tickets/generate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ seatId, passCode }),
-  });
-
-  if (!res.ok) {
-    throw new Error('Failed to generate ticket PDF');
-  }
-
-  const blob = await res.blob();
-  const pdfFileName = `Hrudhayam-Pass-${passCode}.pdf`;
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = pdfFileName;
-  document.body.appendChild(a);
-  a.click();
-  window.URL.revokeObjectURL(url);
-  document.body.removeChild(a);
-  return blob;
+export async function downloadTicketImage(passCodeOrSeatId: string, maybePassCode?: string) {
+  const code = maybePassCode || passCodeOrSeatId;
+  window.open(`/pass/${code}`, '_blank');
 }
 
 /**
- * Mobile Native Share:
- * For Mobile devices (iOS/Android) where native Web Share is preferred
+ * Copy ticket link / image link to clipboard
  */
-export async function mobileNativeShareTicket({
-  seatId,
-  passCode,
-  guestName,
-  phone,
-  section,
-  rows,
-  seatNumbers,
-  totalSeats,
-  paymentStatus,
-}: {
-  seatId: string;
-  passCode: string;
-  guestName: string;
-  phone?: string | null;
-  section: string;
-  rows: string[];
-  seatNumbers: string;
-  totalSeats: number;
-  paymentStatus: string;
-}) {
-  const messageText = formatWhatsAppMessage({
-    guestName,
-    phone,
-    passCode,
-    section,
-    rows,
-    seatNumbers,
-    totalSeats,
-    paymentStatus,
-  });
-
-  const res = await fetch('/api/tickets/image', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ seatId, passCode }),
-  });
-
-  if (!res.ok) {
-    throw new Error('Failed to generate ticket image');
+export async function copyTicketImageToClipboard(passCodeOrSeatId: string, maybePassCode?: string) {
+  const code = maybePassCode || passCodeOrSeatId;
+  const url = `${typeof window !== 'undefined' ? window.location.origin : ''}/pass/${code}`;
+  if (typeof navigator !== 'undefined' && navigator.clipboard) {
+    await navigator.clipboard.writeText(url);
   }
+}
 
-  const imageBlob = await res.blob();
-  const fileName = `Hrudhayam-Ticket-${passCode}.png`;
-  const imageFile = new File([imageBlob], fileName, { type: 'image/png' });
-
-  if (
-    typeof navigator !== 'undefined' &&
-    navigator.canShare &&
-    navigator.canShare({ files: [imageFile] })
-  ) {
-    await navigator.share({
-      files: [imageFile],
-      title: `Hrudhayam Ticket - ${passCode}`,
-      text: messageText,
-    });
-    return true;
+/**
+ * Native mobile share for tickets
+ */
+export async function mobileNativeShareTicket(details: WhatsAppPassDetails): Promise<boolean> {
+  const text = formatWhatsAppMessage(details);
+  const url = `${typeof window !== 'undefined' ? window.location.origin : ''}/pass/${details.passCode}`;
+  if (typeof navigator !== 'undefined' && navigator.share) {
+    try {
+      await navigator.share({
+        title: 'Hrudhayam LIVE Admission Pass',
+        text: text,
+        url: url,
+      });
+      return true;
+    } catch {
+      // User cancelled share or fallback
+    }
   }
-  return false;
+  const shareUrl = getWhatsAppShareUrl(details.donorPhone || details.phone, text);
+  window.open(shareUrl, '_blank');
+  return true;
 }

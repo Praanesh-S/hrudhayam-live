@@ -17,15 +17,17 @@ interface HeaderProps {
 }
 
 const getPageTitle = (pathname: string) => {
-  if (pathname.startsWith('/dashboard')) return { title: 'Event Dashboard', subtitle: 'Overview & Venue Seating' };
-  if (pathname.startsWith('/setup')) return { title: 'Set Up Hall & Pricing', subtitle: 'Assign Price Tiers to Rows & Manage Capacity' };
-  if (pathname.startsWith('/allocate')) return { title: 'Row Allocation', subtitle: 'Assign Rows & Manage Team Access' };
-  if (pathname.startsWith('/guests')) return { title: 'Guests & Donation Passes', subtitle: 'Pass Management & E-Ticket Delivery' };
-  if (pathname.startsWith('/reports')) return { title: 'Financial Reports', subtitle: 'Pass Reconciliation & Excel Export' };
-  if (pathname.startsWith('/checkin')) return { title: 'Door Check-in Scanner', subtitle: 'Live QR Code Verification' };
+  if (pathname.startsWith('/dashboard')) return { title: 'Event Dashboard', subtitle: 'Overview & Price Band Status' };
+  if (pathname.startsWith('/sell')) return { title: 'Sell Admission Passes', subtitle: 'Live Band Counters & Pass Issuance' };
+  if (pathname.startsWith('/setup')) return { title: 'Set Up Bands & Quotas', subtitle: 'Manage Band Capacities, Prices & Reserved Pools' };
+  if (pathname.startsWith('/guests')) return { title: 'Team Sales & Passes', subtitle: 'View All Donor Sales, Handover & Pass Status' };
+  if (pathname.startsWith('/reports')) return { title: 'Reports & Reconciliation', subtitle: 'Financial Breakdown, Band Metrics & Excel Export' };
+  if (pathname.startsWith('/checkin')) return { title: 'Door Check-in Scanner', subtitle: 'Live QR Code Verification & Band Seating Guidance' };
   if (pathname.startsWith('/email')) return { title: 'Mass Email Dispatcher', subtitle: 'Filtered Delivery & Resend Queue' };
+  if (pathname.startsWith('/admin/sponsors')) return { title: 'Sponsors Management', subtitle: 'Manage Sponsor Packages & Pass Allocation' };
   if (pathname.startsWith('/admin/users')) return { title: 'User Management', subtitle: 'Team Roles & Permissions' };
   if (pathname.startsWith('/admin/requests')) return { title: 'Access Requests', subtitle: 'Review & Approve Staff' };
+  if (pathname.startsWith('/admin/audit-logs')) return { title: 'Audit Logs', subtitle: 'Immutable System Activity & Security Log' };
   return { title: 'Dashboard', subtitle: 'Hrudhayam LIVE' };
 };
 
@@ -51,6 +53,7 @@ export function Header({ profile }: HeaderProps) {
     window.location.href = '/login';
   };
 
+  const isSystemAdmin = profile?.role === 'system_admin';
   const isSuperAdmin = profile?.role === 'super_admin';
 
   return (
@@ -98,7 +101,11 @@ export function Header({ profile }: HeaderProps) {
                 {profile?.full_name || 'User'}
               </p>
               <div className="flex items-center gap-1 mt-0.5">
-                {isSuperAdmin ? (
+                {isSystemAdmin ? (
+                  <span className="text-[9px] font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider flex items-center gap-0.5">
+                    <Shield className="w-2.5 h-2.5" /> System Admin
+                  </span>
+                ) : isSuperAdmin ? (
                   <span className="text-[9px] font-bold text-amber-600 dark:text-[#E8913A] uppercase tracking-wider flex items-center gap-0.5">
                     <Shield className="w-2.5 h-2.5" /> Super Admin
                   </span>

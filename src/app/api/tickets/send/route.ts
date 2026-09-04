@@ -57,12 +57,11 @@ export async function POST(req: Request) {
 
     const qrCodeBuffer = await generateQrPngBuffer(qr_token);
     
+    const tierBandName = seat.tier === 5000 ? '₹5,000 Platinum' : seat.tier === 3500 || seat.tier === 3000 ? '₹3,500 Gold' : '₹1,500 Bronze';
     const pdfBuffer = await renderToBuffer(
       React.createElement(TicketPdf, {
-        guestName: seat.guest_name,
-        section: seat.section,
-        row: displayRow,
-        seatNo: displaySeat,
+        donorName: seat.guest_name,
+        bandName: tierBandName,
         passCode: pass_code,
         qrCodeBuffer,
         admitCount: totalAdmit

@@ -48,7 +48,7 @@ export async function sendCustomMassEmail(
     queued++;
   }
 
-  await logAudit(userId, 'send_ticket', 'user', userId, {
+  await logAudit(userId, 'MASS_EMAIL_BROADCAST', 'user', userId, {
     action: 'mass_email_broadcast',
     subject,
     recipientCount: queued

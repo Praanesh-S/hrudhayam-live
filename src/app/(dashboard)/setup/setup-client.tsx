@@ -1,483 +1,547 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import { VenueRow, SeatMapItem, TierValue, ObligationType, SeatSection } from "@/lib/types";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Label } from "@/components/ui/label";
-import { updateRowTier, updateRowObligation, updateRowSeatCount, bulkSetTier, bulkSetObligation } from "./actions";
-import { toast } from "sonner";
-import { OBLIGATION_LABELS, formatINR } from "@/lib/constants";
-import SeatMap from "@/components/dashboard/SeatMap";
+import { useState } from 'react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { Progress } from '@/components/ui/progress';
+import { Band, ReservedPool, ReservedEntry } from '@/lib/types';
+import { formatINR, BANDS_CONFIG } from '@/lib/constants';
 import { 
-  Settings2, 
-  Lock, 
-  Unlock, 
-  Sparkles, 
-  CheckCircle2, 
-  Tag, 
-  ArrowRight,
-  Layers,
-  IndianRupee,
-  ShieldAlert,
-  Sliders
-} from "lucide-react";
+  updateBandCapacity, 
+  updateBandPrice, 
+  updateReservedPool, 
+  saveReservedEntry, 
+  deleteReservedEntry 
+} from './actions';
+import { toast } from 'sonner';
+import { 
+  Layers, 
+  Users, 
+  ShieldCheck, 
+  DollarSign, 
+  Edit3, 
+  Save, 
+  Plus, 
+  Trash2, 
+  ChevronDown, 
+  ChevronUp,
+  AlertCircle,
+  Sparkles,
+  Ticket,
+  CheckCircle2
+} from 'lucide-react';
 
-export function SetupClient({ initialRows, seatMapItems }: { initialRows: VenueRow[], seatMapItems: SeatMapItem[] }) {
-  const [rows, setRows] = useState(initialRows);
-  const [loading, setLoading] = useState<string | null>(null);
+interface SetupClientProps {
+  initialBands: Band[];
+  initialPools: (ReservedPool & { entries: ReservedEntry[] })[];
+  userRole: string;
+}
 
-  // Bulk Tier Assigner state
-  const [assignSection, setAssignSection] = useState<SeatSection>("Ground Floor");
-  const [fromRow, setFromRow] = useState("");
-  const [toRow, setToRow] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState<string>("5000");
+export function SetupClient({ initialBands, initialPools, userRole }: SetupClientProps) {
+  const [bands, setBands] = useState<Band[]>(initialBands);
+  const [pools, setPools] = useState(initialPools);
+  
+  // Band editing state
+  const [editingBandId, setEditingBandId] = useState<string | null>(null);
+  const [editCapacity, setEditCapacity] = useState<number>(0);
+  const [editPrice, setEditPrice] = useState<number>(0);
+  const [isSavingBand, setIsSavingBand] = useState(false);
 
-  const groundFloor = rows.filter(r => r.section === "Ground Floor");
-  const balcony = rows.filter(r => r.section === "Balcony");
-  const activeSectionRows = assignSection === "Ground Floor" ? groundFloor : balcony;
+  // Pool editing state
+  const [editingPoolId, setEditingPoolId] = useState<string | null>(null);
+  const [editPoolCount, setEditPoolCount] = useState<number>(0);
+  const [expandedPoolId, setExpandedPoolId] = useState<string | null>(null);
+  const [newEntryName, setNewEntryName] = useState('');
+  const [newEntryNotes, setNewEntryNotes] = useState('');
+  const [isSavingPool, setIsSavingPool] = useState(false);
 
-  const totalSeats = rows.reduce((acc, r) => acc + r.seat_count, 0);
-  const totalReserved = seatMapItems.filter(s => s.ownerId || s.haGuest).length;
-  const totalUnpriced = rows.filter(r => !r.tier && !r.obligation).reduce((acc, r) => acc + r.seat_count, 0);
+  // Calculate live overall stats
+  const totalCapacity = bands.reduce((acc, b) => acc + (b.total_capacity || 0), 0);
+  const totalSold = bands.reduce((acc, b) => acc + (b.sold_count || 0), 0);
+  const totalRemaining = Math.max(0, totalCapacity - totalSold);
+  const totalPotential = bands.reduce((acc, b) => acc + (b.total_capacity * b.standard_price), 0);
+  const totalCollected = bands.reduce((acc, b) => acc + (b.collected_amount || 0), 0);
+  const totalPending = bands.reduce((acc, b) => acc + (b.pending_amount || 0), 0);
+  const totalReserved = pools.reduce((acc, p) => acc + (p.total_count || 0), 0);
 
-  // Calculate potential revenue across configured rows
-  const potentialRevenue = rows.reduce((acc, r) => acc + ((r.tier || 0) * r.seat_count), 0);
-
-  const handleUpdateSeatCount = async (rowId: string, count: number) => {
-    setLoading(rowId + "-count");
-    const res = await updateRowSeatCount(rowId, count);
-    if (res.error) {
-      toast.error(res.error);
-    } else {
-      toast.success("Seat count updated");
-      setRows(rows.map(r => r.id === rowId ? { ...r, seat_count: count } : r));
-    }
-    setLoading(null);
+  const startEditBand = (band: Band) => {
+    setEditingBandId(band.id);
+    setEditCapacity(band.total_capacity);
+    setEditPrice(band.standard_price);
   };
 
-  const handleUpdateTier = async (rowId: string, tier: TierValue | null) => {
-    setLoading(rowId + "-tier");
-    const res = await updateRowTier(rowId, tier);
-    if (res.error) {
-      toast.error(res.error);
-    } else {
-      toast.success(`Row tier updated to ${tier ? formatINR(tier) : 'Unpriced'}`);
-      setRows(rows.map(r => r.id === rowId ? { ...r, tier, obligation: null } : r));
+  const handleSaveBand = async (bandId: string) => {
+    setIsSavingBand(true);
+    try {
+      const band = bands.find(b => b.id === bandId);
+      if (!band) return;
+
+      if (editCapacity !== band.total_capacity) {
+        const res = await updateBandCapacity(bandId, Number(editCapacity));
+        if (!res.success) {
+          toast.error(res.error || 'Failed to update capacity');
+          setIsSavingBand(false);
+          return;
+        }
+      }
+
+      if (editPrice !== band.standard_price) {
+        const res = await updateBandPrice(bandId, Number(editPrice));
+        if (!res.success) {
+          toast.error(res.error || 'Failed to update price');
+          setIsSavingBand(false);
+          return;
+        }
+      }
+
+      // Update local state
+      setBands(prev => prev.map(b => {
+        if (b.id === bandId) {
+          const newSold = b.sold_count || 0;
+          return {
+            ...b,
+            total_capacity: Number(editCapacity),
+            standard_price: Number(editPrice),
+            remaining_count: Math.max(0, Number(editCapacity) - newSold)
+          };
+        }
+        return b;
+      }));
+
+      toast.success('Band capacity & pricing updated successfully');
+      setEditingBandId(null);
+    } catch (err: any) {
+      toast.error(err.message || 'Error saving band');
+    } finally {
+      setIsSavingBand(false);
     }
-    setLoading(null);
   };
 
-  const handleUpdateObligation = async (rowId: string, obligation: ObligationType | null) => {
-    setLoading(rowId + "-obligation");
-    const res = await updateRowObligation(rowId, obligation);
-    if (res.error) {
-      toast.error(res.error);
-    } else {
-      toast.success("Obligation updated");
-      setRows(rows.map(r => r.id === rowId ? { ...r, obligation, tier: null } : r));
+  const handleSavePool = async (poolId: string) => {
+    setIsSavingPool(true);
+    try {
+      const res = await updateReservedPool(poolId, Number(editPoolCount));
+      if (!res.success) {
+        toast.error(res.error || 'Failed to update pool count');
+        return;
+      }
+
+      setPools(prev => prev.map(p => p.id === poolId ? { ...p, total_count: Number(editPoolCount) } : p));
+      toast.success('Reserved pool count updated');
+      setEditingPoolId(null);
+    } catch (err: any) {
+      toast.error(err.message || 'Error saving pool');
+    } finally {
+      setIsSavingPool(false);
     }
-    setLoading(null);
   };
 
-  const handleBulkAssign = async () => {
-    if (!assignSection || !fromRow || !toRow) {
-      toast.error("Please select a valid section and row range");
+  const handleAddEntry = async (poolId: string) => {
+    if (!newEntryName.trim()) {
+      toast.error('Please enter a guest name');
       return;
     }
 
-    setLoading("bulk-assign");
+    try {
+      const res = await saveReservedEntry(poolId, null, newEntryName, newEntryNotes);
+      if (!res.success) {
+        toast.error(res.error || 'Failed to add reserved entry');
+        return;
+      }
 
-    if (selectedCategory.startsWith("ob-")) {
-      const obligationType = selectedCategory.replace("ob-", "") as ObligationType;
-      const res = await bulkSetObligation(assignSection, fromRow, toRow, obligationType);
-      if (res.error) {
-        toast.error(res.error);
-      } else {
-        toast.success(`Set ${OBLIGATION_LABELS[obligationType]} for rows ${fromRow} to ${toRow}`);
-        window.location.reload();
-      }
-    } else {
-      const tierVal = selectedCategory === "none" ? null : parseInt(selectedCategory) as TierValue;
-      const res = await bulkSetTier(assignSection, fromRow, toRow, tierVal);
-      if (res.error) {
-        toast.error(res.error);
-      } else {
-        toast.success(`Assigned ${tierVal ? formatINR(tierVal) : 'Unpriced'} to rows ${fromRow} to ${toRow} (${res.count} rows)`);
-        window.location.reload();
-      }
+      setPools(prev => prev.map(p => {
+        if (p.id === poolId) {
+          const newEntry: ReservedEntry = {
+            id: `temp-${Date.now()}`,
+            pool_id: poolId,
+            name: newEntryName.trim(),
+            notes: newEntryNotes.trim() || null,
+          };
+          return { ...p, entries: [...(p.entries || []), newEntry] };
+        }
+        return p;
+      }));
+
+      setNewEntryName('');
+      setNewEntryNotes('');
+      toast.success('Reserved guest name saved');
+    } catch (err: any) {
+      toast.error(err.message || 'Error adding entry');
     }
-    setLoading(null);
   };
 
-  // Convert seatMapItems into SeatData format for SeatMap component
-  const seatMapData = seatMapItems.map(s => ({
-    id: s.id,
-    section: s.section,
-    row_label: s.row_label,
-    seat_no: s.seat_no,
-    tier: s.tier,
-    obligation: s.obligation,
-    guest_name: s.haGuest ? 'Occupied' : null,
-    payment_status: s.isPaid ? 'received' : 'pending',
-    checked_in: s.isCheckedIn,
-    owner_id: s.ownerId,
-  }));
+  const handleDeleteEntry = async (poolId: string, entryId: string) => {
+    try {
+      const res = await deleteReservedEntry(entryId);
+      if (!res.success) {
+        toast.error(res.error || 'Failed to delete entry');
+        return;
+      }
 
-  const renderTable = (sectionRows: VenueRow[]) => (
-    <div className="rounded-xl border border-[#223345] overflow-hidden bg-[#131F2E]">
-      <Table>
-        <TableHeader className="bg-[#0E1724] border-b border-[#223345]">
-          <TableRow className="text-slate-400 text-xs">
-            <TableHead className="w-28 text-slate-300">Row</TableHead>
-            <TableHead className="w-28 text-slate-300">Seats</TableHead>
-            <TableHead className="w-48 text-slate-300">Current Category</TableHead>
-            <TableHead className="min-w-[260px] text-slate-300">Quick Assign Price Tier</TableHead>
-            <TableHead className="w-24 text-right pr-6 text-slate-300">Status</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {sectionRows.map(row => (
-            <TableRow key={row.id} className="hover:bg-[#1A2839]/60 border-b border-[#1E2D3D] transition-colors">
-              <TableCell className="font-mono font-bold text-xs text-white">
-                Row {row.row_label}
-                {row.row_label === "SPL VIP" && (
-                  <Badge className="ml-2 bg-purple-950/80 text-purple-300 border border-purple-800 text-[9px]">
-                    VIP BOX
-                  </Badge>
-                )}
-              </TableCell>
-              
-              <TableCell>
-                <div className="flex items-center space-x-1.5">
-                  <Input 
-                    type="number" 
-                    defaultValue={row.seat_count}
-                    className="w-16 h-7 text-xs font-mono bg-[#FAF7F0] dark:bg-[#1A2839] border-[#D2C4AF] dark:border-[#2A3F55] text-slate-900 dark:text-white"
-                    onBlur={(e) => {
-                      const val = parseInt(e.target.value);
-                      if (val !== row.seat_count && val > 0) {
-                        handleUpdateSeatCount(row.id, val);
-                      }
-                    }}
-                    disabled={loading === row.id + "-count" || row.lock_status === "Locked"}
-                  />
-                </div>
-              </TableCell>
+      setPools(prev => prev.map(p => {
+        if (p.id === poolId) {
+          return { ...p, entries: (p.entries || []).filter(e => e.id !== entryId) };
+        }
+        return p;
+      }));
 
-              <TableCell>
-                {row.obligation ? (
-                  <Badge className="bg-purple-100 text-purple-900 border-purple-300 dark:bg-purple-900/60 dark:text-purple-200 dark:border-purple-700/60 text-xs font-semibold">
-                    {OBLIGATION_LABELS[row.obligation] || row.obligation}
-                  </Badge>
-                ) : row.tier === 5000 ? (
-                  <Badge className="bg-amber-100 text-amber-900 border-amber-400 dark:bg-[#B8860B]/30 dark:text-[#FACC15] dark:border-[#B8860B] text-xs font-bold font-mono">
-                    ₹5,000 Platinum
-                  </Badge>
-                ) : row.tier === 3000 ? (
-                  <Badge className="bg-purple-100 text-purple-900 border-purple-400 dark:bg-purple-900/60 dark:text-purple-200 dark:border-purple-600 text-xs font-bold font-mono">
-                    ₹3,000 Gold
-                  </Badge>
-                ) : row.tier === 1500 ? (
-                  <Badge className="bg-slate-200 text-slate-900 border-slate-400 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600 text-xs font-bold font-mono">
-                    ₹1,500 Silver
-                  </Badge>
-                ) : (
-                  <Badge variant="outline" className="text-slate-500 border-slate-300 dark:text-slate-500 dark:border-slate-700 text-xs">
-                    Unpriced
-                  </Badge>
-                )}
-              </TableCell>
-
-              <TableCell>
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <button
-                    type="button"
-                    disabled={row.lock_status === "Locked" || loading === row.id + "-tier"}
-                    onClick={() => handleUpdateTier(row.id, 5000)}
-                    className={`px-2 py-1 rounded text-[11px] font-bold transition-all ${
-                      row.tier === 5000 
-                        ? 'bg-amber-500 text-slate-950 shadow-xs font-bold' 
-                        : 'bg-amber-50 text-amber-900 border border-amber-300 hover:bg-amber-100 dark:bg-[#1A2839] dark:text-[#FACC15] dark:hover:bg-[#24364A] dark:border-[#B8860B]/40'
-                    }`}
-                  >
-                    ₹5,000
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={row.lock_status === "Locked" || loading === row.id + "-tier"}
-                    onClick={() => handleUpdateTier(row.id, 3000)}
-                    className={`px-2 py-1 rounded text-[11px] font-bold transition-all ${
-                      row.tier === 3000 
-                        ? 'bg-purple-600 text-white shadow-xs font-bold' 
-                        : 'bg-purple-50 text-purple-900 border border-purple-300 hover:bg-purple-100 dark:bg-[#1A2839] dark:text-purple-300 dark:hover:bg-[#24364A] dark:border-purple-800/40'
-                    }`}
-                  >
-                    ₹3,000
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={row.lock_status === "Locked" || loading === row.id + "-tier"}
-                    onClick={() => handleUpdateTier(row.id, 1500)}
-                    className={`px-2 py-1 rounded text-[11px] font-bold transition-all ${
-                      row.tier === 1500 
-                        ? 'bg-slate-700 text-white shadow-xs font-bold' 
-                        : 'bg-slate-100 text-slate-800 border border-slate-300 hover:bg-slate-200 dark:bg-[#1A2839] dark:text-slate-300 dark:hover:bg-[#24364A] dark:border-slate-700'
-                    }`}
-                  >
-                    ₹1,500
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={row.lock_status === "Locked" || loading === row.id + "-obligation"}
-                    onClick={() => handleUpdateObligation(row.id, "chief")}
-                    className={`px-2 py-1 rounded text-[11px] font-medium transition-all ${
-                      row.obligation === "chief" 
-                        ? 'bg-purple-600 text-white shadow-xs font-bold' 
-                        : 'bg-purple-50 text-purple-900 border border-purple-300 hover:bg-purple-100 dark:bg-[#1A2839] dark:text-purple-300 dark:hover:bg-[#24364A] dark:border-purple-800/40'
-                    }`}
-                  >
-                    VIP
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={row.lock_status === "Locked" || loading === row.id + "-tier"}
-                    onClick={() => handleUpdateTier(row.id, null)}
-                    className="px-2 py-1 rounded text-[10px] text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors"
-                  >
-                    Clear
-                  </button>
-                </div>
-              </TableCell>
-
-              <TableCell className="text-right pr-6">
-                {row.lock_status === "Locked" ? (
-                  <Badge className="bg-red-950/80 text-red-300 border border-red-800 gap-1 text-[10px]">
-                    <Lock className="w-2.5 h-2.5" /> Locked
-                  </Badge>
-                ) : (
-                  <Badge variant="outline" className="text-emerald-400 border-emerald-800/60 bg-emerald-950/30 gap-1 text-[10px]">
-                    <Unlock className="w-2.5 h-2.5" /> Open
-                  </Badge>
-                )}
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </div>
-  );
+      toast.success('Entry removed');
+    } catch (err: any) {
+      toast.error('Error removing entry');
+    }
+  };
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto pb-12">
-      
-      {/* 1. Dedicated Bulk Price Category Assigner Tool */}
-      <Card className="bg-[#131F2E] border-[#223345] shadow-lg rounded-2xl overflow-hidden">
-        <CardHeader className="bg-[#0E1724] border-b border-[#223345] pb-4">
-          <div className="flex items-center gap-2 text-[#E8913A] text-xs font-bold uppercase tracking-wider">
-            <Sliders className="w-4 h-4" />
-            <span>Price Category Assigner</span>
-          </div>
-          <CardTitle className="text-lg font-bold text-white mt-1">
-            Assign Pricing Tiers to Row Ranges
-          </CardTitle>
-          <CardDescription className="text-xs text-slate-400">
-            Bulk-configure rows with price tiers (₹5,000 / ₹3,000 / ₹1,500) or VIP obligations in one click.
-          </CardDescription>
-        </CardHeader>
-        
-        <CardContent className="p-5 sm:p-6 space-y-5">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            
-            {/* 1. Floor Selector */}
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-slate-300">1. Select Section / Floor</Label>
-              <Select 
-                value={assignSection} 
-                onValueChange={(v) => { 
-                  if (v) {
-                    setAssignSection(v as SeatSection);
-                    setFromRow("");
-                    setToRow("");
-                  }
-                }}
-              >
-                <SelectTrigger className="h-9 text-xs bg-[#1A2839] border-[#2A3F55] text-white">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-[#131F2E] border-[#223345] text-white">
-                  <SelectItem value="Ground Floor">Ground Floor (648 seats)</SelectItem>
-                  <SelectItem value="Balcony">Balcony (750 seats)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+    <div className="space-y-8 max-w-6xl mx-auto pb-16">
+      {/* 1. Top Summary Banner */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="bg-[#131F2E] p-4 rounded-2xl border border-[#223345] shadow-md">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Band Capacity</span>
+          <span className="text-xl font-extrabold text-white mt-1 block font-mono">{totalCapacity.toLocaleString()}</span>
+          <span className="text-[10px] text-slate-500 block mt-0.5">Commercial seats</span>
+        </div>
 
-            {/* 2. From Row */}
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-slate-300">2. From Row</Label>
-              <Select value={fromRow} onValueChange={(v) => { if (v) setFromRow(v); }}>
-                <SelectTrigger className="h-9 text-xs bg-[#1A2839] border-[#2A3F55] text-white">
-                  <SelectValue placeholder="Select start row" />
-                </SelectTrigger>
-                <SelectContent className="bg-[#131F2E] border-[#223345] text-white max-h-56">
-                  {activeSectionRows.map(r => (
-                    <SelectItem key={r.id} value={r.row_label}>
-                      Row {r.row_label} ({r.seat_count} seats)
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+        <div className="bg-[#131F2E] p-4 rounded-2xl border border-[#223345] shadow-md">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Sold</span>
+          <span className="text-xl font-extrabold text-[#E8913A] mt-1 block font-mono">{totalSold.toLocaleString()}</span>
+          <span className="text-[10px] text-slate-500 block mt-0.5">{totalCapacity > 0 ? `${Math.round((totalSold / totalCapacity) * 100)}% sold` : '0%'}</span>
+        </div>
 
-            {/* 3. To Row */}
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-slate-300">3. To Row</Label>
-              <Select value={toRow} onValueChange={(v) => { if (v) setToRow(v); }}>
-                <SelectTrigger className="h-9 text-xs bg-[#1A2839] border-[#2A3F55] text-white">
-                  <SelectValue placeholder="Select end row" />
-                </SelectTrigger>
-                <SelectContent className="bg-[#131F2E] border-[#223345] text-white max-h-56">
-                  {activeSectionRows.map(r => (
-                    <SelectItem key={r.id} value={r.row_label}>
-                      Row {r.row_label} ({r.seat_count} seats)
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+        <div className="bg-[#131F2E] p-4 rounded-2xl border border-[#223345] shadow-md">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Remaining Available</span>
+          <span className="text-xl font-extrabold text-sky-400 mt-1 block font-mono">{totalRemaining.toLocaleString()}</span>
+          <span className="text-[10px] text-slate-500 block mt-0.5">Available for sale</span>
+        </div>
 
-            {/* 4. Price Tier Category */}
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-slate-300">4. Assign Category / Tier</Label>
-              <Select value={selectedCategory} onValueChange={(v) => { if (v) setSelectedCategory(v); }}>
-                <SelectTrigger className="h-9 text-xs bg-[#1A2839] border-[#2A3F55] text-white font-semibold">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-[#131F2E] border-[#223345] text-white">
-                  <SelectItem value="5000">₹5,000 Platinum Tier</SelectItem>
-                  <SelectItem value="3000">₹3,000 Gold Tier</SelectItem>
-                  <SelectItem value="1500">₹1,500 Silver Tier</SelectItem>
-                  <SelectItem value="ob-chief">VIP / Chief Guest (Obligation)</SelectItem>
-                  <SelectItem value="ob-police">Police / Official (Obligation)</SelectItem>
-                  <SelectItem value="ob-corp">Corporate / Sponsor (Obligation)</SelectItem>
-                  <SelectItem value="none">Unpriced / Clear Price</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+        <div className="bg-[#131F2E] p-4 rounded-2xl border border-[#223345] shadow-md">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Collected</span>
+          <span className="text-xl font-extrabold text-emerald-400 mt-1 block font-mono">{formatINR(totalCollected)}</span>
+          <span className="text-[10px] text-emerald-500/80 block mt-0.5">Confirmed revenue</span>
+        </div>
 
-          </div>
+        <div className="bg-[#131F2E] p-4 rounded-2xl border border-[#223345] shadow-md">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Pending Payment</span>
+          <span className="text-xl font-extrabold text-amber-400 mt-1 block font-mono">{formatINR(totalPending)}</span>
+          <span className="text-[10px] text-amber-500/80 block mt-0.5">To be collected</span>
+        </div>
 
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 border-t border-[#223345]">
-            <p className="text-xs text-slate-400">
-              {fromRow && toRow 
-                ? `Ready to update rows ${fromRow} to ${toRow} in ${assignSection}.`
-                : 'Select start and end rows above to apply.'}
-            </p>
-
-            <Button 
-              className="bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-bold text-xs px-6 h-9 shadow-md shadow-amber-950/20"
-              onClick={handleBulkAssign}
-              disabled={loading === "bulk-assign" || !fromRow || !toRow}
-            >
-              <Tag className="w-3.5 h-3.5 mr-1.5" />
-              Apply Category to Selected Rows
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* 2. Live Capacity & Financial KPI Summary */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card className="bg-[#131F2E] border-[#223345] rounded-2xl shadow-xs">
-          <CardContent className="p-5">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-              Total Venue Capacity
-            </span>
-            <div className="text-2xl font-extrabold text-white mt-1.5">{totalSeats} Seats</div>
-            <p className="text-xs text-slate-400 mt-1">Ground: 648 • Balcony: 750</p>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-[#131F2E] border-[#223345] rounded-2xl shadow-xs">
-          <CardContent className="p-5">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-              Potential Revenue (Configured)
-            </span>
-            <div className="text-2xl font-extrabold text-[#E8913A] mt-1.5">{formatINR(potentialRevenue)}</div>
-            <p className="text-xs text-slate-400 mt-1">From all priced donation tiers</p>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-[#131F2E] border-[#223345] rounded-2xl shadow-xs">
-          <CardContent className="p-5">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-              Unassigned Pricing
-            </span>
-            <div className="text-2xl font-extrabold text-slate-300 mt-1.5">{totalUnpriced} Seats</div>
-            <p className="text-xs text-slate-400 mt-1">Set categories above to price them</p>
-          </CardContent>
-        </Card>
+        <div className="bg-[#131F2E] p-4 rounded-2xl border border-[#223345] shadow-md">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Reserved Pools</span>
+          <span className="text-xl font-extrabold text-purple-400 mt-1 block font-mono">{totalReserved.toLocaleString()}</span>
+          <span className="text-[10px] text-purple-400/80 block mt-0.5">VIP & staff set-aside</span>
+        </div>
       </div>
 
-      {/* 3. Section Row Tables & Live Map */}
-      <Tabs defaultValue="ground-floor" className="space-y-4">
-        <TabsList className="bg-[#131F2E] border border-[#223345] p-1 rounded-xl">
-          <TabsTrigger value="ground-floor" className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#1A2839] data-[state=active]:text-white">
-            Ground Floor (648 seats)
-          </TabsTrigger>
-          <TabsTrigger value="balcony" className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#1A2839] data-[state=active]:text-white">
-            Balcony (750 seats)
-          </TabsTrigger>
-          <TabsTrigger value="venue-map" className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#1A2839] data-[state=active]:text-white">
-            Live Visual Seat Map
-          </TabsTrigger>
-        </TabsList>
+      {/* 2. SECTION: 4 PRICE BANDS */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <Layers className="w-5 h-5 text-[#E8913A]" />
+              <span>4 Price Bands Configuration</span>
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              Set total capacity and standard pricing per band. Hard limits block sales when remaining count reaches 0.
+            </p>
+          </div>
+          <Badge variant="outline" className="text-xs border-[#223345] bg-[#131F2E] text-slate-300">
+            Authorized: {userRole === 'system_admin' ? 'System Admin' : 'Super Admin'}
+          </Badge>
+        </div>
 
-        <TabsContent value="ground-floor" className="space-y-4">
-          <Card className="bg-[#131F2E] border-[#223345] rounded-2xl shadow-xs overflow-hidden">
-            <CardHeader className="bg-[#0E1724] pb-3 border-b border-[#223345]">
-              <CardTitle className="text-base font-bold text-white">
-                Ground Floor Rows & Tier Pricing
-              </CardTitle>
-              <CardDescription className="text-xs text-slate-400">
-                Click any price tier button or edit seat count for Rows A–N.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="p-4 sm:p-6">
-              {renderTable(groundFloor)}
-            </CardContent>
-          </Card>
-        </TabsContent>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {bands.map((band) => {
+            const isEditing = editingBandId === band.id;
+            const sold = band.sold_count || 0;
+            const cap = band.total_capacity || 0;
+            const rem = band.remaining_count || Math.max(0, cap - sold);
+            const occupancy = cap > 0 ? Math.min(100, Math.round((sold / cap) * 100)) : 0;
+            const config = BANDS_CONFIG.find(c => c.id === band.id);
 
-        <TabsContent value="balcony" className="space-y-4">
-          <Card className="bg-[#131F2E] border-[#223345] rounded-2xl shadow-xs overflow-hidden">
-            <CardHeader className="bg-[#0E1724] pb-3 border-b border-[#223345]">
-              <CardTitle className="text-base font-bold text-white">
-                Balcony Rows & Tier Pricing
-              </CardTitle>
-              <CardDescription className="text-xs text-slate-400">
-                Click any price tier button or edit seat count for Balcony Rows A–N (750 total seats).
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="p-4 sm:p-6">
-              {renderTable(balcony)}
-            </CardContent>
-          </Card>
-        </TabsContent>
+            return (
+              <Card key={band.id} className="bg-[#131F2E] border-[#223345] rounded-2xl shadow-xl overflow-hidden">
+                <CardHeader className="bg-[#0E1724] pb-3 border-b border-[#223345]">
+                  <div className="flex items-center justify-between">
+                    <Badge className={`${config?.bgColor || 'bg-amber-500/10'} ${config?.textColor || 'text-amber-400'} border ${config?.borderColor || 'border-amber-500/30'} text-xs font-bold font-mono`}>
+                      {band.name}
+                    </Badge>
+                    <span className="text-sm font-black font-mono text-white">
+                      {formatINR(band.standard_price)} / seat
+                    </span>
+                  </div>
+                </CardHeader>
 
-        <TabsContent value="venue-map">
-          <SeatMap seats={seatMapData as any} />
-        </TabsContent>
-      </Tabs>
+                <CardContent className="p-5 space-y-4">
+                  {isEditing ? (
+                    /* Edit Mode */
+                    <div className="space-y-4 animate-in fade-in duration-150">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-bold uppercase text-slate-400">Total Capacity</label>
+                          <Input
+                            type="number"
+                            min={sold}
+                            value={editCapacity}
+                            onChange={(e) => setEditCapacity(parseInt(e.target.value) || 0)}
+                            className="bg-[#1A2839] border-[#2A3F55] text-white font-mono text-sm h-10"
+                          />
+                          <span className="text-[10px] text-slate-500">Min: {sold} (already sold)</span>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-bold uppercase text-slate-400">Standard Price (₹)</label>
+                          <Input
+                            type="number"
+                            min={1}
+                            value={editPrice}
+                            onChange={(e) => setEditPrice(parseInt(e.target.value) || 0)}
+                            className="bg-[#1A2839] border-[#2A3F55] text-white font-mono text-sm h-10"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 pt-1">
+                        <Button
+                          size="sm"
+                          disabled={isSavingBand}
+                          onClick={() => handleSaveBand(band.id)}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-9 flex-1 gap-1.5"
+                        >
+                          <Save className="w-3.5 h-3.5" />
+                          <span>{isSavingBand ? 'Saving...' : 'Save Band Settings'}</span>
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={isSavingBand}
+                          onClick={() => setEditingBandId(null)}
+                          className="bg-[#1A2839] border-[#2A3F55] text-slate-300 text-xs h-9"
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    /* View Mode */
+                    <div className="space-y-3.5">
+                      <div className="grid grid-cols-3 gap-2 text-center">
+                        <div className="p-2.5 bg-[#0F1A26] rounded-xl border border-[#24364A]">
+                          <span className="text-[10px] uppercase font-bold text-slate-400 block">Capacity</span>
+                          <span className="text-base font-extrabold text-white font-mono">{cap}</span>
+                        </div>
+                        <div className="p-2.5 bg-[#0F1A26] rounded-xl border border-[#24364A]">
+                          <span className="text-[10px] uppercase font-bold text-slate-400 block">Sold</span>
+                          <span className="text-base font-extrabold text-[#E8913A] font-mono">{sold}</span>
+                        </div>
+                        <div className="p-2.5 bg-[#0F1A26] rounded-xl border border-[#24364A]">
+                          <span className="text-[10px] uppercase font-bold text-slate-400 block">Remaining</span>
+                          <span className="text-base font-extrabold text-sky-400 font-mono">{rem}</span>
+                        </div>
+                      </div>
+
+                      {/* Progress Bar */}
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between text-xs">
+                          <span className="text-slate-400 font-medium">Occupancy</span>
+                          <span className="font-bold text-white">{occupancy}%</span>
+                        </div>
+                        <div className="w-full bg-[#1A2839] rounded-full h-2.5 overflow-hidden">
+                          <div
+                            className="h-full rounded-full transition-all duration-300"
+                            style={{ 
+                              width: `${occupancy}%`,
+                              backgroundColor: config?.color || '#F59E0B'
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Financials breakdown */}
+                      <div className="flex items-center justify-between text-xs pt-1 border-t border-[#223345] text-slate-400">
+                        <span>Collected: <strong className="text-emerald-400">{formatINR(band.collected_amount || 0)}</strong></span>
+                        <span>Pending: <strong className="text-amber-400">{formatINR(band.pending_amount || 0)}</strong></span>
+                      </div>
+
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => startEditBand(band)}
+                        className="w-full bg-[#1A2839] hover:bg-[#24364A] text-slate-200 text-xs border-[#2A3F55] h-8 gap-1.5"
+                      >
+                        <Edit3 className="w-3.5 h-3.5 text-slate-400" />
+                        <span>Edit Capacity & Standard Price</span>
+                      </Button>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 3. SECTION: RESERVED POOLS */}
+      <div className="space-y-4 pt-4 border-t border-slate-200 dark:border-slate-800">
+        <div>
+          <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+            <Users className="w-5 h-5 text-purple-400" />
+            <span>Reserved Pools (VIP, PP, Staff & Other)</span>
+          </h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            Set aside complimentary quotas for dignitaries and event guests. Fill in guest names anytime once confirmed.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {pools.map((pool) => {
+            const isEditing = editingPoolId === pool.id;
+            const isExpanded = expandedPoolId === pool.id;
+            const entriesCount = pool.entries?.length || 0;
+
+            return (
+              <Card key={pool.id} className="bg-[#131F2E] border-[#223345] rounded-2xl shadow-xl overflow-hidden">
+                <CardHeader className="bg-[#0E1724] pb-3 border-b border-[#223345]">
+                  <div className="flex items-center justify-between">
+                    <Badge className="bg-purple-950/80 text-purple-300 border border-purple-700 text-xs font-bold">
+                      {pool.name}
+                    </Badge>
+                    <span className="text-xs text-slate-400 font-mono font-bold">
+                      {entriesCount} / {pool.total_count} Named
+                    </span>
+                  </div>
+                </CardHeader>
+
+                <CardContent className="p-5 space-y-4">
+                  {isEditing ? (
+                    <div className="space-y-3">
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-bold uppercase text-slate-400">Total Quota Count</label>
+                        <Input
+                          type="number"
+                          min={0}
+                          value={editPoolCount}
+                          onChange={(e) => setEditPoolCount(parseInt(e.target.value) || 0)}
+                          className="bg-[#1A2839] border-[#2A3F55] text-white font-mono text-sm h-10"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          disabled={isSavingPool}
+                          onClick={() => handleSavePool(pool.id)}
+                          className="bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs h-9 flex-1"
+                        >
+                          {isSavingPool ? 'Saving...' : 'Save Quota'}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setEditingPoolId(null)}
+                          className="bg-[#1A2839] border-[#2A3F55] text-slate-300 text-xs h-9"
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <span className="text-2xl font-black font-mono text-white">{pool.total_count}</span>
+                        <span className="text-xs text-slate-400 block">Total set-aside seats</span>
+                      </div>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() => {
+                          setEditingPoolId(pool.id);
+                          setEditPoolCount(pool.total_count);
+                        }}
+                        className="bg-[#1A2839] border-[#2A3F55] text-slate-300 text-xs"
+                      >
+                        Edit Quota
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* Expand/Collapse Entries */}
+                  <div className="pt-2 border-t border-[#223345]">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedPoolId(isExpanded ? null : pool.id)}
+                      className="w-full flex items-center justify-between text-xs font-bold text-slate-300 hover:text-white py-1 transition-colors"
+                    >
+                      <span>Manage Guest Names ({entriesCount})</span>
+                      {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                    </button>
+
+                    {isExpanded && (
+                      <div className="mt-3 space-y-3 pt-2">
+                        {/* Add Name Input */}
+                        <div className="space-y-2 bg-[#0E1724] p-3 rounded-xl border border-[#24364A]">
+                          <span className="text-[10px] uppercase font-bold text-slate-400 block">Add Reserved Guest</span>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <Input
+                              placeholder="Dignitary / Guest Name"
+                              value={newEntryName}
+                              onChange={(e) => setNewEntryName(e.target.value)}
+                              className="bg-[#1A2839] border-[#2A3F55] text-white text-xs h-8"
+                            />
+                            <Input
+                              placeholder="Notes (e.g. Chief Guest)"
+                              value={newEntryNotes}
+                              onChange={(e) => setNewEntryNotes(e.target.value)}
+                              className="bg-[#1A2839] border-[#2A3F55] text-white text-xs h-8"
+                            />
+                          </div>
+                          <Button
+                            size="xs"
+                            onClick={() => handleAddEntry(pool.id)}
+                            className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs h-8 gap-1 mt-1"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>Save Guest Name</span>
+                          </Button>
+                        </div>
+
+                        {/* List of Entries */}
+                        <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                          {(pool.entries || []).length === 0 ? (
+                            <p className="text-[11px] text-slate-500 text-center py-2">
+                              No guest names recorded yet. Blank quota preserved.
+                            </p>
+                          ) : (
+                            pool.entries.map((entry) => (
+                              <div 
+                                key={entry.id} 
+                                className="flex items-center justify-between p-2 rounded-lg bg-[#0F1A26] border border-[#24364A] text-xs"
+                              >
+                                <div>
+                                  <span className="font-bold text-white block">{entry.name}</span>
+                                  {entry.notes && <span className="text-[10px] text-slate-400 block">{entry.notes}</span>}
+                                </div>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  onClick={() => handleDeleteEntry(pool.id, entry.id)}
+                                  className="h-6 w-6 text-slate-500 hover:text-red-400"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

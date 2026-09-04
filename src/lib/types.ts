@@ -1,19 +1,13 @@
 // ──────────────────────────────────────────────
-// Hrudhayam Seat & Pass Manager — TypeScript Types
+// Hrudhayam — Band-Based Selling TypeScript Types
 // ──────────────────────────────────────────────
 
-export type AppRole = "super_admin" | "sub_admin";
+export type AppRole = "super_admin" | "sub_admin" | "system_admin";
 export type RequestStatus = "pending" | "approved" | "rejected";
-export type SeatSection = "Ground Floor" | "Balcony";
-export type ObligationType = "chief" | "police" | "corp" | "other";
-export type PaymentStatus = "pending" | "received";
-export type LockStatus = "Unlocked" | "Locked";
-export type EmailJobStatus =
-  | "queued"
-  | "sending"
-  | "sent"
-  | "failed"
-  | "deferred";
+export type PaymentStatus = "paid" | "pending";
+export type IssuanceType = "whatsapp" | "printed" | "legacy_email" | null;
+export type ReservedCategory = "VIP" | "PP" | "GuestRelations" | "Other";
+
 export type SponsorTier =
   | "title_sponsor"
   | "powered_by"
@@ -24,33 +18,31 @@ export type SponsorTier =
   | "special_sponsor"
   | "other_sponsor"
   | "event_supporters";
+
 export type AuditAction =
-  | "PRICE_SET"
-  | "RESERVE"
-  | "ALLOT"
-  | "RELEASE"
-  | "GUEST_EDIT"
-  | "PASS_SENT"
-  | "SPONSOR_TAG"
-  | "GROUP_ASSIGN"
-  | "CHECK_IN"
-  | "OVERRIDE"
-  | "ROW_SEATCOUNT_EDIT"
+  | "BAND_CAPACITY_SET"
+  | "RESERVED_POOL_SET"
+  | "RESERVED_NAME_FILL"
+  | "SALE_CREATE"
+  | "DETAIL_EDIT"
   | "PAYMENT_STATUS_CHANGE"
-  | "PASS_REVOKE"
+  | "DISCOUNT_APPROVE"
+  | "ISSUANCE_WHATSAPP"
+  | "ISSUANCE_PRINTED"
+  | "SPONSOR_TAG"
+  | "CHECK_IN"
+  | "CHECK_IN_OVERRIDE"
+  | "SALE_CANCEL"
+  | "SALE_REASSIGN"
+  | "MIGRATION"
+  | "ACCESS_REQUEST_UPDATE"
+  | "USER_INVITE"
   | "SPONSOR_CREATE"
   | "SPONSOR_UPDATE"
   | "SPONSOR_DELETE"
-  | "GROUP_CREATE"
-  | "GROUP_UPDATE"
-  | "GROUP_DELETE"
-  | "ACCESS_REQUEST_UPDATE"
-  | "USER_INVITE"
-  | "update_access_request"
-  | "invite_user"
-  | "send_ticket";
+  | "MASS_EMAIL_BROADCAST";
 
-// ── Database row types ──
+// ── Database Models ──
 
 export interface Profile {
   id: string;
@@ -68,62 +60,94 @@ export interface AccessRequest {
   id: string;
   user_id: string;
   requested_role: AppRole;
-  requested_rows: {
-    section: SeatSection;
-    rows: string[];
-  } | null;
+  requested_rows?: any;
   status: RequestStatus;
   reviewed_by: string | null;
   reviewed_at: string | null;
   notes: string | null;
   created_at: string;
-  // Joined fields
   profile?: Profile;
 }
 
-export interface VenueRow {
-  id: string;
-  section: SeatSection;
-  row_label: string;
-  seat_count: number;
-  tier: number | null;
-  obligation: ObligationType | null;
-  lock_status: LockStatus;
+export interface Band {
+  id: string; // 'band_5000', 'band_3500', 'band_2500', 'band_1500'
+  name: string;
+  standard_price: number;
+  total_capacity: number;
   display_order: number;
-  is_placeholder: boolean;
-  created_at: string;
-  updated_at: string;
+  created_at?: string;
+  updated_at?: string;
+  // Derived metrics
+  sold_count?: number;
+  remaining_count?: number;
+  collected_amount?: number;
+  pending_amount?: number;
+  discount_amount?: number;
 }
 
-export interface Seat {
+export interface ReservedPool {
   id: string;
-  section: SeatSection;
-  row_label: string;
-  seat_no: number;
-  row_id: string;
-  tier: number | null;
-  owner_id: string | null;
-  obligation: ObligationType | null;
-  guest_name: string | null;
-  guest_email: string | null;
-  guest_phone: string | null;
-  pass_code: string | null;
-  qr_token: string | null;
-  ticket_sent: boolean;
-  ticket_sent_at: string | null;
-  payment_status: PaymentStatus;
+  category: ReservedCategory;
+  name: string;
+  total_count: number;
+  display_order: number;
+  created_at?: string;
+  updated_at?: string;
+  entries?: ReservedEntry[];
+}
+
+export interface ReservedEntry {
+  id: string;
+  pool_id: string;
+  name: string | null;
+  notes: string | null;
+  created_at?: string;
+}
+
+export interface SaleBatch {
+  id: string;
+  lead_contact_name: string;
+  lead_contact_phone: string;
+  note: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface Sale {
+  id: string;
+  band_id: string;
+  donor_name: string;
+  donor_phone: string;
+  donor_email: string | null;
+  payment_status: "paid" | "pending";
+  comment: string | null;
+  standard_price: number;
+  collected_amount: number;
+  discount_amount: number;
+  discount_approved_by: string | null;
+  sold_by: string | null;
+  pass_code: string;
+  qr_token: string;
+  issuance_type: IssuanceType;
+  issued_at: string | null;
   checked_in: boolean;
   checked_in_at: string | null;
   checked_in_by: string | null;
   sponsor_id: string | null;
-  group_id: string | null;
+  sale_batch_id: string | null;
+  legacy_seat_id: string | null;
+  cancelled: boolean;
+  cancelled_by: string | null;
+  cancelled_at: string | null;
+  reassigned_to: string | null;
   created_at: string;
   updated_at: string;
   // Joined fields
-  owner?: Profile;
-  row?: VenueRow;
+  band?: Band;
+  seller?: Profile;
   sponsor?: Sponsor;
-  group?: Group;
+  batch?: SaleBatch;
+  checked_in_profile?: Profile;
 }
 
 export interface Sponsor {
@@ -139,124 +163,32 @@ export interface Sponsor {
   updated_at: string;
 }
 
-export interface Group {
-  id: string;
-  group_name: string;
-  lead_contact_name: string;
-  lead_contact_phone: string | null;
-  lead_contact_email: string | null;
-  notes: string | null;
-  created_by: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
 export interface AuditLog {
   id: string;
   user_id: string | null;
-  action: AuditAction;
+  action: AuditAction | string;
   entity_type: string;
   entity_id: string | null;
-  details: Record<string, unknown> | null;
+  details: Record<string, any> | null;
   created_at: string;
-  // Joined
-  profiles?: { full_name: string; email: string; role: AppRole | null };
+  profiles?: {
+    full_name: string | null;
+    email: string | null;
+    role: string | null;
+  } | null;
 }
 
-export interface EmailJob {
-  id: string;
-  to_email: string;
-  subject: string;
-  html_body: string | null;
-  attachments: Record<string, unknown> | null;
-  seat_id: string | null;
-  email_type: string;
-  status: EmailJobStatus;
-  attempts: number;
-  scheduled_for: string;
-  sent_at: string | null;
-  error: string | null;
-  created_by: string | null;
-  created_at: string;
-}
-
-export interface EmailDailyLog {
-  id: string;
-  send_date: string;
-  count: number;
-  updated_at: string;
-}
-
-export interface AppSetting {
-  key: string;
-  value: unknown;
-}
-
-// ── Computed / UI types ──
-
-export interface DashboardStats {
-  totalSeats: number;
-  guestsConfirmed: number;
-  ticketsSent: number;
-  daysToEvent: number;
-  potentialRevenue: number;
-  confirmedValue: number;
-  paymentsReceived: number;
-  paymentsPending: number;
-  seatsByTier: Record<number, { total: number; filled: number; paid: number }>;
-  obligationCount: number;
-  seatsBySection: Record<string, { total: number; filled: number }>;
-}
-
-export interface TeamMemberStats {
+export interface TeamMemberReport {
   userId: string;
   name: string;
-  rows: string[];
-  seatsHeld: number;
-  seatsFilled: number;
-  seatsPaid: number;
-  ticketsSent: number;
-  value: number;
-  received: number;
-  pending: number;
-}
-
-export interface SeatMapItem {
-  id: string;
-  section: SeatSection;
-  row_label: string;
-  seat_no: number;
-  tier: number | null;
-  obligation: ObligationType | null;
-  haGuest: boolean;
-  isPaid: boolean;
-  isCheckedIn: boolean;
-  ownerId: string | null;
-}
-
-export interface CheckInResult {
-  success: boolean;
-  duplicate: boolean;
-  guestName: string | null;
-  seatId: string | null;
-  section: string | null;
-  row: string | null;
-  seatNo: number | null;
-  originalScanTime: string | null;
-  error: string | null;
-}
-
-export type TierValue = 1500 | 3000 | 5000;
-export const TIER_VALUES: TierValue[] = [1500, 3000, 5000];
-
-export interface BulkEmailRequest {
-  subject: string;
-  htmlBody: string;
-  filters?: {
-    section?: SeatSection;
-    tier?: number;
-    ownerId?: string;
-    paymentStatus?: PaymentStatus;
-    ticketSent?: boolean;
-  };
+  email: string;
+  role: AppRole | null;
+  seatsSold: number;
+  standardValue: number;
+  collectedAmount: number;
+  pendingAmount: number;
+  discountAmount: number;
+  whatsappPasses: number;
+  printedTickets: number;
+  unissuedCount: number;
 }
