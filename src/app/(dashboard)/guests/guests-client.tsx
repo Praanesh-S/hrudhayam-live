@@ -11,8 +11,8 @@ import { Label } from '@/components/ui/label';
 import { Band, Group, Pass } from '@/lib/types';
 import { AuthUser } from '@/lib/auth/session';
 import { formatINR } from '@/lib/constants';
-import { updatePassDonorDetails } from './actions';
-import { formatDonorPassMessage, getWhatsAppUrl } from '@/lib/whatsapp';
+import { updatePassDonorDetails, deletePassAction } from './actions';
+import { formatDonorPassMessage, getWhatsAppUrl, downloadTicketPdf, sharePassPdfViaWhatsApp } from '@/lib/whatsapp';
 import { toast } from 'sonner';
 import { 
   Search, 
@@ -27,7 +27,9 @@ import {
   Tag,
   XCircle,
   RotateCcw,
-  Users
+  Users,
+  Trash2,
+  Loader2
 } from 'lucide-react';
 
 interface GuestsClientProps {
@@ -52,6 +54,12 @@ export function GuestsClient({ initialPasses, bands, groups, currentUser }: Gues
   const [editPhone, setEditPhone] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+  // Delete / Remove Modal State
+  const [deletingPass, setDeletingPass] = useState<any | null>(null);
+  const [deleteReason, setDeleteReason] = useState('Administrative removal');
+  const [hardDelete, setHardDelete] = useState(true);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Filtered Passes
   const filteredPasses = useMemo(() => {
@@ -104,8 +112,8 @@ export function GuestsClient({ initialPasses, bands, groups, currentUser }: Gues
     return { total, digital, physical, checkedIn, received, pending };
   }, [passes]);
 
-  // Handle WhatsApp Resend
-  const handleResendWhatsApp = (pass: any) => {
+  // Handle WhatsApp Resend with PDF Attachment / Direct Link
+  const handleResendWhatsApp = async (pass: any) => {
     const bandLabel = pass.band?.label || pass.band?.name || 'Seating Band';
     const paymentStatus = pass.payment?.status || 'received';
     const message = formatDonorPassMessage({
@@ -118,6 +126,25 @@ export function GuestsClient({ initialPasses, bands, groups, currentUser }: Gues
       paymentStatus,
       language: 'en',
     });
+
+    if (pass.ticket_type === 'digital') {
+      try {
+        const res = await sharePassPdfViaWhatsApp({
+          passCodes: [pass.pass_code],
+          donorName: pass.donor_name,
+          donorPhone: pass.donor_phone,
+          message,
+        });
+        if (res.method === 'download_and_whatsapp') {
+          toast.info(`Pass PDF downloaded! Attach it in WhatsApp chat with ${pass.donor_name}`);
+        } else if (res.method === 'native_share') {
+          toast.success(`Share sheet opened for ${pass.donor_name}`);
+        }
+        return;
+      } catch (err) {
+        console.error(err);
+      }
+    }
 
     const url = getWhatsAppUrl(pass.donor_phone, message);
     window.open(url, '_blank');
@@ -176,6 +203,31 @@ export function GuestsClient({ initialPasses, bands, groups, currentUser }: Gues
       toast.error('Error saving details');
     } finally {
       setIsSavingEdit(false);
+    }
+  };
+
+  // Confirm Delete / Remove Pass
+  const handleConfirmDelete = async () => {
+    if (!deletingPass) return;
+    setIsDeleting(true);
+    try {
+      const res = await deletePassAction(
+        deletingPass.id,
+        deleteReason.trim() || 'Administrative removal',
+        hardDelete
+      );
+      if (!res.success) {
+        toast.error(res.error || 'Failed to delete pass');
+        return;
+      }
+      toast.success(res.message || 'Pass deleted successfully');
+      setPasses((prev) => prev.filter((p) => p.id !== deletingPass.id));
+      setDeletingPass(null);
+      setDeleteReason('Administrative removal');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to delete pass');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -515,7 +567,7 @@ export function GuestsClient({ initialPasses, bands, groups, currentUser }: Gues
                           {/* Download PDF (Digital Only) */}
                           {!isPhysical && (
                             <a
-                              href={`/api/tickets/generate?passCode=${p.pass_code}`}
+                              href={`/api/tickets/generate?passCode=${p.pass_code}&download=1`}
                               target="_blank"
                               download={`Hrudhayam-Pass-${p.pass_code}.pdf`}
                               className="h-8 px-2 rounded-md border border-[#1D3249] bg-[#07111C] hover:bg-[#15283C] text-slate-300 flex items-center justify-center text-xs transition-colors"
@@ -534,6 +586,21 @@ export function GuestsClient({ initialPasses, bands, groups, currentUser }: Gues
                             title="Edit Donor Details"
                           >
                             <Edit3 className="w-3.5 h-3.5" />
+                          </Button>
+
+                          {/* Delete & Remove Pass */}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setDeletingPass(p);
+                              setDeleteReason('Administrative removal');
+                              setHardDelete(true);
+                            }}
+                            className="h-8 w-8 p-0 text-red-400 hover:text-red-300 hover:bg-red-950/40"
+                            title="Delete & Remove Pass"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
                           </Button>
                         </div>
                       </td>
@@ -604,6 +671,138 @@ export function GuestsClient({ initialPasses, bands, groups, currentUser }: Gues
               className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold"
             >
               {isSavingEdit ? 'Saving...' : 'Save Changes'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete & Remove Pass Dialog */}
+      <Dialog open={!!deletingPass} onOpenChange={(open) => !open && setDeletingPass(null)}>
+        <DialogContent className="bg-[#0B1724] border-red-500/40 text-white sm:max-w-md">
+          <DialogHeader>
+            <div className="flex items-center gap-2 text-red-400 mb-1">
+              <div className="w-8 h-8 rounded-full bg-red-500/10 border border-red-500/30 flex items-center justify-center">
+                <Trash2 className="w-4 h-4" />
+              </div>
+              <DialogTitle className="text-lg font-bold text-white">Delete & Remove Pass</DialogTitle>
+            </div>
+            <DialogDescription className="text-xs text-slate-400">
+              Are you sure you want to remove pass <span className="font-mono text-amber-400 font-bold">{deletingPass?.pass_code}</span>?
+            </DialogDescription>
+          </DialogHeader>
+
+          {deletingPass && (
+            <div className="space-y-4 py-2">
+              {/* Pass details summary */}
+              <div className="p-3 bg-[#07111C] rounded-xl border border-[#1D3249] space-y-1.5 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Donor Name:</span>
+                  <span className="font-bold text-white">{deletingPass.donor_name}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Phone:</span>
+                  <span className="font-mono text-slate-200">{deletingPass.donor_phone || 'None'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Band / Tier:</span>
+                  <span className="font-bold text-amber-400">{deletingPass.band?.label || deletingPass.band?.name}</span>
+                </div>
+                {deletingPass.payment && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Amount / Status:</span>
+                    <span className="font-mono text-emerald-400">₹{deletingPass.payment.amount?.toLocaleString('en-IN')} ({deletingPass.payment.status})</span>
+                  </div>
+                )}
+                {deletingPass.physical_serial && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Physical Serial:</span>
+                    <span className="font-mono text-white">{deletingPass.physical_serial}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Consequence warning */}
+              <div className="p-3 bg-red-950/30 border border-red-800/40 rounded-xl text-xs text-red-300 space-y-1">
+                <p className="font-bold">⚠️ What will happen:</p>
+                <ul className="list-disc list-inside space-y-0.5 text-slate-300 text-[11px]">
+                  <li>The pass will be removed and any QR code invalidated.</li>
+                  <li>The quota will be returned to the band inventory immediately.</li>
+                  <li>Associated payments and seat holds will be released.</li>
+                </ul>
+              </div>
+
+              {/* Deletion Type */}
+              <div className="space-y-2">
+                <Label className="text-xs font-bold text-slate-300">Action Type</Label>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setHardDelete(true)}
+                    className={`p-2.5 rounded-xl border text-left transition-all ${
+                      hardDelete
+                        ? 'bg-red-500/20 border-red-500 text-white font-bold'
+                        : 'bg-[#07111C] border-[#1D3249] text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <span className="block text-red-300">Permanent Delete</span>
+                    <span className="text-[10px] text-slate-400 block font-normal">Completely wipe pass & records</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setHardDelete(false)}
+                    className={`p-2.5 rounded-xl border text-left transition-all ${
+                      !hardDelete
+                        ? 'bg-amber-500/20 border-amber-500 text-white font-bold'
+                        : 'bg-[#07111C] border-[#1D3249] text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <span className="block text-amber-300">Cancel & Void</span>
+                    <span className="text-[10px] text-slate-400 block font-normal">Keep audit trail marked cancelled</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Reason input */}
+              <div className="space-y-1.5">
+                <Label className="text-xs text-slate-300">Reason for Removal</Label>
+                <Input
+                  value={deleteReason}
+                  onChange={(e) => setDeleteReason(e.target.value)}
+                  placeholder="e.g. Cancelled by donor, wrong tier, duplicate"
+                  className="h-9 bg-[#131F2E] border-[#1D3249] text-white text-xs"
+                />
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setDeletingPass(null)}
+              disabled={isDeleting}
+              className="bg-transparent border-[#1D3249] text-slate-300 hover:bg-[#131F2E]"
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleConfirmDelete}
+              disabled={isDeleting}
+              className="bg-red-600 hover:bg-red-700 text-white font-bold gap-1.5"
+            >
+              {isDeleting ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  Removing...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-3.5 h-3.5" />
+                  {hardDelete ? 'Permanently Delete Pass' : 'Cancel Pass'}
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

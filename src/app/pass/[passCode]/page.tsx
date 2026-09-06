@@ -215,16 +215,21 @@ export default async function PublicPassPage({ params }: { params: Promise<{ pas
 
           {/* Download PDF Action Link (for Digital Passes) */}
           {!isPhysical && (
-            <a
-              href={`/api/tickets/generate?passCode=${encodeURIComponent(passCode)}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              download={`Hrudhayam-Pass-${passCode}.pdf`}
-              className="w-full py-3.5 px-4 rounded-xl bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-950/40 transition-all no-underline"
-            >
-              <Download className="w-4 h-4" />
-              <span>Download Printable PDF Ticket</span>
-            </a>
+            <div className="w-full space-y-2 pt-1">
+              <a
+                href={`/api/tickets/generate?passCode=${encodeURIComponent(passCode)}&download=1`}
+                target="_blank"
+                rel="noopener noreferrer"
+                download={`Hrudhayam-Pass-${passCode}.pdf`}
+                className="w-full py-3.5 px-4 rounded-xl bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-950/40 transition-all no-underline"
+              >
+                <Download className="w-4 h-4" />
+                <span>Download Official Pass PDF</span>
+              </a>
+              <p className="text-[11px] text-slate-400 text-center font-medium">
+                No app login needed • Download PDF to your phone or present this screen at gate
+              </p>
+            </div>
           )}
         </div>
 

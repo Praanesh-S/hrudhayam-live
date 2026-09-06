@@ -10,7 +10,8 @@ export async function GET(req: Request) {
   const passCode = searchParams.get('passCode') || searchParams.get('pass_code');
   const saleId = searchParams.get('saleId');
   const seatId = searchParams.get('seatId');
-  return handleGenerate({ passCode, saleId, seatId });
+  const isDownload = searchParams.get('download') === '1' || searchParams.get('download') === 'true';
+  return handleGenerate({ passCode, saleId, seatId, isDownload });
 }
 
 export async function POST(req: Request) {
@@ -22,7 +23,7 @@ export async function POST(req: Request) {
   }
 }
 
-async function handleGenerate({ passCode, saleId, seatId }: { passCode?: string | null; saleId?: string | null; seatId?: string | null }) {
+async function handleGenerate({ passCode, saleId, seatId, isDownload }: { passCode?: string | null; saleId?: string | null; seatId?: string | null; isDownload?: boolean }) {
   try {
     const targetCode = passCode || seatId || saleId;
     if (!targetCode) {
@@ -57,11 +58,14 @@ async function handleGenerate({ passCode, saleId, seatId }: { passCode?: string 
         }) as any
       );
 
+      const disposition = isDownload ? 'attachment' : 'inline';
+
       return new NextResponse(new Uint8Array(pdfBuffer), {
         status: 200,
         headers: {
           'Content-Type': 'application/pdf',
-          'Content-Disposition': `inline; filename="Hrudhayam-Pass-${pass.pass_code}.pdf"`,
+          'Content-Disposition': `${disposition}; filename="Hrudhayam-Pass-${pass.pass_code}.pdf"`,
+          'Cache-Control': 'public, max-age=3600',
         },
       });
     }
@@ -112,11 +116,14 @@ async function handleGenerate({ passCode, saleId, seatId }: { passCode?: string 
       }) as any
     );
 
+    const disposition = isDownload ? 'attachment' : 'inline';
+
     return new NextResponse(new Uint8Array(pdfBuffer), {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `inline; filename="Hrudhayam-Pass-${sale.pass_code}.pdf"`,
+        'Content-Disposition': `${disposition}; filename="Hrudhayam-Pass-${sale.pass_code}.pdf"`,
+        'Cache-Control': 'public, max-age=3600',
       },
     });
   } catch (error: any) {

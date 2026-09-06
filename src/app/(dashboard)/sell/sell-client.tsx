@@ -4,11 +4,12 @@ import { useState, useEffect, useMemo } from 'react';
 import { Band, TicketType, PaymentMode, PaymentStatus, SeatData } from '@/lib/types';
 import { AuthUser } from '@/lib/auth/session';
 import { issuePass, undoSale, checkDonorPassCount } from './actions';
-import { getWhatsAppUrl } from '@/lib/whatsapp';
+import { getWhatsAppUrl, downloadTicketPdf, downloadAllPassPdfs, sharePassPdfViaWhatsApp } from '@/lib/whatsapp';
 import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { toast } from 'sonner';
 import { 
   Ticket, 
   Smartphone, 
@@ -23,7 +24,10 @@ import {
   ShieldAlert,
   UserCheck,
   CreditCard,
-  MapPin
+  MapPin,
+  Download,
+  Share2,
+  FileText
 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
@@ -255,6 +259,51 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
     }
   };
 
+  // PDF Sharing & Direct Download Handlers for Step 6
+  const [isSharingPdf, setIsSharingPdf] = useState<boolean>(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState<boolean>(false);
+
+  const handleSharePdfViaWhatsApp = async () => {
+    if (!successResult) return;
+    setIsSharingPdf(true);
+    try {
+      const res = await sharePassPdfViaWhatsApp({
+        passCodes: successResult.passCodes,
+        donorName: donorName || 'Valued Donor',
+        donorPhone: successResult.donorPhone,
+        message: successResult.donorMessage,
+      });
+      if (res.method === 'download_and_whatsapp') {
+        toast.info('Pass PDF downloaded! Attach it directly to your WhatsApp chat with the donor.');
+      } else if (res.method === 'native_share') {
+        toast.success('Pass PDF ready to share!');
+      }
+    } catch (err: any) {
+      console.error(err);
+      window.open(getWhatsAppUrl(successResult.donorPhone, successResult.donorMessage), '_blank');
+    } finally {
+      setIsSharingPdf(false);
+    }
+  };
+
+  const handleDownloadAllPdfs = async () => {
+    if (!successResult) return;
+    setIsDownloadingPdf(true);
+    try {
+      await downloadAllPassPdfs(successResult.passCodes);
+      toast.success(
+        successResult.passCodes.length > 1
+          ? `All ${successResult.passCodes.length} Pass PDFs downloaded!`
+          : 'Pass PDF downloaded!'
+      );
+    } catch (err: any) {
+      console.error(err);
+      toast.error('Failed to download pass PDF');
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
+
   // Reset form for next sale
   const handleResetForNext = () => {
     setStep(1);
@@ -273,6 +322,8 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
     setSuccessResult(null);
     setErrorMessage(null);
     setUndoMessage(null);
+    setIsSharingPdf(false);
+    setIsDownloadingPdf(false);
   };
 
   return (
@@ -981,26 +1032,108 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
             </p>
           )}
 
-          {/* Action Buttons: WhatsApp to Donor & Seller */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-xl mx-auto pt-2">
-            <a
-              href={getWhatsAppUrl(successResult.donorPhone, successResult.donorMessage)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2 h-14 bg-[#25D366] hover:bg-[#20bd5a] text-slate-950 font-black text-base rounded-2xl shadow-lg transition-all"
-            >
-              <Send className="w-5 h-5" />
-              Send to Donor WhatsApp
-            </a>
+          {/* Action Buttons: Pass Delivery & WhatsApp */}
+          <div className="max-w-xl mx-auto space-y-3 pt-2">
+            {ticketType === 'digital' ? (
+              <>
+                {/* 1. Primary: Share Pass PDF to WhatsApp (Direct attachment via native share or download+open) */}
+                <button
+                  type="button"
+                  onClick={handleSharePdfViaWhatsApp}
+                  disabled={isSharingPdf}
+                  className="w-full flex items-center justify-center gap-2.5 h-14 bg-[#25D366] hover:bg-[#20bd5a] text-slate-950 font-black text-base rounded-2xl shadow-lg shadow-emerald-950/40 transition-all cursor-pointer"
+                >
+                  {isSharingPdf ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      Preparing Pass PDF...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-5 h-5" />
+                      Attach & Share Pass PDF via WhatsApp
+                    </>
+                  )}
+                </button>
 
+                {/* 2. Secondary Row: Download PDF & WhatsApp Text */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleDownloadAllPdfs}
+                    disabled={isDownloadingPdf}
+                    className="h-12 bg-[#1A2839] hover:bg-[#223345] border-2 border-slate-700 text-white font-bold text-sm rounded-xl flex items-center justify-center gap-2"
+                  >
+                    {isDownloadingPdf ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Download className="w-4 h-4 text-amber-400" />
+                    )}
+                    {successResult.passCodes.length > 1
+                      ? `Download All ${successResult.passCodes.length} PDFs`
+                      : 'Download Pass PDF'}
+                  </Button>
+
+                  <a
+                    href={getWhatsAppUrl(successResult.donorPhone, successResult.donorMessage)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="h-12 bg-[#1A2839] hover:bg-[#223345] border-2 border-slate-700 text-slate-200 hover:text-white font-bold text-sm rounded-xl flex items-center justify-center gap-2 transition-all no-underline"
+                  >
+                    <Send className="w-4 h-4 text-emerald-400" />
+                    Send Text Link on WhatsApp
+                  </a>
+                </div>
+
+                {/* If multiple passes, individual download buttons for convenience */}
+                {successResult.passCodes.length > 1 && (
+                  <div className="p-3 bg-slate-900/60 rounded-xl border border-slate-800 space-y-2">
+                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                      Download Individual Pass PDFs:
+                    </span>
+                    <div className="flex flex-wrap items-center justify-center gap-2">
+                      {successResult.passCodes.map((c, i) => (
+                        <Button
+                          key={c}
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => downloadTicketPdf(c)}
+                          className="h-8 px-2.5 bg-[#131F2E] border border-slate-700 text-xs font-mono text-amber-400 hover:text-amber-300"
+                        >
+                          <Download className="w-3 h-3 mr-1" />
+                          Pass {i + 1} ({c})
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              /* Physical Ticket Actions */
+              <div className="space-y-3">
+                <a
+                  href={getWhatsAppUrl(successResult.donorPhone, successResult.donorMessage)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full flex items-center justify-center gap-2.5 h-14 bg-[#25D366] hover:bg-[#20bd5a] text-slate-950 font-black text-base rounded-2xl shadow-lg transition-all"
+                >
+                  <Send className="w-5 h-5" />
+                  Send Confirmation to Donor WhatsApp
+                </a>
+              </div>
+            )}
+
+            {/* Seller Credit Message */}
             <a
               href={getWhatsAppUrl(successResult.sellerPhone, successResult.sellerMessage)}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2 h-14 bg-[#1A2839] hover:bg-[#223345] border-2 border-slate-700 text-white font-bold text-base rounded-2xl transition-all"
+              className="w-full flex items-center justify-center gap-2 h-11 bg-slate-900/80 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white font-medium text-xs rounded-xl transition-all"
             >
-              <Send className="w-5 h-5 text-amber-400" />
-              Send Seller Credit
+              <Send className="w-3.5 h-3.5 text-amber-400" />
+              Send Seller Credit Acknowledgment WhatsApp
             </a>
           </div>
 
