@@ -31,13 +31,20 @@ async function handleGenerate({ passCode, saleId, seatId, isDownload }: { passCo
     }
 
     const adminClient = createAdminClient();
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetCode);
 
     // 1. Try finding in v2 passes table
-    const { data: pass } = await adminClient
+    let passQuery = adminClient
       .from('passes')
-      .select('*, band:bands(label, price, name, standard_price)')
-      .or(`id.eq.${targetCode},pass_code.eq.${targetCode}`)
-      .maybeSingle();
+      .select('*, band:bands(label, price, name, standard_price)');
+
+    if (isUuid) {
+      passQuery = passQuery.or(`id.eq.${targetCode},pass_code.eq.${targetCode}`);
+    } else {
+      passQuery = passQuery.eq('pass_code', targetCode);
+    }
+
+    const { data: pass } = await passQuery.maybeSingle();
 
     if (pass) {
       if (pass.status === 'cancelled') {
@@ -71,19 +78,27 @@ async function handleGenerate({ passCode, saleId, seatId, isDownload }: { passCo
     }
 
     // 2. Fallback to legacy sales table
-    let { data: sale } = await adminClient
+    let saleQuery = adminClient
       .from('sales')
-      .select('*, band:bands(name, standard_price)')
-      .or(`id.eq.${targetCode},pass_code.eq.${targetCode}`)
-      .maybeSingle();
+      .select('*, band:bands(name, standard_price)');
+
+    if (isUuid) {
+      saleQuery = saleQuery.or(`id.eq.${targetCode},pass_code.eq.${targetCode}`);
+    } else {
+      saleQuery = saleQuery.eq('pass_code', targetCode);
+    }
+
+    let { data: sale } = await saleQuery.maybeSingle();
 
     // 3. If not found, check legacy seats table
     if (!sale) {
-      const { data: seat } = await adminClient
-        .from('seats')
-        .select('*')
-        .or(`id.eq.${targetCode},pass_code.eq.${targetCode}`)
-        .maybeSingle();
+      let seatQuery = adminClient.from('seats').select('*');
+      if (isUuid) {
+        seatQuery = seatQuery.or(`id.eq.${targetCode},pass_code.eq.${targetCode}`);
+      } else {
+        seatQuery = seatQuery.eq('pass_code', targetCode);
+      }
+      const { data: seat } = await seatQuery.maybeSingle();
 
       if (seat && seat.guest_name) {
         sale = {
