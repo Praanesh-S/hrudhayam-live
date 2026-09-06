@@ -25,10 +25,11 @@ import {
   Loader2,
   X
 } from 'lucide-react';
-import type { SeatSection, SeatData, VenueRow } from '@/lib/types';
+import type { SeatSection, SeatData, VenueRow, Band } from '@/lib/types';
 
 interface SeatMapProps {
   seats: SeatData[];
+  bands?: Band[];
   rows?: VenueRow[];
   onSeatClick?: (seat: SeatData) => void;
   compact?: boolean;
@@ -43,6 +44,7 @@ type FilterType = 'all' | '5000' | '3500' | '2500' | '1500' | 'vip' | 'blocked' 
 
 export default function SeatMap({
   seats,
+  bands,
   rows,
   onSeatClick,
   compact = false,
@@ -93,20 +95,76 @@ export default function SeatMap({
       .sort((a, b) => Number(a.seat_no) - Number(b.seat_no));
   }, [floorSeats, selectedFloor]);
 
+  // Ordered Sequential Sold Seats Map derived from band metrics
+  // Shows X seats from each band colored as sold in an ordered sequential way (GF -> Balcony, Row A -> N, Seat 1 -> end)
+  const orderedSoldStatusMap = useMemo(() => {
+    const map = new Map<string, 'paid' | 'pending'>();
+    if (!bands || bands.length === 0) return map;
+
+    const rowOrder = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N'];
+
+    for (const band of bands) {
+      const soldCount = band.sold_count || 0;
+      if (soldCount <= 0) continue;
+
+      const paidCount = band.paid_count !== undefined 
+        ? band.paid_count 
+        : (band.collected_amount ? Math.min(soldCount, Math.floor(band.collected_amount / band.price)) : soldCount);
+      const pendingCount = Math.max(0, soldCount - paidCount);
+
+      // Find all regular sellable seats matching this band tier
+      const bandSellableSeats = seats.filter((s) => {
+        if (s.row_label === 'SPL VIP') return false;
+        if (s.is_blocked) return false;
+        if (s.sponsor_id) return false;
+        const effectiveTier = s.tier === 3000 ? 3500 : s.tier;
+        return effectiveTier === band.price;
+      });
+
+      // Sort deterministically: Ground Floor first, then Balcony; alphabetical row A->N; numerical seat_no ascending
+      bandSellableSeats.sort((a, b) => {
+        if (a.section !== b.section) {
+          return a.section === 'Ground Floor' ? -1 : 1;
+        }
+        const rowDiff = rowOrder.indexOf(a.row_label) - rowOrder.indexOf(b.row_label);
+        if (rowDiff !== 0) return rowDiff;
+        return Number(a.seat_no) - Number(b.seat_no);
+      });
+
+      // Assign the first `paidCount` seats as 'paid'
+      for (let i = 0; i < paidCount && i < bandSellableSeats.length; i++) {
+        map.set(bandSellableSeats[i].id, 'paid');
+      }
+
+      // Assign the next `pendingCount` seats as 'pending'
+      for (let i = paidCount; i < (paidCount + pendingCount) && i < bandSellableSeats.length; i++) {
+        map.set(bandSellableSeats[i].id, 'pending');
+      }
+    }
+
+    return map;
+  }, [seats, bands]);
+
   // Floor stats
   const floorStats = useMemo(() => {
     const regularTotal = selectedFloor === 'Ground Floor' ? 648 : 750;
     const vipTotal = selectedFloor === 'Ground Floor' ? 50 : 0;
     const total = regularTotal + vipTotal;
 
-    const filled = floorSeats.filter((s) => s.guest_name && s.guest_name.trim() !== '').length;
-    const paid = floorSeats.filter((s) => (s.payment_status || '').toLowerCase() === 'received').length;
+    const filled = floorSeats.filter((s) => 
+      orderedSoldStatusMap.has(s.id) || (s.guest_name && s.guest_name.trim() !== '')
+    ).length;
+
+    const paid = floorSeats.filter((s) => 
+      orderedSoldStatusMap.get(s.id) === 'paid' || (s.payment_status || '').toLowerCase() === 'received'
+    ).length;
+
     const checkedIn = floorSeats.filter((s) => s.checked_in).length;
     const blocked = floorSeats.filter((s) => s.is_blocked).length;
     const sponsored = floorSeats.filter((s) => s.sponsor_id).length;
     const potentialRevenue = floorSeats.reduce((acc, s) => acc + (s.tier || 0), 0);
     const receivedRevenue = floorSeats
-      .filter((s) => (s.payment_status || '').toLowerCase() === 'received')
+      .filter((s) => orderedSoldStatusMap.get(s.id) === 'paid' || (s.payment_status || '').toLowerCase() === 'received')
       .reduce((acc, s) => acc + (s.tier || 0), 0);
 
     return { 
@@ -121,7 +179,7 @@ export default function SeatMap({
       potentialRevenue, 
       receivedRevenue 
     };
-  }, [floorSeats, selectedFloor]);
+  }, [floorSeats, selectedFloor, orderedSoldStatusMap]);
 
   // Filter matching predicate
   const matchesFilter = (seat: SeatData | undefined) => {
@@ -134,9 +192,9 @@ export default function SeatMap({
     if (activeFilter === 'vip') return seat.obligation === 'chief' || seat.row_label === 'SPL VIP';
     if (activeFilter === 'blocked') return Boolean(seat.is_blocked);
     if (activeFilter === 'sponsor') return Boolean(seat.sponsor_id || seat.obligation === 'sponsor');
-    if (activeFilter === 'paid') return (seat.payment_status || '').toLowerCase() === 'received';
-    if (activeFilter === 'unpaid') return Boolean(seat.guest_name && (seat.payment_status || '').toLowerCase() === 'pending');
-    if (activeFilter === 'empty') return !seat.guest_name && !seat.is_blocked && !seat.sponsor_id && seat.row_label !== 'SPL VIP';
+    if (activeFilter === 'paid') return orderedSoldStatusMap.get(seat.id) === 'paid' || (seat.payment_status || '').toLowerCase() === 'received';
+    if (activeFilter === 'unpaid') return orderedSoldStatusMap.get(seat.id) === 'pending' || Boolean(seat.guest_name && (seat.payment_status || '').toLowerCase() === 'pending');
+    if (activeFilter === 'empty') return !orderedSoldStatusMap.has(seat.id) && !seat.guest_name && !seat.is_blocked && !seat.sponsor_id && seat.row_label !== 'SPL VIP';
     return true;
   };
 
@@ -215,8 +273,15 @@ export default function SeatMap({
     if (seat.is_blocked) return '#BE123C'; // Deep Crimson (Blocked / Reserved)
     if (seat.sponsor_id || seat.obligation === 'sponsor') return '#06B6D4'; // Vibrant Cyan (Sponsor Complimentary)
     if (seat.checked_in) return '#0284C7'; // Sky Blue (Checked in)
-    if ((seat.payment_status || '').toLowerCase() === 'received') return '#10B981'; // Emerald Green (Paid Pass)
-    if (seat.guest_name && seat.guest_name.trim() !== '') return '#F97316'; // Amber Orange (Pending)
+
+    // Dynamic sequential overview coloring for sold passes
+    const orderedStatus = orderedSoldStatusMap.get(seat.id);
+    if (orderedStatus === 'paid') return '#10B981'; // Emerald Green (Sold & Paid)
+    if (orderedStatus === 'pending') return '#F97316'; // Amber Orange (Sold & Pending)
+
+    if ((seat.payment_status || '').toLowerCase() === 'received' && seat.guest_name) return '#10B981'; // Emerald Green
+    if (seat.guest_name && seat.guest_name.trim() !== '') return '#F97316'; // Amber Orange
+
     if (seat.tier === 5000) return '#F59E0B'; // Amber Gold (Band A)
     if (seat.tier === 3500 || seat.tier === 3000) return '#A855F7'; // Violet Purple (Band B)
     if (seat.tier === 2500) return '#0D9488'; // Teal (Band C)
@@ -626,7 +691,21 @@ export default function SeatMap({
                                     key={seatNum}
                                     type="button"
                                     onClick={() => toggleSeatSelection(effectiveSeat)}
-                                    title={`Seat ${effectiveSeat.id} • ${effectiveSeat.tier ? '₹' + effectiveSeat.tier : 'Available'} • Row ${rowLetter}${effectiveSeat.is_blocked ? ' (BLOCKED)' : ''}`}
+                                    title={`Seat ${effectiveSeat.id} • ${
+                                      effectiveSeat.row_label === 'SPL VIP'
+                                        ? 'VIP Box'
+                                        : effectiveSeat.is_blocked
+                                        ? 'Blocked: ' + (effectiveSeat.blocked_reason || 'VIP')
+                                        : effectiveSeat.sponsor_id
+                                        ? 'Sponsor Comp'
+                                        : orderedSoldStatusMap.get(effectiveSeat.id) === 'paid'
+                                        ? 'Sold (Paid)'
+                                        : orderedSoldStatusMap.get(effectiveSeat.id) === 'pending'
+                                        ? 'Sold (Pending)'
+                                        : effectiveSeat.tier
+                                        ? '₹' + effectiveSeat.tier
+                                        : 'Available'
+                                    } • Row ${rowLetter}`}
                                     className={`h-4 min-w-[14px] px-0.5 rounded-[3px] text-[8px] font-mono font-medium flex items-center justify-center transition-all cursor-pointer shadow-2xs hover:scale-125 hover:z-20 text-white ${
                                       isDimmed ? 'opacity-20 saturate-0' : 'opacity-100'
                                     } ${
@@ -741,7 +820,21 @@ export default function SeatMap({
                                   key={seatNum}
                                   type="button"
                                   onClick={() => toggleSeatSelection(effectiveSeat)}
-                                  title={`Seat ${effectiveSeat.id} • ${effectiveSeat.tier ? '₹' + effectiveSeat.tier : 'Available'} • Row ${rowLetter}${effectiveSeat.is_blocked ? ' (BLOCKED)' : ''}`}
+                                  title={`Seat ${effectiveSeat.id} • ${
+                                      effectiveSeat.row_label === 'SPL VIP'
+                                        ? 'VIP Box'
+                                        : effectiveSeat.is_blocked
+                                        ? 'Blocked: ' + (effectiveSeat.blocked_reason || 'VIP')
+                                        : effectiveSeat.sponsor_id
+                                        ? 'Sponsor Comp'
+                                        : orderedSoldStatusMap.get(effectiveSeat.id) === 'paid'
+                                        ? 'Sold (Paid)'
+                                        : orderedSoldStatusMap.get(effectiveSeat.id) === 'pending'
+                                        ? 'Sold (Pending)'
+                                        : effectiveSeat.tier
+                                        ? '₹' + effectiveSeat.tier
+                                        : 'Available'
+                                    } • Row ${rowLetter}`}
                                   className={`h-4 min-w-[14px] px-0.5 rounded-[3px] text-[8px] font-mono font-medium flex items-center justify-center transition-all cursor-pointer shadow-2xs hover:scale-125 hover:z-20 text-white ${
                                     isDimmed ? 'opacity-20 saturate-0' : 'opacity-100'
                                   } ${

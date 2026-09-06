@@ -8,8 +8,11 @@ export interface WhatsAppPassMessageParams {
   donorPhone: string;
   bandLabel: string;
   passCode: string;
+  passCodes?: string[];
+  quantity?: number;
   ticketType: 'digital' | 'physical';
   physicalSerial?: string | null;
+  physicalSerials?: string[] | null;
   seatDetails?: string | null;
   passIndex?: number;
   totalPasses?: number;
@@ -64,8 +67,11 @@ export function formatDonorPassMessage(params: WhatsAppPassMessageParams): strin
     donorName,
     bandLabel,
     passCode,
+    passCodes,
+    quantity = 1,
     ticketType,
     physicalSerial,
+    physicalSerials,
     seatDetails,
     passIndex = 1,
     totalPasses = 1,
@@ -78,6 +84,49 @@ export function formatDonorPassMessage(params: WhatsAppPassMessageParams): strin
   const passUrl = `${baseUrl}/pass/${passCode}`;
   const isPaid = paymentStatus === 'received' || paymentStatus === 'paid';
   const passIndexText = totalPasses > 1 ? ` (Pass ${passIndex} of ${totalPasses})` : '';
+
+  // Multi-pass confirmation batch
+  if (quantity > 1 && passCodes && passCodes.length > 1) {
+    if (language === 'ta') {
+      return `🎟️ *ஹ்ருதயம் LIVE 2026 - அதிகாரப்பூர்வ நுழைவுச் சீட்டுகள் (${quantity} பாஸ்கள்)*
+---------------------------------------
+அன்பார்ந்த *${donorName}*,
+
+ரோட்டரி கிளப் ஆஃப் ஆர்ச் சிட்டி மெட்ராஸ் அமைப்பிற்கு உங்கள் மேலான ஆதரவுக்கு மனமார்ந்த நன்றிகள். உங்கள் ${quantity} பாஸ்கள் உறுதிசெய்யப்பட்டன.
+
+📍 *இடம்:* தி மியூசிக் அகாடமி, ஆல்வார்பேட்டை, சென்னை
+🗓️ *தேதி:* வெள்ளி, 9 அக்டோபர் 2026
+⏰ *நேரம்:* மாலை 5:30 மணி முதல்
+
+🎫 *பிரிவு:* *${bandLabel}* (${quantity} இருக்கைகள்)
+🔢 *பாஸ் குறியீடுகள்:* ${passCodes.join(', ')}
+${ticketType === 'physical' && physicalSerials ? `🎟️ *டிக்கெட் எண்கள்:* ${physicalSerials.join(', ')}\n` : ''}💳 *கட்டணம்:* ${isPaid ? '✓ பெறப்பட்டது' : 'நிலுவையில்'}
+
+📱 *உங்கள் டிஜிட்டல் பாஸ்கள்:*
+${passCodes.map((c, i) => `👉 பாஸ் ${i + 1}: ${baseUrl}/pass/${c}`).join('\n')}
+
+_அரங்க நுழைவாயிலில் இந்த QR பார்-கோடைக் காண்பித்து அனுமதிக்கப்படவும்._`;
+    }
+
+    return `🎟️ *HRUDHAYAM LIVE 2026 — Official Donor Passes (${quantity} Passes)*
+---------------------------------------
+Dear *${donorName}*,
+
+Thank you for your generous contribution towards Public-Access AEDs in Chennai! Your ${quantity} donor passes for *HRUDHAYAM LIVE 2026* are confirmed.
+
+📍 *Venue:* The Music Academy, TTK Road, Alwarpet, Chennai
+🗓️ *Date:* Friday, 9 October 2026
+⏰ *Gates Open:* 5:30 PM • *Concert:* 6:30 PM
+
+🎫 *Category:* *${bandLabel}* (${quantity} Seats)
+🔢 *Pass Codes:* ${passCodes.join(', ')}
+${ticketType === 'physical' && physicalSerials ? `🎟️ *Ticket Serials:* ${physicalSerials.join(', ')}\n` : ''}💳 *Payment:* ${isPaid ? '✓ Confirmed / Received' : 'Pending'}
+
+📱 *Access your Digital E-Passes:*
+${passCodes.map((c, i) => `👉 Pass ${i + 1}: ${baseUrl}/pass/${c}`).join('\n')}
+
+_Please present the QR code on your mobile device at the gate for rapid admission._`;
+  }
 
   if (language === 'ta') {
     if (ticketType === 'physical') {

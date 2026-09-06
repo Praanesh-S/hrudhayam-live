@@ -35,16 +35,16 @@ interface SellClientProps {
   initialHolds?: any[];
 }
 
-export function SellClient({ bands, sellers, seats, currentUser }: SellClientProps) {
-  // Step in wizard: 1 (Band & Seat) -> 2 (Type) -> 3 (Seller) -> 4 (Donor) -> 5 (Payment) -> 6 (Success)
+export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
+  // Step in wizard: 1 (Band & Quantity) -> 2 (Type) -> 3 (Seller) -> 4 (Donor) -> 5 (Payment) -> 6 (Success)
   const [step, setStep] = useState<number>(1);
 
   // Form states
   const [selectedBandId, setSelectedBandId] = useState<string>('');
-  const [selectedSeatId, setSelectedSeatId] = useState<string>('');
-  const [selectedRowKey, setSelectedRowKey] = useState<string>('');
+  const [quantity, setQuantity] = useState<number>(1);
   const [ticketType, setTicketType] = useState<TicketType>('digital');
   const [physicalSerial, setPhysicalSerial] = useState<string>('');
+  const [physicalSerials, setPhysicalSerials] = useState<string[]>(['']);
   
   // Default seller to logged in user if they are a member, else first in list
   const defaultSellerId = currentUser.memberId || (sellers.length > 0 ? sellers[0].id : '');
@@ -72,6 +72,9 @@ export function SellClient({ bands, sellers, seats, currentUser }: SellClientPro
   // Success state
   const [successResult, setSuccessResult] = useState<{
     passCode: string;
+    passCodes: string[];
+    quantity: number;
+    totalAmount: number;
     undoToken: string;
     donorMessage: string;
     donorPhone: string;
@@ -90,56 +93,21 @@ export function SellClient({ bands, sellers, seats, currentUser }: SellClientPro
 
   const selectedBand = bands.find((b) => b.id === selectedBandId);
 
-  // Automatically sync amount when band changes
+  // Automatically sync amount when band or quantity changes
   useEffect(() => {
     if (selectedBand) {
-      setPaymentAmount(selectedBand.price);
+      setPaymentAmount(selectedBand.price * quantity);
     }
-  }, [selectedBand]);
+  }, [selectedBand, quantity]);
 
-  // Available seats matching selected band tier
-  const bandSeats = useMemo(() => {
-    if (!selectedBand) return [];
-    return seats.filter((s) => {
-      if (s.row_label === 'SPL VIP') return false;
-      const effectiveTier = s.tier === 3000 ? 3500 : s.tier;
-      return effectiveTier === selectedBand.price;
-    });
-  }, [seats, selectedBand]);
-
-  // Group seats by Section and Row
-  const rowsWithSeats = useMemo(() => {
-    const rowMap = new Map<string, { section: string; rowLabel: string; seats: SeatData[]; availableCount: number }>();
-    for (const s of bandSeats) {
-      const key = `${s.section} - Row ${s.row_label}`;
-      if (!rowMap.has(key)) {
-        rowMap.set(key, { section: s.section, rowLabel: s.row_label, seats: [], availableCount: 0 });
-      }
-      const entry = rowMap.get(key)!;
-      entry.seats.push(s);
-      const isAvailable = !s.guest_name && !s.pass_code && !s.is_blocked && !s.sponsor_id;
-      if (isAvailable) entry.availableCount++;
-    }
-    for (const entry of rowMap.values()) {
-      entry.seats.sort((a, b) => Number(a.seat_no) - Number(b.seat_no));
-    }
-    return Array.from(rowMap.entries()).map(([key, val]) => ({ key, ...val }));
-  }, [bandSeats]);
-
-  // When band changes, reset seat and auto-select first row with available seats
+  // Keep physical serials list matching quantity
   useEffect(() => {
-    setSelectedSeatId('');
-    if (rowsWithSeats.length > 0) {
-      const firstAvail = rowsWithSeats.find((r) => r.availableCount > 0);
-      if (firstAvail) {
-        setSelectedRowKey(firstAvail.key);
-      } else {
-        setSelectedRowKey(rowsWithSeats[0].key);
-      }
-    } else {
-      setSelectedRowKey('');
-    }
-  }, [selectedBandId, rowsWithSeats]);
+    setPhysicalSerials((prev) => {
+      const updated = [...prev];
+      while (updated.length < quantity) updated.push('');
+      return updated.slice(0, quantity);
+    });
+  }, [quantity]);
 
   // Check duplicate donor on phone blur (§19.3)
   const handleDonorPhoneBlur = async () => {
@@ -172,9 +140,22 @@ export function SellClient({ bands, sellers, seats, currentUser }: SellClientPro
 
   // Handle Form Submission
   const handleSubmit = async () => {
-    if (!selectedSeatId) {
-      setErrorMessage('Please select a specific row and available seat.');
+    if (!selectedBandId) {
+      setErrorMessage('Please select a price band.');
       return;
+    }
+
+    if (quantity < 1) {
+      setErrorMessage('Please select at least 1 pass to sell.');
+      return;
+    }
+
+    if (ticketType === 'physical') {
+      const emptySerials = physicalSerials.filter((s) => !s.trim());
+      if (emptySerials.length > 0) {
+        setErrorMessage(`Please enter all ${quantity} physical ticket serial numbers.`);
+        return;
+      }
     }
 
     setIsSubmitting(true);
@@ -203,9 +184,10 @@ export function SellClient({ bands, sellers, seats, currentUser }: SellClientPro
 
       const res = await issuePass({
         bandId: selectedBandId,
-        seatId: selectedSeatId,
+        quantity,
         ticketType,
-        physicalSerial: ticketType === 'physical' ? physicalSerial : null,
+        physicalSerial: ticketType === 'physical' ? physicalSerials[0] || physicalSerial : null,
+        physicalSerials: ticketType === 'physical' ? physicalSerials : null,
         sellerMemberId: Number(sellerMemberId),
         donorName,
         donorPhone,
@@ -228,6 +210,9 @@ export function SellClient({ bands, sellers, seats, currentUser }: SellClientPro
       // Success
       setSuccessResult({
         passCode: res.passCode!,
+        passCodes: (res as any).passCodes || [res.passCode!],
+        quantity: (res as any).quantity || quantity,
+        totalAmount: (res as any).totalAmount || paymentAmount,
         undoToken: res.undoToken!,
         donorMessage: res.donorMessage!,
         donorPhone: res.donorPhone!,
@@ -235,7 +220,7 @@ export function SellClient({ bands, sellers, seats, currentUser }: SellClientPro
         sellerPhone: res.sellerPhone!,
         sellerName: res.sellerName!,
         bandLabel: res.bandLabel!,
-        seatDetails: (res as any).seatDetails || selectedSeatId,
+        seatDetails: (res as any).seatDetails || `${quantity} Seat(s) in ${res.bandLabel}`,
         passId: res.pass.id,
       });
 
@@ -257,10 +242,9 @@ export function SellClient({ bands, sellers, seats, currentUser }: SellClientPro
     try {
       const res = await undoSale(successResult.passId, successResult.undoToken);
       if (res.success) {
-        setUndoMessage(res.message || 'Sale has been undone and seat released.');
+        setUndoMessage(res.message || 'Sale has been undone and inventory released.');
         setSuccessResult(null);
         setStep(1);
-        setSelectedSeatId('');
       } else {
         setErrorMessage(res.error || 'Could not undo sale.');
       }
@@ -275,10 +259,10 @@ export function SellClient({ bands, sellers, seats, currentUser }: SellClientPro
   const handleResetForNext = () => {
     setStep(1);
     setSelectedBandId('');
-    setSelectedSeatId('');
-    setSelectedRowKey('');
+    setQuantity(1);
     setTicketType('digital');
     setPhysicalSerial('');
+    setPhysicalSerials(['']);
     setDonorName('');
     setDonorPhone('');
     setDonorEmail('');
@@ -333,14 +317,15 @@ export function SellClient({ bands, sellers, seats, currentUser }: SellClientPro
       )}
 
       {/* ────────────────────────────────────────────── */}
-      {/* STEP 1: CHOOSE BAND (§6.1, §17)                */}
+      {/* ────────────────────────────────────────────── */}
+      {/* STEP 1: CHOOSE BAND & QUANTITY                 */}
       {/* ────────────────────────────────────────────── */}
       {step === 1 && (
         <div className="space-y-6">
           <div>
-            <h2 className="text-2xl font-black text-white">1. Select Price Band</h2>
+            <h2 className="text-2xl font-black text-white">1. Select Price Band & Quantity</h2>
             <p className="text-slate-400 text-sm mt-1">
-              Choose the seating tier. Sold-out bands cannot be selected (Rule R5).
+              Choose the seating tier and number of passes to sell. Sold-out tiers cannot be selected (Rule R5).
             </p>
           </div>
 
@@ -355,7 +340,12 @@ export function SellClient({ bands, sellers, seats, currentUser }: SellClientPro
                   key={band.id}
                   type="button"
                   disabled={isSoldOut}
-                  onClick={() => setSelectedBandId(band.id)}
+                  onClick={() => {
+                    setSelectedBandId(band.id);
+                    if (quantity > remaining) {
+                      setQuantity(Math.max(1, remaining));
+                    }
+                  }}
                   className={`relative text-left p-6 rounded-2xl border-2 transition-all flex flex-col justify-between min-h-[140px] ${
                     isSoldOut
                       ? 'bg-slate-900/40 border-slate-800/80 opacity-50 cursor-not-allowed'
@@ -386,125 +376,90 @@ export function SellClient({ bands, sellers, seats, currentUser }: SellClientPro
             })}
           </div>
 
-          {/* Row & Seat Selection */}
-          {selectedBandId && (
-            <div className="p-5 bg-[#172535] border-2 border-amber-500/40 rounded-2xl space-y-4 shadow-xl animate-in fade-in-50">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 pb-3 border-b border-slate-700">
+          {/* Interactive Quantity Selector & Real-Time Price Calculation */}
+          {selectedBand && (
+            <div className="p-6 bg-[#172535] border-2 border-amber-500/40 rounded-3xl space-y-5 shadow-xl animate-in fade-in-50">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 pb-4 border-b border-slate-700">
                 <div>
-                  <h3 className="text-base font-black text-white flex items-center gap-2">
-                    <MapPin className="w-4 h-4 text-[#E8913A]" />
-                    <span>Choose Venue Row & Exact Seat</span>
-                    <span className="text-xs font-mono font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
-                      {selectedBand?.label}
+                  <h3 className="text-lg font-black text-white flex items-center gap-2">
+                    <span>Number of Passes / Seats</span>
+                    <span className="text-xs font-mono font-bold text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-full border border-amber-500/30">
+                      {selectedBand.label}
                     </span>
                   </h3>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    Select a row in this tier, then pick an open green seat to assign to the donor.
+                  <p className="text-xs text-slate-400 mt-1">
+                    Sell 1 or multiple passes in this band. Inventory quota will decrement automatically.
                   </p>
                 </div>
-
-                {selectedSeatId ? (
-                  <div className="bg-emerald-500/15 border border-emerald-500/40 px-3 py-1.5 rounded-xl text-xs font-bold text-emerald-300 flex items-center gap-1.5 shadow-sm">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                    <span>Assigned: {selectedSeatId}</span>
-                  </div>
-                ) : (
-                  <span className="text-xs font-medium text-amber-400/90 italic">
-                    * Please click an open seat below
-                  </span>
-                )}
+                <div className="px-3.5 py-1.5 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-xs font-bold text-emerald-400 flex items-center gap-1.5 shadow-xs">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>{selectedBand.remaining_count ?? 0} Seats Available</span>
+                </div>
               </div>
 
-              {/* Rows List */}
-              <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-slate-300">Available Rows for {selectedBand?.label}:</Label>
-                {rowsWithSeats.length === 0 ? (
-                  <div className="p-4 bg-slate-900/60 rounded-xl text-xs text-slate-400 text-center">
-                    No physical seats currently assigned to this price tier. Use Admin &gt; Bands to allocate rows.
+              {/* Quantity Stepper & Quick Chips */}
+              <div className="space-y-3">
+                <Label className="text-xs font-bold text-slate-300">Quantity of Passes to Sell:</Label>
+                <div className="flex items-center gap-4 flex-wrap">
+                  {/* Stepper controls */}
+                  <div className="inline-flex items-center bg-slate-900 border-2 border-slate-700 rounded-2xl p-1 shadow-inner">
+                    <button
+                      type="button"
+                      disabled={quantity <= 1}
+                      onClick={() => setQuantity((prev) => Math.max(1, prev - 1))}
+                      className="w-12 h-12 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-2xl flex items-center justify-center transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      -
+                    </button>
+                    <span className="w-16 text-center font-mono font-black text-2xl text-white">
+                      {quantity}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={quantity >= (selectedBand.remaining_count ?? 1)}
+                      onClick={() => setQuantity((prev) => Math.min(selectedBand.remaining_count ?? 1, prev + 1))}
+                      className="w-12 h-12 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-2xl flex items-center justify-center transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      +
+                    </button>
                   </div>
-                ) : (
-                  <div className="flex flex-wrap gap-2 max-h-36 overflow-y-auto p-1 bg-slate-950/40 rounded-xl border border-slate-800">
-                    {rowsWithSeats.map((r) => {
-                      const isSelected = selectedRowKey === r.key;
-                      const hasAvailable = r.availableCount > 0;
+
+                  {/* Quick preset chips */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {[1, 2, 3, 4, 5].map((n) => {
+                      const disabled = (selectedBand.remaining_count ?? 0) < n;
+                      const isCurrent = quantity === n;
                       return (
                         <button
-                          key={r.key}
+                          key={n}
                           type="button"
-                          disabled={!hasAvailable}
-                          onClick={() => setSelectedRowKey(r.key)}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
-                            isSelected
-                              ? 'bg-[#E8913A] text-slate-950 shadow-md ring-1 ring-white'
-                              : hasAvailable
-                              ? 'bg-[#1A2839] text-slate-200 border border-slate-700 hover:bg-[#253950]'
-                              : 'bg-slate-900/60 text-slate-500 border border-slate-800/60 cursor-not-allowed opacity-50'
+                          disabled={disabled}
+                          onClick={() => setQuantity(n)}
+                          className={`px-4 py-3 rounded-xl text-sm font-bold transition-all ${
+                            isCurrent
+                              ? 'bg-[#E8913A] text-slate-950 shadow-md font-black ring-2 ring-white scale-105'
+                              : disabled
+                              ? 'bg-slate-900 text-slate-600 border border-slate-800 cursor-not-allowed opacity-50'
+                              : 'bg-slate-800 text-slate-200 hover:bg-slate-700 border border-slate-700'
                           }`}
                         >
-                          <span>{r.key}</span>
-                          <span className={`text-[10px] font-mono px-1 rounded ${
-                            isSelected ? 'bg-slate-950 text-amber-300' : 'bg-slate-800 text-slate-300'
-                          }`}>
-                            {r.availableCount} open
-                          </span>
+                          {n} {n === 1 ? 'Pass' : 'Passes'}
                         </button>
                       );
                     })}
                   </div>
-                )}
+                </div>
               </div>
 
-              {/* Seats in chosen row */}
-              {selectedRowKey && (
-                <div className="space-y-2 pt-2 border-t border-slate-800">
-                  <div className="flex flex-wrap justify-between items-center gap-2 text-xs">
-                    <span className="font-bold text-white flex items-center gap-1">
-                      <span>Row:</span>
-                      <strong className="text-amber-400">{selectedRowKey}</strong>
-                    </span>
-                    <span className="text-slate-400 font-mono text-[10px]">
-                      🟢 Green = Open • 🔴 Red = Sold • ⛔ Crimson = Blocked
-                    </span>
-                  </div>
-
-                  <div className="flex flex-wrap gap-1.5 p-3 bg-slate-950/70 rounded-xl border border-slate-800 max-h-48 overflow-y-auto">
-                    {rowsWithSeats
-                      .find((r) => r.key === selectedRowKey)
-                      ?.seats.map((s) => {
-                        const isSelected = selectedSeatId === s.id;
-                        const isSold = Boolean(s.guest_name || s.pass_code);
-                        const isBlocked = Boolean(s.is_blocked);
-                        const isSponsor = Boolean(s.sponsor_id);
-                        const isAvailable = !isSold && !isBlocked && !isSponsor;
-
-                        return (
-                          <button
-                            key={s.id}
-                            type="button"
-                            disabled={!isAvailable}
-                            onClick={() => setSelectedSeatId(s.id)}
-                            title={`Seat ${s.id} • ${
-                              isSold ? 'Sold' : isBlocked ? 'Blocked: ' + (s.blocked_reason || 'VIP') : isSponsor ? 'Sponsor' : 'Available'
-                            }`}
-                            className={`h-8 min-w-[36px] px-2 rounded-lg text-xs font-mono font-bold transition-all flex items-center justify-center ${
-                              isSelected
-                                ? 'bg-blue-600 text-white ring-2 ring-white shadow-lg scale-105'
-                                : isBlocked
-                                ? 'bg-red-950/80 text-red-400 border border-red-800/60 cursor-not-allowed opacity-60'
-                                : isSponsor
-                                ? 'bg-cyan-950/80 text-cyan-400 border border-cyan-800/60 cursor-not-allowed opacity-60'
-                                : isSold
-                                ? 'bg-slate-900 text-slate-600 border border-slate-800 cursor-not-allowed line-through'
-                                : 'bg-emerald-950/60 text-emerald-300 border border-emerald-700/60 hover:bg-emerald-600 hover:text-white cursor-pointer'
-                            }`}
-                          >
-                            {s.seat_no}
-                          </button>
-                        );
-                      })}
-                  </div>
+              {/* Real-time price breakdown */}
+              <div className="p-4 bg-slate-950/70 border border-slate-800 rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                <div className="text-xs text-slate-400">
+                  Total Donation for <span className="text-white font-bold">{quantity} {quantity === 1 ? 'seat' : 'seats'}</span> in {selectedBand.label}:
                 </div>
-              )}
+                <div className="text-2xl font-black text-[#E8913A] font-mono">
+                  {quantity} × ₹{selectedBand.price.toLocaleString('en-IN')} = ₹{(quantity * selectedBand.price).toLocaleString('en-IN')}
+                </div>
+              </div>
             </div>
           )}
 
@@ -512,7 +467,7 @@ export function SellClient({ bands, sellers, seats, currentUser }: SellClientPro
             <Button
               size="lg"
               className="h-14 px-8 bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-black text-lg rounded-xl shadow-lg"
-              disabled={!selectedBandId || !selectedSeatId}
+              disabled={!selectedBandId || quantity < 1 || quantity > (selectedBand?.remaining_count ?? 0)}
               onClick={() => setStep(2)}
             >
               Continue to Ticket Type <ArrowRight className="ml-2 w-5 h-5" />
@@ -529,7 +484,7 @@ export function SellClient({ bands, sellers, seats, currentUser }: SellClientPro
           <div>
             <h2 className="text-2xl font-black text-white">2. Choose Ticket Type</h2>
             <p className="text-slate-400 text-sm mt-1">
-              Golden Rule (R4): A seat is issued once only — Digital QR or Physical serial, never both.
+              Golden Rule (R4): Each pass is issued once only — Digital QR or Physical serial, never both.
             </p>
           </div>
 
@@ -572,22 +527,41 @@ export function SellClient({ bands, sellers, seats, currentUser }: SellClientPro
           </div>
 
           {ticketType === 'physical' && (
-            <div className="space-y-2 p-5 bg-[#1A2839] border border-amber-500/30 rounded-2xl">
-              <Label htmlFor="physicalSerial" className="text-base font-bold text-white">
-                Physical Ticket Serial Number <span className="text-red-400">*</span>
-              </Label>
-              <p className="text-xs text-slate-400">
-                Enter the exact serial number printed on the physical slip. Must be unique.
-              </p>
-              <Input
-                id="physicalSerial"
-                type="text"
-                placeholder="e.g. T-0452 or 104"
-                value={physicalSerial}
-                onChange={(e) => setPhysicalSerial(e.target.value)}
-                className="h-12 bg-slate-900 border-slate-700 text-white text-lg font-mono rounded-xl mt-1"
-                required
-              />
+            <div className="space-y-4 p-5 bg-[#1A2839] border border-amber-500/30 rounded-2xl">
+              <div>
+                <Label className="text-base font-bold text-white">
+                  Physical Ticket Serial Numbers ({quantity} required) <span className="text-red-400">*</span>
+                </Label>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Enter the exact serial number printed on each physical ticket slip.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {physicalSerials.map((serial, idx) => (
+                  <div key={idx} className="space-y-1">
+                    <Label className="text-xs font-bold text-slate-300">
+                      Ticket #{idx + 1} Serial Number
+                    </Label>
+                    <Input
+                      type="text"
+                      placeholder={`e.g. T-045${idx + 1}`}
+                      value={serial}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setPhysicalSerials((prev) => {
+                          const copy = [...prev];
+                          copy[idx] = val;
+                          return copy;
+                        });
+                        if (idx === 0) setPhysicalSerial(val);
+                      }}
+                      className="h-12 bg-slate-900 border-slate-700 text-white text-base font-mono rounded-xl"
+                      required
+                    />
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -603,7 +577,7 @@ export function SellClient({ bands, sellers, seats, currentUser }: SellClientPro
             <Button
               size="lg"
               className="h-14 px-8 bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-black text-lg rounded-xl shadow-lg"
-              disabled={ticketType === 'physical' && !physicalSerial.trim()}
+              disabled={ticketType === 'physical' && physicalSerials.some((s) => !s.trim())}
               onClick={() => setStep(3)}
             >
               Continue to Seller <ArrowRight className="ml-2 w-5 h-5" />
@@ -897,21 +871,23 @@ export function SellClient({ bands, sellers, seats, currentUser }: SellClientPro
           {/* Summary Box */}
           <div className="p-4 bg-slate-900/80 border border-slate-800 rounded-2xl space-y-1.5 text-sm">
             <div className="flex justify-between text-slate-300">
-              <span>Band:</span>
+              <span>Price Band:</span>
               <span className="font-bold text-white">{selectedBand?.label}</span>
             </div>
             <div className="flex justify-between text-slate-300">
-              <span>Assigned Seat:</span>
-              <span className="font-bold text-emerald-400 font-mono">{selectedSeatId}</span>
+              <span>Quantity:</span>
+              <span className="font-bold text-emerald-400 font-mono font-black">
+                {quantity} Pass{quantity > 1 ? 'es' : ''}
+              </span>
             </div>
             <div className="flex justify-between text-slate-300">
               <span>Type:</span>
               <span className="font-bold text-white">
-                {ticketType === 'digital' ? 'Digital QR' : `Physical Serial (${physicalSerial})`}
+                {ticketType === 'digital' ? 'Digital QR' : `Physical (${physicalSerials.join(', ')})`}
               </span>
             </div>
             <div className="flex justify-between text-slate-300">
-              <span>Amount:</span>
+              <span>Total Amount:</span>
               <span className="font-bold text-[#E8913A]">₹{paymentAmount.toLocaleString('en-IN')}</span>
             </div>
           </div>
@@ -934,10 +910,10 @@ export function SellClient({ bands, sellers, seats, currentUser }: SellClientPro
             >
               {isSubmitting ? (
                 <>
-                  <Loader2 className="mr-2 w-5 h-5 animate-spin" /> Issuing Pass...
+                  <Loader2 className="mr-2 w-5 h-5 animate-spin" /> Issuing {quantity} Pass{quantity > 1 ? 'es' : ''}...
                 </>
               ) : (
-                'Confirm & Issue Pass'
+                `Confirm & Issue ${quantity} Pass${quantity > 1 ? 'es' : ''}`
               )}
             </Button>
           </div>
@@ -954,17 +930,28 @@ export function SellClient({ bands, sellers, seats, currentUser }: SellClientPro
           </div>
 
           <div>
-            <h2 className="text-3xl font-black text-white">Pass Issued Successfully!</h2>
-            <p className="text-lg font-mono font-bold text-[#E8913A] mt-1">
-              Code: {successResult.passCode}
+            <h2 className="text-3xl font-black text-white">
+              {successResult.quantity > 1 ? `${successResult.quantity} Passes Issued Successfully!` : 'Pass Issued Successfully!'}
+            </h2>
+            <p className="text-sm text-slate-400 mt-1">
+              {successResult.bandLabel} • Total Donation: <strong className="text-emerald-400 font-mono">₹{successResult.totalAmount.toLocaleString('en-IN')}</strong>
             </p>
-            <p className="text-sm font-bold text-emerald-400 mt-1 flex items-center justify-center gap-1.5">
-              <MapPin className="w-4 h-4 text-emerald-400" />
-              <span>Assigned Seat: {(successResult as any).seatDetails || selectedSeatId}</span>
-            </p>
-            <p className="text-slate-400 text-sm mt-0.5">
-              {successResult.bandLabel}
-            </p>
+
+            <div className="mt-4 space-y-2">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
+                Issued Pass Code{successResult.passCodes.length > 1 ? 's' : ''}:
+              </span>
+              <div className="flex flex-wrap items-center justify-center gap-2 max-w-lg mx-auto">
+                {successResult.passCodes.map((code) => (
+                  <span
+                    key={code}
+                    className="px-3.5 py-1.5 rounded-xl bg-amber-500/15 border-2 border-amber-500/50 text-[#E8913A] font-mono font-black text-base shadow-sm"
+                  >
+                    {code}
+                  </span>
+                ))}
+              </div>
+            </div>
           </div>
 
           {/* 60-Second Undo Window Card (§19.2) */}

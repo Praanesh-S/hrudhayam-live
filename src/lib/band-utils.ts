@@ -75,10 +75,19 @@ export async function fetchBandsWithMetrics(supabase: SupabaseClient): Promise<B
 
     let collectedAmount = 0;
     let pendingAmount = 0;
+    let paidCount = 0;
+    let pendingCount = 0;
 
     for (const p of bandPasses) {
       const paymentList = (p as any).payments;
       if (Array.isArray(paymentList) && paymentList.length > 0) {
+        const isPaid = paymentList.some((pay: any) => pay.status === 'received');
+        if (isPaid) {
+          paidCount++;
+        } else {
+          pendingCount++;
+        }
+
         for (const pay of paymentList) {
           if (pay.status === 'received') {
             collectedAmount += pay.amount || 0;
@@ -89,12 +98,15 @@ export async function fetchBandsWithMetrics(supabase: SupabaseClient): Promise<B
       } else {
         // Fallback to band price if payment record not joined
         collectedAmount += b.price;
+        paidCount++;
       }
     }
 
     return {
       ...b,
       sold_count: soldCount,
+      paid_count: paidCount,
+      pending_count: pendingCount,
       active_holds_count: holdsCount,
       remaining_count: remainingCount,
       collected_amount: collectedAmount,

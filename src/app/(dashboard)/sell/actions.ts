@@ -12,9 +12,11 @@ import { PaymentMode, PaymentStatus, TicketType } from '@/lib/types';
 
 export interface IssuePassInput {
   bandId: string;
+  quantity?: number;
   ticketType: TicketType;
   physicalSerial?: string | null;
-  seatId: string;
+  physicalSerials?: string[] | null;
+  seatId?: string | null;
   sellerMemberId: number;
   donorName: string;
   donorPhone: string;
@@ -52,13 +54,13 @@ export async function checkDonorPassCount(phone: string) {
 }
 
 /**
- * Issue a single digital or physical donor pass.
+ * Issue digital or physical donor passes for a band tier and quantity.
  * Enforces:
  * - Rule R2: Scoped attribution (GA can only sell for own group)
- * - Rule R4: Golden rule (seat issued once, digital or physical, never both)
- * - Rule R5: Hard oversell block with database locking
+ * - Rule R4: Golden rule (issued once, digital or physical, never both)
+ * - Rule R5: Hard oversell block with database inventory locking
  * - Rule R6: Seller vs donor separate identities with fallback flag
- * - Rule R9: 60-second undo window
+ * - Rule R9: 60-second atomic batch undo window
  */
 export async function issuePass(input: IssuePassInput) {
   try {
@@ -69,6 +71,7 @@ export async function issuePass(input: IssuePassInput) {
       bandId,
       ticketType,
       physicalSerial,
+      physicalSerials,
       sellerMemberId,
       donorName,
       donorPhone,
@@ -82,49 +85,65 @@ export async function issuePass(input: IssuePassInput) {
       preferredLanguage = 'en',
     } = input;
 
+    const quantity = Math.max(1, Math.floor(input.quantity || 1));
+
     // 1. Validate Core Inputs
     if (!bandId || !ticketType || !sellerMemberId) {
       return { success: false, error: 'Please fill in all required fields.' };
-    }
-
-    if (ticketType === 'physical' && (!physicalSerial || !physicalSerial.trim())) {
-      return { success: false, error: 'Physical ticket serial number is required for physical passes.' };
     }
 
     if (!paymentReferenceNo || !paymentReferenceNo.trim()) {
       return { success: false, error: 'Payment reference number / UTR / Cash voucher is mandatory.' };
     }
 
-    // 1b. Mandatory Seat Selection Validation
-    const { seatId } = input;
-    if (!seatId || !seatId.trim()) {
-      return { success: false, error: 'Mandatory seat selection: Please select an available venue row and seat.' };
+    // 1b. Physical ticket serials validation
+    const serialList: string[] = [];
+    if (ticketType === 'physical') {
+      if (Array.isArray(physicalSerials) && physicalSerials.length > 0) {
+        for (const s of physicalSerials) {
+          if (s && s.trim()) serialList.push(s.trim());
+        }
+      } else if (physicalSerial && physicalSerial.trim()) {
+        serialList.push(physicalSerial.trim());
+      }
+
+      if (serialList.length < quantity) {
+        return { 
+          success: false, 
+          error: `Physical ticket serial numbers required for all ${quantity} passes (received ${serialList.length}).` 
+        };
+      }
+
+      // Check duplicates within batch
+      const serialSet = new Set(serialList);
+      if (serialSet.size !== serialList.length) {
+        return { success: false, error: 'Duplicate physical serial numbers entered in this batch.' };
+      }
+
+      // Check duplicates in database
+      const { data: existingSerials } = await adminClient
+        .from('passes')
+        .select('physical_serial')
+        .in('physical_serial', serialList)
+        .neq('status', 'cancelled');
+
+      if (existingSerials && existingSerials.length > 0) {
+        return { 
+          success: false, 
+          error: `Duplicate physical ticket: Serial number(s) ${existingSerials.map((s: any) => `"${s.physical_serial}"`).join(', ')} already issued.` 
+        };
+      }
     }
 
-    const { data: seatData, error: seatErr } = await adminClient
-      .from('seats')
-      .select('*')
-      .eq('id', seatId)
-      .single();
-
-    if (seatErr || !seatData) {
-      return { success: false, error: 'Selected seat does not exist in venue blueprint.' };
-    }
-
-    if (seatData.row_label === 'SPL VIP') {
-      return { success: false, error: 'Selected seat is in the reserved SPL VIP Box and cannot be sold.' };
-    }
-
-    if (seatData.is_blocked) {
-      return { success: false, error: `Seat ${seatId} is marked as Blocked/Reserved (${seatData.blocked_reason || 'VIP'}) and cannot be sold.` };
-    }
-
-    if (seatData.sponsor_id) {
-      return { success: false, error: `Seat ${seatId} is reserved for a corporate sponsor and cannot be sold.` };
-    }
-
-    if (seatData.guest_name || seatData.pass_code) {
-      return { success: false, error: `Seat ${seatId} has already been sold to another guest.` };
+    // Optional legacy seat validation if seatId was explicitly passed
+    let seatData: any = null;
+    if (input.seatId && input.seatId.trim()) {
+      const { data: sData } = await adminClient
+        .from('seats')
+        .select('*')
+        .eq('id', input.seatId)
+        .single();
+      seatData = sData;
     }
 
     // 2. Fetch Seller Member and Verify Rule R2 (Attribution scope)
@@ -162,26 +181,7 @@ export async function issuePass(input: IssuePassInput) {
       }
     }
 
-    // 4. Check for duplicate physical serial if applicable
-    if (ticketType === 'physical' && physicalSerial) {
-      const cleanSerial = physicalSerial.trim();
-      const { data: existingSerial } = await adminClient
-        .from('passes')
-        .select('id')
-        .eq('physical_serial', cleanSerial)
-        .neq('status', 'cancelled')
-        .maybeSingle();
-
-      if (existingSerial) {
-        return { 
-          success: false, 
-          error: `Duplicate physical ticket: Serial number "${cleanSerial}" has already been issued.` 
-        };
-      }
-    }
-
-    // 5. Band Inventory & Hard Oversell Block (Rule R5)
-    // Query available seats using DB function
+    // 4. Band Inventory & Hard Oversell Block (Rule R5)
     const { data: availData, error: availError } = await adminClient
       .rpc('get_band_available_seats', { p_band_id: bandId });
 
@@ -191,10 +191,10 @@ export async function issuePass(input: IssuePassInput) {
     }
 
     const availableSeats = typeof availData === 'number' ? availData : 0;
-    if (availableSeats < 1) {
+    if (availableSeats < quantity) {
       return { 
         success: false, 
-        error: 'HARD LIMIT REACHED: This price band is completely sold out. No more passes can be issued.' 
+        error: `HARD LIMIT REACHED: Only ${availableSeats} seat${availableSeats === 1 ? '' : 's'} remaining in this price band. Cannot issue ${quantity} passes.` 
       };
     }
 
@@ -209,78 +209,88 @@ export async function issuePass(input: IssuePassInput) {
       return { success: false, error: 'Selected price band not found.' };
     }
 
-    // 6. Generate Pass Identifiers
-    const passCode = await generateUniquePassCode(adminClient);
-    const qrToken = await signQrToken(passCode);
-
-    // Rule R9: 60-second Undo Window
+    // 5. Generate Shared Undo Token & Unique Pass Identifiers
     const undoToken = crypto.randomBytes(16).toString('hex');
     const undoExpiresAt = new Date(Date.now() + 60 * 1000).toISOString();
 
-    // 7. Insert Pass
-    const { data: passData, error: passError } = await adminClient
-      .from('passes')
-      .insert({
+    const passesToInsert = [];
+    for (let i = 0; i < quantity; i++) {
+      const passCode = await generateUniquePassCode(adminClient);
+      const qrToken = await signQrToken(passCode);
+      passesToInsert.push({
         pass_code: passCode,
         band_id: bandId,
         ticket_type: ticketType,
-        physical_serial: ticketType === 'physical' ? physicalSerial!.trim() : null,
-        seat_id: seatId,
+        physical_serial: ticketType === 'physical' ? serialList[i] : null,
+        seat_id: i === 0 && input.seatId ? input.seatId : null,
         seller_member_id: sellerMemberId,
         issued_by_user_id: user.id,
         donor_name: finalDonorName,
         donor_phone: finalDonorPhone,
         donor_email: donorEmail?.trim() || null,
         donor_is_seller_fallback: donorIsSellerFallback,
-        source: 'normal_sale',
-        status: 'issued',
+        source: 'normal_sale' as const,
+        status: 'issued' as const,
         qr_token: qrToken,
         undo_token: undoToken,
         undo_expires_at: undoExpiresAt,
         needs_seller_reconciliation: false,
-      })
-      .select()
-      .single();
-
-    if (passError) {
-      console.error('Error inserting pass:', passError);
-      return { success: false, error: 'Failed to issue pass. ' + passError.message };
+      });
     }
 
-    // 8. Insert Structured Payment
+    // 6. Insert Passes in Batch
+    const { data: insertedPasses, error: passError } = await adminClient
+      .from('passes')
+      .insert(passesToInsert)
+      .select();
+
+    if (passError || !insertedPasses || insertedPasses.length === 0) {
+      console.error('Error inserting passes:', passError);
+      return { success: false, error: 'Failed to issue passes. ' + (passError?.message || '') };
+    }
+
+    // 7. Insert Structured Payments (1 record per pass, splitting amount evenly)
+    const totalAmount = paymentAmount >= 0 ? paymentAmount : band.price * quantity;
+    const baseAmount = Math.floor(totalAmount / quantity);
+    const remainder = totalAmount - (baseAmount * quantity);
+
+    const paymentInserts = insertedPasses.map((pass, idx) => ({
+      pass_id: pass.id,
+      mode: paymentMode,
+      amount: idx === 0 ? baseAmount + remainder : baseAmount,
+      reference_no: paymentReferenceNo.trim(),
+      proof_file_key: proofFileKey || null,
+      status: paymentStatus,
+      collected_by_user_id: user.id,
+      collected_at: new Date().toISOString(),
+    }));
+
     const { error: paymentError } = await adminClient
       .from('payments')
-      .insert({
-        pass_id: passData.id,
-        mode: paymentMode,
-        amount: paymentAmount >= 0 ? paymentAmount : band.price,
-        reference_no: paymentReferenceNo.trim(),
-        proof_file_key: proofFileKey || null,
-        status: paymentStatus,
-        collected_by_user_id: user.id,
-        collected_at: new Date().toISOString(),
-      });
+      .insert(paymentInserts);
 
     if (paymentError) {
       console.error('Error recording payment:', paymentError);
     }
 
-    // 8b. Assign and lock Seat in public.seats
-    await adminClient
-      .from('seats')
-      .update({
-        owner_id: user.id,
-        guest_name: finalDonorName,
-        guest_phone: finalDonorPhone,
-        guest_email: donorEmail?.trim() || null,
-        pass_code: passCode,
-        qr_token: qrToken,
-        payment_status: paymentStatus,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', seatId);
+    // 7b. If legacy seat linked, update public.seats
+    if (seatData && input.seatId) {
+      await adminClient
+        .from('seats')
+        .update({
+          owner_id: user.id,
+          guest_name: finalDonorName,
+          guest_phone: finalDonorPhone,
+          guest_email: donorEmail?.trim() || null,
+          pass_code: insertedPasses[0].pass_code,
+          qr_token: insertedPasses[0].qr_token,
+          payment_status: paymentStatus,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', input.seatId);
+    }
 
-    // 9. Calculate Seller's Updated Total Raised (for thank you message)
+    // 8. Calculate Seller's Updated Total Raised (for thank you message)
     const { data: sellerSales } = await adminClient
       .from('passes')
       .select(`
@@ -304,36 +314,44 @@ export async function issuePass(input: IssuePassInput) {
       }
     }
 
-    // 10. Audit Log
-    await logAudit(
-      user.id,
-      'PASS_ISSUE',
-      'passes',
-      passData.id,
-      {
-        pass_code: passCode,
-        band: band.label,
-        ticket_type: ticketType,
-        physical_serial: ticketType === 'physical' ? physicalSerial?.trim() : null,
-        donor_name: finalDonorName,
-        donor_phone: finalDonorPhone,
-        seller_member_id: sellerMemberId,
-        seller_name: seller.full_name,
-        payment_mode: paymentMode,
-        payment_amount: paymentAmount,
-        payment_reference_no: paymentReferenceNo,
-      }
-    );
+    const passCodes = insertedPasses.map((p) => p.pass_code);
 
-    // 11. Format WhatsApp Messages
-    const seatDetailsStr = `${seatData.section} • Row ${seatData.row_label} • Seat #${seatData.seat_no} (${seatData.id})`;
+    // 9. Audit Log
+    for (const p of insertedPasses) {
+      await logAudit(
+        user.id,
+        'PASS_ISSUE',
+        'passes',
+        p.id,
+        {
+          pass_code: p.pass_code,
+          quantity,
+          band: band.label,
+          ticket_type: ticketType,
+          physical_serial: p.physical_serial,
+          donor_name: finalDonorName,
+          donor_phone: finalDonorPhone,
+          seller_member_id: sellerMemberId,
+          seller_name: seller.full_name,
+          payment_mode: paymentMode,
+          payment_amount: totalAmount,
+          payment_reference_no: paymentReferenceNo,
+        }
+      );
+    }
+
+    // 10. Format WhatsApp Messages
+    const seatDetailsStr = `${quantity} Seat${quantity > 1 ? 's' : ''} in ${band.label}`;
     const donorMsg = formatDonorPassMessage({
       donorName: finalDonorName,
       donorPhone: finalDonorPhone,
       bandLabel: band.label,
-      passCode,
+      passCode: passCodes[0],
+      passCodes,
+      quantity,
       ticketType,
-      physicalSerial: ticketType === 'physical' ? physicalSerial?.trim() : null,
+      physicalSerial: ticketType === 'physical' ? serialList[0] : null,
+      physicalSerials: ticketType === 'physical' ? serialList : null,
       seatDetails: seatDetailsStr,
       paymentStatus,
       language: preferredLanguage,
@@ -353,8 +371,12 @@ export async function issuePass(input: IssuePassInput) {
 
     return {
       success: true,
-      pass: passData,
-      passCode,
+      pass: insertedPasses[0],
+      passes: insertedPasses,
+      passCode: passCodes[0],
+      passCodes,
+      quantity,
+      totalAmount,
       undoToken,
       donorMessage: donorMsg,
       donorPhone: finalDonorPhone,
@@ -363,7 +385,6 @@ export async function issuePass(input: IssuePassInput) {
       sellerName: seller.full_name,
       bandLabel: band.label,
       seatDetails: seatDetailsStr,
-      seatId: seatData.id,
     };
   } catch (err: any) {
     console.error('Error in issuePass:', err);
@@ -373,6 +394,7 @@ export async function issuePass(input: IssuePassInput) {
 
 /**
  * 60-Second Undo Window Action (§19.2, Rule R9).
+ * Cancels all passes created in the batch sharing the undo token.
  * Can only be called by the creating user within 60 seconds, pre-gate scan.
  */
 export async function undoSale(passId: string, undoToken: string) {
@@ -380,43 +402,48 @@ export async function undoSale(passId: string, undoToken: string) {
     const user = await requireUser();
     const adminClient = createAdminClient();
 
-    const { data: pass, error: passError } = await adminClient
-      .from('passes')
-      .select('*')
-      .eq('id', passId)
-      .single();
-
-    if (passError || !pass) {
-      return { success: false, error: 'Pass record not found.' };
+    // Look up by undo_token to cancel the whole batch atomically, fallback to passId
+    let query = adminClient.from('passes').select('*');
+    if (undoToken) {
+      query = query.eq('undo_token', undoToken);
+    } else {
+      query = query.eq('id', passId);
     }
 
-    // Rule R9 validations
-    if (pass.issued_by_user_id !== user.id && user.role !== 'system_admin') {
-      return { success: false, error: 'Only the coordinator who issued this pass can undo it.' };
-    }
+    const { data: passes, error: passError } = await query;
 
-    if (pass.undo_token !== undoToken) {
-      return { success: false, error: 'Invalid or expired undo token.' };
-    }
-
-    if (pass.status === 'used') {
-      return { success: false, error: 'Pass has already been scanned at the gate and cannot be undone.' };
-    }
-
-    if (pass.status === 'cancelled') {
-      return { success: false, error: 'This pass has already been cancelled.' };
+    if (passError || !passes || passes.length === 0) {
+      return { success: false, error: 'Pass record(s) not found for undo.' };
     }
 
     const now = new Date();
-    const expiresAt = new Date(pass.undo_expires_at);
-    if (now > expiresAt && user.role !== 'system_admin') {
-      return { 
-        success: false, 
-        error: 'The 60-second undo window has closed. Please request a System Admin to cancel this pass.' 
-      };
+
+    // Rule R9 validations on the entire batch
+    for (const pass of passes) {
+      if (pass.issued_by_user_id !== user.id && user.role !== 'system_admin') {
+        return { success: false, error: 'Only the coordinator who issued this pass can undo it.' };
+      }
+
+      if (pass.status === 'used') {
+        return { success: false, error: `Pass ${pass.pass_code} has already been scanned at the gate and cannot be undone.` };
+      }
+
+      if (pass.status === 'cancelled') {
+        return { success: false, error: 'This pass sale has already been cancelled.' };
+      }
+
+      const expiresAt = new Date(pass.undo_expires_at);
+      if (now > expiresAt && user.role !== 'system_admin') {
+        return { 
+          success: false, 
+          error: 'The 60-second undo window has closed. Please request a System Admin to cancel this pass.' 
+        };
+      }
     }
 
-    // Void the pass
+    const passIds = passes.map((p) => p.id);
+
+    // Void all passes in batch
     const { error: updateError } = await adminClient
       .from('passes')
       .update({
@@ -426,7 +453,7 @@ export async function undoSale(passId: string, undoToken: string) {
         cancel_reason: '60-Second Self-Service Undo',
         updated_at: now.toISOString(),
       })
-      .eq('id', passId);
+      .in('id', passIds);
 
     if (updateError) throw updateError;
 
@@ -438,10 +465,11 @@ export async function undoSale(passId: string, undoToken: string) {
         reference_no: 'CANCELLED_UNDO',
         updated_at: now.toISOString(),
       })
-      .eq('pass_id', passId);
+      .in('pass_id', passIds);
 
-    // Release assigned seat if linked
-    if (pass.seat_id) {
+    // Release assigned seats if any were linked
+    const seatIds = passes.map((p) => p.seat_id).filter(Boolean);
+    if (seatIds.length > 0) {
       await adminClient
         .from('seats')
         .update({
@@ -454,22 +482,24 @@ export async function undoSale(passId: string, undoToken: string) {
           payment_status: 'pending',
           updated_at: now.toISOString(),
         })
-        .eq('id', pass.seat_id);
+        .in('id', seatIds);
     }
 
-    // Audit log
-    await logAudit(
-      user.id,
-      'SALE_UNDO',
-      'passes',
-      passId,
-      {
-        pass_code: pass.pass_code,
-        donor_name: pass.donor_name,
-        band_id: pass.band_id,
-        reason: 'Within 60-second window undo',
-      }
-    );
+    // Audit logs for each cancelled pass
+    for (const pass of passes) {
+      await logAudit(
+        user.id,
+        'SALE_UNDO',
+        'passes',
+        pass.id,
+        {
+          pass_code: pass.pass_code,
+          donor_name: pass.donor_name,
+          band_id: pass.band_id,
+          reason: 'Within 60-second window undo',
+        }
+      );
+    }
 
     revalidatePath('/sell');
     revalidatePath('/dashboard');
@@ -477,7 +507,11 @@ export async function undoSale(passId: string, undoToken: string) {
     revalidatePath('/reports');
     revalidatePath('/leaderboard');
 
-    return { success: true, message: `Pass ${pass.pass_code} has been successfully undone.` };
+    const passCodesStr = passes.map((p) => p.pass_code).join(', ');
+    return { 
+      success: true, 
+      message: `Sale for ${passes.length} pass${passes.length > 1 ? 'es' : ''} (${passCodesStr}) has been successfully undone.` 
+    };
   } catch (err: any) {
     console.error('Error undoing sale:', err);
     return { success: false, error: err.message || 'Failed to undo sale.' };

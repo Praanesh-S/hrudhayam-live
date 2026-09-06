@@ -79,6 +79,8 @@ export interface Band {
   updated_at?: string;
   // Derived metrics (§4: Remaining is derived, never stored)
   sold_count?: number;
+  paid_count?: number;
+  pending_count?: number;
   active_holds_count?: number;
   remaining_count?: number;
   collected_amount?: number;

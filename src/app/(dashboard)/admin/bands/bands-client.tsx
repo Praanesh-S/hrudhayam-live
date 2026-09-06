@@ -468,6 +468,7 @@ export function BandsClient({
         <div className="space-y-4">
           <SeatMap 
             seats={seats} 
+            bands={bands}
             rows={rows} 
             enableSeatBlocking={true}
             onBlockSeats={blockExactSeats}
