@@ -21,7 +21,7 @@ export default async function AdminMembersPage() {
   const [{ data: groups }, { data: members }, { data: usersList }, { data: passes }] = await Promise.all([
     adminClient.from('groups').select('*').order('id'),
     adminClient.from('members').select('*, groups(id, name)').order('group_id').order('full_name'),
-    adminClient.from('users').select('id, login_id, role, is_active, member_id'),
+    adminClient.from('users').select('id, login_id, role, is_active, must_change_password, member_id, created_at, members(id, full_name, group_id, groups(id, name))').order('role').order('login_id'),
     adminClient.from('passes').select('seller_member_id, payments(amount, status)').neq('status', 'cancelled'),
   ]);
 

@@ -41,7 +41,7 @@ export function SidebarContent({ user, onNavigate }: { user: AuthUser; onNavigat
 
   const adminNavItems = [
     { name: 'Bands & Protected Seats', href: '/admin/bands', icon: Layers, roles: ['super_admin', 'system_admin'] },
-    { name: 'Groups & Members', href: '/admin/members', icon: Users, roles: ['super_admin', 'system_admin'] },
+    { name: 'Groups, Members & Logins', href: '/admin/members', icon: Users, roles: ['super_admin', 'system_admin'] },
     { name: 'Sponsors', href: '/admin/sponsors', icon: Building2, roles: ['super_admin', 'system_admin'] },
     { name: 'Pass Operations', href: '/admin/passes', icon: RotateCcw, roles: ['super_admin', 'system_admin'] },
     { name: 'Audit Trail', href: '/admin/audit-logs', icon: History, roles: ['super_admin', 'system_admin'] },

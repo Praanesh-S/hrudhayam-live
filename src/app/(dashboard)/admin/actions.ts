@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireSuperOrSystemAdmin, requireSystemAdmin } from '@/lib/auth/guards';
 import { logAudit } from '@/lib/audit';
+import { hashPassword } from '@/lib/auth/password';
 
 // ──────────────────────────────────────────────
 // 1. Bands & Protected Seats (§10)
@@ -473,8 +474,335 @@ export async function reassignSuperAdmin(targetUserId: string) {
     });
 
     revalidatePath('/admin/users');
+    revalidatePath('/admin/members');
     return { success: true, message: `User "${targetUser.login_id}" is now Super Admin.` };
   } catch (err: any) {
     return { success: false, error: err.message };
+  }
+}
+
+// ──────────────────────────────────────────────
+// 5. Sub-Admin & User Account Management (§10)
+// ──────────────────────────────────────────────
+
+/**
+ * Create a new user login account (Sub-Admin / Coordinator / Staff).
+ */
+export async function createUserAccount(data: {
+  loginId: string;
+  password: string;
+  role: 'super_admin' | 'system_admin' | 'group_admin';
+  memberId?: number | null;
+  mustChangePassword?: boolean;
+}) {
+  try {
+    const user = await requireSuperOrSystemAdmin();
+    const adminClient = createAdminClient();
+
+    const cleanLoginId = data.loginId.trim();
+    if (!cleanLoginId || cleanLoginId.length < 3) {
+      return { success: false, error: 'Login ID must be at least 3 characters long.' };
+    }
+
+    if (!data.password || data.password.length < 6) {
+      return { success: false, error: 'Password must be at least 6 characters long.' };
+    }
+
+    // Check uniqueness
+    const { data: existing } = await adminClient
+      .from('users')
+      .select('id, login_id')
+      .eq('login_id', cleanLoginId)
+      .maybeSingle();
+
+    if (existing) {
+      return { success: false, error: `An account with login ID "${cleanLoginId}" already exists.` };
+    }
+
+    // Check if member already has an account
+    if (data.memberId) {
+      const { data: existingMemberUser } = await adminClient
+        .from('users')
+        .select('id, login_id')
+        .eq('member_id', data.memberId)
+        .maybeSingle();
+
+      if (existingMemberUser) {
+        return {
+          success: false,
+          error: `This member already has an active account with login ID "${existingMemberUser.login_id}".`,
+        };
+      }
+    }
+
+    const passwordHash = await hashPassword(data.password);
+
+    const { data: newUser, error: insertError } = await adminClient
+      .from('users')
+      .insert({
+        login_id: cleanLoginId,
+        password_hash: passwordHash,
+        role: data.role || 'group_admin',
+        member_id: data.memberId || null,
+        must_change_password: data.mustChangePassword !== false,
+        is_active: true,
+      })
+      .select()
+      .single();
+
+    if (insertError) throw insertError;
+
+    await logAudit(user.id, 'USER_ACCOUNT_CREATE', 'users', newUser.id, {
+      login_id: cleanLoginId,
+      role: data.role,
+      member_id: data.memberId,
+      created_by: user.fullName,
+    });
+
+    revalidatePath('/admin/members');
+    return { success: true, user: newUser };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to create user account.' };
+  }
+}
+
+/**
+ * 1-Click Provision of the 8 Team Coordinators with their 10-digit mobile number as login ID.
+ */
+export async function provisionAllCoordinators(defaultPassword = 'Welcome@2026') {
+  try {
+    const user = await requireSuperOrSystemAdmin();
+    const adminClient = createAdminClient();
+
+    const { data: coordinators, error: coordErr } = await adminClient
+      .from('members')
+      .select('id, full_name, phone_raw, phone_e164, group_id')
+      .eq('is_group_admin', true)
+      .order('group_id', { ascending: true });
+
+    if (coordErr || !coordinators) throw coordErr || new Error('Could not fetch coordinators.');
+
+    const passwordHash = await hashPassword(defaultPassword);
+    let createdCount = 0;
+    let skippedCount = 0;
+    const summary: Array<{ name: string; team: number; loginId: string; status: 'created' | 'already_exists' }> = [];
+
+    for (const c of coordinators) {
+      const rawDigits = (c.phone_e164 || c.phone_raw || '').replace(/\D/g, '');
+      const loginId = rawDigits.length >= 10 ? rawDigits.slice(-10) : rawDigits;
+
+      if (!loginId) {
+        skippedCount++;
+        summary.push({ name: c.full_name, team: c.group_id, loginId: 'None', status: 'already_exists' });
+        continue;
+      }
+
+      const { data: existing } = await adminClient
+        .from('users')
+        .select('id, member_id')
+        .eq('login_id', loginId)
+        .maybeSingle();
+
+      if (existing) {
+        if (!existing.member_id) {
+          await adminClient.from('users').update({ member_id: c.id }).eq('id', existing.id);
+        }
+        skippedCount++;
+        summary.push({ name: c.full_name, team: c.group_id, loginId, status: 'already_exists' });
+      } else {
+        const { error: insertErr } = await adminClient.from('users').insert({
+          login_id: loginId,
+          password_hash: passwordHash,
+          role: 'group_admin',
+          member_id: c.id,
+          must_change_password: true,
+          is_active: true,
+        });
+
+        if (insertErr) {
+          console.error(`Failed to insert coordinator user ${c.full_name}:`, insertErr);
+        } else {
+          createdCount++;
+          summary.push({ name: c.full_name, team: c.group_id, loginId, status: 'created' });
+        }
+      }
+    }
+
+    await logAudit(user.id, 'AUTO_PROVISION_COORDINATORS', 'users', 'bulk', {
+      created_count: createdCount,
+      skipped_count: skippedCount,
+      default_password: defaultPassword,
+      performed_by: user.fullName,
+    });
+
+    revalidatePath('/admin/members');
+    return {
+      success: true,
+      createdCount,
+      skippedCount,
+      total: coordinators.length,
+      defaultPassword,
+      summary,
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to auto-provision coordinators.' };
+  }
+}
+
+/**
+ * Reset password for any user account.
+ */
+export async function resetUserPassword(userId: string, newPassword: string, forceChange = true) {
+  try {
+    const user = await requireSuperOrSystemAdmin();
+    const adminClient = createAdminClient();
+
+    if (!newPassword || newPassword.length < 6) {
+      return { success: false, error: 'Password must be at least 6 characters long.' };
+    }
+
+    const { data: targetUser } = await adminClient
+      .from('users')
+      .select('id, login_id')
+      .eq('id', userId)
+      .single();
+
+    if (!targetUser) return { success: false, error: 'User not found.' };
+
+    const newHash = await hashPassword(newPassword);
+
+    const { error: updateErr } = await adminClient
+      .from('users')
+      .update({
+        password_hash: newHash,
+        must_change_password: forceChange,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', userId);
+
+    if (updateErr) throw updateErr;
+
+    // Terminate existing sessions so password change takes immediate effect
+    await adminClient.from('user_sessions').delete().eq('user_id', userId);
+
+    await logAudit(user.id, 'USER_PASSWORD_RESET', 'users', userId, {
+      login_id: targetUser.login_id,
+      reset_by: user.fullName,
+      must_change_password: forceChange,
+    });
+
+    revalidatePath('/admin/members');
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to reset password.' };
+  }
+}
+
+/**
+ * Toggle active status of a user account (deactivate or reactivate).
+ */
+export async function toggleUserActive(userId: string, isActive: boolean) {
+  try {
+    const user = await requireSuperOrSystemAdmin();
+    const adminClient = createAdminClient();
+
+    if (user.id === userId) {
+      return { success: false, error: 'You cannot deactivate your own account.' };
+    }
+
+    const { data: targetUser } = await adminClient
+      .from('users')
+      .select('id, login_id')
+      .eq('id', userId)
+      .single();
+
+    if (!targetUser) return { success: false, error: 'User not found.' };
+
+    const { error: updateErr } = await adminClient
+      .from('users')
+      .update({
+        is_active: isActive,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', userId);
+
+    if (updateErr) throw updateErr;
+
+    if (!isActive) {
+      await adminClient.from('user_sessions').delete().eq('user_id', userId);
+    }
+
+    await logAudit(user.id, 'USER_STATUS_TOGGLE', 'users', userId, {
+      login_id: targetUser.login_id,
+      is_active: isActive,
+      modified_by: user.fullName,
+    });
+
+    revalidatePath('/admin/members');
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to update account status.' };
+  }
+}
+
+/**
+ * Delete a user account (or deactivate if tied to audit or pass activity).
+ */
+export async function deleteUserAccount(userId: string) {
+  try {
+    const user = await requireSuperOrSystemAdmin();
+    const adminClient = createAdminClient();
+
+    if (user.id === userId) {
+      return { success: false, error: 'You cannot delete your own account.' };
+    }
+
+    const { data: targetUser } = await adminClient
+      .from('users')
+      .select('id, login_id')
+      .eq('id', userId)
+      .single();
+
+    if (!targetUser) return { success: false, error: 'User not found.' };
+
+    // Check if user has associated passes or payments
+    const [
+      { count: passesCount },
+      { count: paymentsCount },
+    ] = await Promise.all([
+      adminClient.from('passes').select('id', { count: 'exact', head: true }).eq('issued_by_user_id', userId),
+      adminClient.from('payments').select('id', { count: 'exact', head: true }).eq('collected_by_user_id', userId),
+    ]);
+
+    if ((passesCount || 0) > 0 || (paymentsCount || 0) > 0) {
+      // Deactivate to protect relational integrity and audit history
+      await adminClient.from('user_sessions').delete().eq('user_id', userId);
+      await adminClient.from('users').update({ is_active: false, updated_at: new Date().toISOString() }).eq('id', userId);
+      await logAudit(user.id, 'USER_DEACTIVATE_PRESERVE_FK', 'users', userId, {
+        login_id: targetUser.login_id,
+        reason: 'User has recorded passes/payments. Deactivated instead of deleted to protect audit history.',
+      });
+      revalidatePath('/admin/members');
+      return {
+        success: true,
+        deactivatedInstead: true,
+        message: `Account "${targetUser.login_id}" has recorded sales or collections. It has been deactivated instead of deleted to preserve audit integrity.`,
+      };
+    }
+
+    // Otherwise safe to hard delete
+    await adminClient.from('user_sessions').delete().eq('user_id', userId);
+    const { error: delErr } = await adminClient.from('users').delete().eq('id', userId);
+    if (delErr) throw delErr;
+
+    await logAudit(user.id, 'USER_ACCOUNT_DELETE', 'users', userId, {
+      login_id: targetUser.login_id,
+      deleted_by: user.fullName,
+    });
+
+    revalidatePath('/admin/members');
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to delete user account.' };
   }
 }
