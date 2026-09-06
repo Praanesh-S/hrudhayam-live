@@ -89,6 +89,17 @@ export function getRowsInRange(
 
 /**
  * Determine seat color for the map based on its state.
+ * Distinct color tokens:
+ * - SPL VIP Box: #8B5CF6 (Royal Purple)
+ * - Blocked / Reserved: #BE123C (Deep Crimson)
+ * - Sponsor Complimentary: #06B6D4 (Vibrant Cyan)
+ * - Checked In: #0284C7 (Sky Blue)
+ * - Paid Pass: #10B981 (Emerald Green)
+ * - Pending Pass: #F97316 (Amber Orange)
+ * - Band A (₹5,000): #F59E0B (Amber Gold)
+ * - Band B (₹3,500): #A855F7 (Violet Purple)
+ * - Band C (₹2,500): #0D9488 (Teal)
+ * - Band D (₹1,500): #64748B (Steel Slate)
  */
 export function getSeatColor(seat: {
   tier?: number | null;
@@ -97,30 +108,38 @@ export function getSeatColor(seat: {
   guest_name?: string | null;
   payment_status?: string;
   checked_in?: boolean;
+  is_blocked?: boolean;
+  sponsor_id?: string | null;
 }): string {
-  // SPL VIP / Obligation seats (Non-editable VIP)
-  if (seat.obligation || seat.row_label === "SPL VIP") return "#8B5CF6"; // Royal Purple
+  // 1. SPL VIP Box (Non-editable VIP)
+  if (seat.row_label === "SPL VIP" || seat.obligation === "chief") return "#8B5CF6"; // Royal Purple
 
-  // Checked in
+  // 2. Exact Blocked / Reserved seats
+  if (seat.is_blocked) return "#BE123C"; // Deep Crimson
+
+  // 3. Sponsor Complimentary Seats
+  if (seat.sponsor_id || seat.obligation === "sponsor") return "#06B6D4"; // Vibrant Cyan
+
+  // 4. Checked In (At Venue)
   if (seat.checked_in) return "#0284C7"; // Sky Blue
 
-  // Paid pass
+  // 5. Paid Pass
   if ((seat.payment_status || "").toLowerCase() === "received") return "#10B981"; // Emerald Green
 
-  // Guest assigned / pending
-  if (seat.guest_name && seat.guest_name.trim() !== "") return "#EF4444"; // Coral Red
+  // 6. Guest Assigned / Pending
+  if (seat.guest_name && seat.guest_name.trim() !== "") return "#F97316"; // Amber Orange
 
-  // Empty but tiered
+  // 7. Available Tier Seats
   switch (seat.tier) {
     case 5000:
       return "#F59E0B"; // Amber Gold (Band A)
     case 3500:
     case 3000:
-      return "#8B5CF6"; // Purple (Band B)
+      return "#A855F7"; // Violet Purple (Band B)
     case 2500:
       return "#0D9488"; // Teal (Band C)
     case 1500:
-      return "#64748B"; // Slate Steel (Band D)
+      return "#64748B"; // Steel Slate (Band D)
     default:
       return "#334E68"; // Default slate unassigned
   }

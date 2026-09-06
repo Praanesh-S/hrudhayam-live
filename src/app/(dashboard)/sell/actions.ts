@@ -14,6 +14,7 @@ export interface IssuePassInput {
   bandId: string;
   ticketType: TicketType;
   physicalSerial?: string | null;
+  seatId: string;
   sellerMemberId: number;
   donorName: string;
   donorPhone: string;
@@ -94,6 +95,38 @@ export async function issuePass(input: IssuePassInput) {
       return { success: false, error: 'Payment reference number / UTR / Cash voucher is mandatory.' };
     }
 
+    // 1b. Mandatory Seat Selection Validation
+    const { seatId } = input;
+    if (!seatId || !seatId.trim()) {
+      return { success: false, error: 'Mandatory seat selection: Please select an available venue row and seat.' };
+    }
+
+    const { data: seatData, error: seatErr } = await adminClient
+      .from('seats')
+      .select('*')
+      .eq('id', seatId)
+      .single();
+
+    if (seatErr || !seatData) {
+      return { success: false, error: 'Selected seat does not exist in venue blueprint.' };
+    }
+
+    if (seatData.row_label === 'SPL VIP') {
+      return { success: false, error: 'Selected seat is in the reserved SPL VIP Box and cannot be sold.' };
+    }
+
+    if (seatData.is_blocked) {
+      return { success: false, error: `Seat ${seatId} is marked as Blocked/Reserved (${seatData.blocked_reason || 'VIP'}) and cannot be sold.` };
+    }
+
+    if (seatData.sponsor_id) {
+      return { success: false, error: `Seat ${seatId} is reserved for a corporate sponsor and cannot be sold.` };
+    }
+
+    if (seatData.guest_name || seatData.pass_code) {
+      return { success: false, error: `Seat ${seatId} has already been sold to another guest.` };
+    }
+
     // 2. Fetch Seller Member and Verify Rule R2 (Attribution scope)
     const { data: seller, error: sellerError } = await adminClient
       .from('members')
@@ -105,8 +138,8 @@ export async function issuePass(input: IssuePassInput) {
       return { success: false, error: 'Selected seller member was not found or is inactive.' };
     }
 
-    // Rule R2: Group Admin can only attribute to their own team members
-    if (user.role === 'group_admin' && user.groupId && seller.group_id !== user.groupId) {
+    // Rule R2: Scoped attribution (Sub-admin / Group admin can only sell for their team)
+    if (user.role !== 'super_admin' && user.role !== 'system_admin' && user.groupId && seller.group_id !== user.groupId) {
       return { 
         success: false, 
         error: 'Scoped attribution violation: You can only credit sales to yourself or members of your own team.' 
@@ -192,6 +225,7 @@ export async function issuePass(input: IssuePassInput) {
         band_id: bandId,
         ticket_type: ticketType,
         physical_serial: ticketType === 'physical' ? physicalSerial!.trim() : null,
+        seat_id: seatId,
         seller_member_id: sellerMemberId,
         issued_by_user_id: user.id,
         donor_name: finalDonorName,
@@ -229,8 +263,22 @@ export async function issuePass(input: IssuePassInput) {
 
     if (paymentError) {
       console.error('Error recording payment:', paymentError);
-      // Soft fail payment record or throw
     }
+
+    // 8b. Assign and lock Seat in public.seats
+    await adminClient
+      .from('seats')
+      .update({
+        owner_id: user.id,
+        guest_name: finalDonorName,
+        guest_phone: finalDonorPhone,
+        guest_email: donorEmail?.trim() || null,
+        pass_code: passCode,
+        qr_token: qrToken,
+        payment_status: paymentStatus,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', seatId);
 
     // 9. Calculate Seller's Updated Total Raised (for thank you message)
     const { data: sellerSales } = await adminClient
@@ -278,6 +326,7 @@ export async function issuePass(input: IssuePassInput) {
     );
 
     // 11. Format WhatsApp Messages
+    const seatDetailsStr = `${seatData.section} • Row ${seatData.row_label} • Seat #${seatData.seat_no} (${seatData.id})`;
     const donorMsg = formatDonorPassMessage({
       donorName: finalDonorName,
       donorPhone: finalDonorPhone,
@@ -285,6 +334,7 @@ export async function issuePass(input: IssuePassInput) {
       passCode,
       ticketType,
       physicalSerial: ticketType === 'physical' ? physicalSerial?.trim() : null,
+      seatDetails: seatDetailsStr,
       paymentStatus,
       language: preferredLanguage,
     });
@@ -312,6 +362,8 @@ export async function issuePass(input: IssuePassInput) {
       sellerPhone: seller.phone_e164 || seller.phone_raw,
       sellerName: seller.full_name,
       bandLabel: band.label,
+      seatDetails: seatDetailsStr,
+      seatId: seatData.id,
     };
   } catch (err: any) {
     console.error('Error in issuePass:', err);
@@ -387,6 +439,23 @@ export async function undoSale(passId: string, undoToken: string) {
         updated_at: now.toISOString(),
       })
       .eq('pass_id', passId);
+
+    // Release assigned seat if linked
+    if (pass.seat_id) {
+      await adminClient
+        .from('seats')
+        .update({
+          owner_id: null,
+          guest_name: null,
+          guest_phone: null,
+          guest_email: null,
+          pass_code: null,
+          qr_token: null,
+          payment_status: 'pending',
+          updated_at: now.toISOString(),
+        })
+        .eq('id', pass.seat_id);
+    }
 
     // Audit log
     await logAudit(

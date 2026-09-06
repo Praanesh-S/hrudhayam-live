@@ -116,44 +116,6 @@ export default async function DashboardPage() {
         </div>
       </div>
 
-      {/* 2. Public-Access AED Project Goal Banner (§11, Goal Visualization) */}
-      <div className="p-6 sm:p-7 rounded-3xl bg-gradient-to-r from-red-950/80 via-slate-900 to-amber-950/70 border-2 border-red-500/40 shadow-2xl">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          <div>
-            <span className="text-xs font-bold text-red-400 uppercase tracking-wider flex items-center gap-1.5">
-              <Heart className="w-4 h-4 fill-red-500 text-red-500" /> Project Objective: Public-Access Automated External Defibrillators
-            </span>
-            <h2 className="text-2xl sm:text-3xl font-black text-white mt-1">
-              {metrics.fundedStations} AED Stations Funded
-            </h2>
-            <p className="text-xs sm:text-sm text-slate-300 mt-0.5">
-              ₹1,50,000 per outdoor weatherproof life-saving station in high footfall public spots across Chennai.
-            </p>
-          </div>
-
-          <div className="text-left sm:text-right">
-            <span className="text-xs text-slate-400 uppercase">Target: 25 Stations</span>
-            <div className="text-3xl font-black text-[#E8913A] font-mono">
-              ₹{metrics.totalRaised.toLocaleString('en-IN')}
-            </div>
-            <span className="text-xs text-slate-400">Total Net Raised to Date</span>
-          </div>
-        </div>
-
-        {/* Partial Station Progress Bar */}
-        <div className="mt-5 space-y-1.5">
-          <div className="flex justify-between text-xs font-semibold text-slate-300">
-            <span>Station #{metrics.fundedStations + 1} Progress</span>
-            <span className="font-mono text-amber-400">{metrics.partialStationPercent}% funded towards next station</span>
-          </div>
-          <div className="w-full bg-slate-950/80 h-3 rounded-full overflow-hidden border border-red-900/40">
-            <div
-              className="bg-gradient-to-r from-red-500 to-amber-400 h-full transition-all duration-500"
-              style={{ width: `${metrics.partialStationPercent}%` }}
-            />
-          </div>
-        </div>
-      </div>
 
       {/* 3. Top High-Level Campaign KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

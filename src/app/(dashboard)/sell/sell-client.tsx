@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Band, TicketType, PaymentMode, PaymentStatus } from '@/lib/types';
+import { useState, useEffect, useMemo } from 'react';
+import { Band, TicketType, PaymentMode, PaymentStatus, SeatData } from '@/lib/types';
 import { AuthUser } from '@/lib/auth/session';
 import { issuePass, undoSale, checkDonorPassCount } from './actions';
 import { getWhatsAppUrl } from '@/lib/whatsapp';
@@ -22,23 +22,27 @@ import {
   Upload, 
   ShieldAlert,
   UserCheck,
-  CreditCard
+  CreditCard,
+  MapPin
 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 interface SellClientProps {
   bands: Band[];
   sellers: any[];
+  seats: SeatData[];
   currentUser: AuthUser;
   initialHolds?: any[];
 }
 
-export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
-  // Step in wizard: 1 (Band) -> 2 (Type) -> 3 (Seller) -> 4 (Donor) -> 5 (Payment) -> 6 (Success)
+export function SellClient({ bands, sellers, seats, currentUser }: SellClientProps) {
+  // Step in wizard: 1 (Band & Seat) -> 2 (Type) -> 3 (Seller) -> 4 (Donor) -> 5 (Payment) -> 6 (Success)
   const [step, setStep] = useState<number>(1);
 
   // Form states
   const [selectedBandId, setSelectedBandId] = useState<string>('');
+  const [selectedSeatId, setSelectedSeatId] = useState<string>('');
+  const [selectedRowKey, setSelectedRowKey] = useState<string>('');
   const [ticketType, setTicketType] = useState<TicketType>('digital');
   const [physicalSerial, setPhysicalSerial] = useState<string>('');
   
@@ -75,6 +79,7 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
     sellerPhone: string;
     sellerName: string;
     bandLabel: string;
+    seatDetails?: string;
     passId: string;
   } | null>(null);
 
@@ -91,6 +96,50 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
       setPaymentAmount(selectedBand.price);
     }
   }, [selectedBand]);
+
+  // Available seats matching selected band tier
+  const bandSeats = useMemo(() => {
+    if (!selectedBand) return [];
+    return seats.filter((s) => {
+      if (s.row_label === 'SPL VIP') return false;
+      const effectiveTier = s.tier === 3000 ? 3500 : s.tier;
+      return effectiveTier === selectedBand.price;
+    });
+  }, [seats, selectedBand]);
+
+  // Group seats by Section and Row
+  const rowsWithSeats = useMemo(() => {
+    const rowMap = new Map<string, { section: string; rowLabel: string; seats: SeatData[]; availableCount: number }>();
+    for (const s of bandSeats) {
+      const key = `${s.section} - Row ${s.row_label}`;
+      if (!rowMap.has(key)) {
+        rowMap.set(key, { section: s.section, rowLabel: s.row_label, seats: [], availableCount: 0 });
+      }
+      const entry = rowMap.get(key)!;
+      entry.seats.push(s);
+      const isAvailable = !s.guest_name && !s.pass_code && !s.is_blocked && !s.sponsor_id;
+      if (isAvailable) entry.availableCount++;
+    }
+    for (const entry of rowMap.values()) {
+      entry.seats.sort((a, b) => Number(a.seat_no) - Number(b.seat_no));
+    }
+    return Array.from(rowMap.entries()).map(([key, val]) => ({ key, ...val }));
+  }, [bandSeats]);
+
+  // When band changes, reset seat and auto-select first row with available seats
+  useEffect(() => {
+    setSelectedSeatId('');
+    if (rowsWithSeats.length > 0) {
+      const firstAvail = rowsWithSeats.find((r) => r.availableCount > 0);
+      if (firstAvail) {
+        setSelectedRowKey(firstAvail.key);
+      } else {
+        setSelectedRowKey(rowsWithSeats[0].key);
+      }
+    } else {
+      setSelectedRowKey('');
+    }
+  }, [selectedBandId, rowsWithSeats]);
 
   // Check duplicate donor on phone blur (§19.3)
   const handleDonorPhoneBlur = async () => {
@@ -123,6 +172,11 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
 
   // Handle Form Submission
   const handleSubmit = async () => {
+    if (!selectedSeatId) {
+      setErrorMessage('Please select a specific row and available seat.');
+      return;
+    }
+
     setIsSubmitting(true);
     setErrorMessage(null);
 
@@ -149,6 +203,7 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
 
       const res = await issuePass({
         bandId: selectedBandId,
+        seatId: selectedSeatId,
         ticketType,
         physicalSerial: ticketType === 'physical' ? physicalSerial : null,
         sellerMemberId: Number(sellerMemberId),
@@ -180,6 +235,7 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
         sellerPhone: res.sellerPhone!,
         sellerName: res.sellerName!,
         bandLabel: res.bandLabel!,
+        seatDetails: (res as any).seatDetails || selectedSeatId,
         passId: res.pass.id,
       });
 
@@ -198,14 +254,20 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
     setIsUndoing(true);
     setUndoMessage(null);
 
-    const res = await undoSale(successResult.passId, successResult.undoToken);
-    setIsUndoing(false);
-
-    if (res.success) {
-      setUndoMessage(res.message || 'Pass cancelled successfully.');
-      setSuccessResult(null);
-    } else {
-      setErrorMessage(res.error || 'Failed to undo pass.');
+    try {
+      const res = await undoSale(successResult.passId, successResult.undoToken);
+      if (res.success) {
+        setUndoMessage(res.message || 'Sale has been undone and seat released.');
+        setSuccessResult(null);
+        setStep(1);
+        setSelectedSeatId('');
+      } else {
+        setErrorMessage(res.error || 'Could not undo sale.');
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to undo sale.');
+    } finally {
+      setIsUndoing(false);
     }
   };
 
@@ -213,6 +275,8 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
   const handleResetForNext = () => {
     setStep(1);
     setSelectedBandId('');
+    setSelectedSeatId('');
+    setSelectedRowKey('');
     setTicketType('digital');
     setPhysicalSerial('');
     setDonorName('');
@@ -322,11 +386,133 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
             })}
           </div>
 
+          {/* Row & Seat Selection */}
+          {selectedBandId && (
+            <div className="p-5 bg-[#172535] border-2 border-amber-500/40 rounded-2xl space-y-4 shadow-xl animate-in fade-in-50">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 pb-3 border-b border-slate-700">
+                <div>
+                  <h3 className="text-base font-black text-white flex items-center gap-2">
+                    <MapPin className="w-4 h-4 text-[#E8913A]" />
+                    <span>Choose Venue Row & Exact Seat</span>
+                    <span className="text-xs font-mono font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
+                      {selectedBand?.label}
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Select a row in this tier, then pick an open green seat to assign to the donor.
+                  </p>
+                </div>
+
+                {selectedSeatId ? (
+                  <div className="bg-emerald-500/15 border border-emerald-500/40 px-3 py-1.5 rounded-xl text-xs font-bold text-emerald-300 flex items-center gap-1.5 shadow-sm">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <span>Assigned: {selectedSeatId}</span>
+                  </div>
+                ) : (
+                  <span className="text-xs font-medium text-amber-400/90 italic">
+                    * Please click an open seat below
+                  </span>
+                )}
+              </div>
+
+              {/* Rows List */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold text-slate-300">Available Rows for {selectedBand?.label}:</Label>
+                {rowsWithSeats.length === 0 ? (
+                  <div className="p-4 bg-slate-900/60 rounded-xl text-xs text-slate-400 text-center">
+                    No physical seats currently assigned to this price tier. Use Admin &gt; Bands to allocate rows.
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2 max-h-36 overflow-y-auto p-1 bg-slate-950/40 rounded-xl border border-slate-800">
+                    {rowsWithSeats.map((r) => {
+                      const isSelected = selectedRowKey === r.key;
+                      const hasAvailable = r.availableCount > 0;
+                      return (
+                        <button
+                          key={r.key}
+                          type="button"
+                          disabled={!hasAvailable}
+                          onClick={() => setSelectedRowKey(r.key)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                            isSelected
+                              ? 'bg-[#E8913A] text-slate-950 shadow-md ring-1 ring-white'
+                              : hasAvailable
+                              ? 'bg-[#1A2839] text-slate-200 border border-slate-700 hover:bg-[#253950]'
+                              : 'bg-slate-900/60 text-slate-500 border border-slate-800/60 cursor-not-allowed opacity-50'
+                          }`}
+                        >
+                          <span>{r.key}</span>
+                          <span className={`text-[10px] font-mono px-1 rounded ${
+                            isSelected ? 'bg-slate-950 text-amber-300' : 'bg-slate-800 text-slate-300'
+                          }`}>
+                            {r.availableCount} open
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Seats in chosen row */}
+              {selectedRowKey && (
+                <div className="space-y-2 pt-2 border-t border-slate-800">
+                  <div className="flex flex-wrap justify-between items-center gap-2 text-xs">
+                    <span className="font-bold text-white flex items-center gap-1">
+                      <span>Row:</span>
+                      <strong className="text-amber-400">{selectedRowKey}</strong>
+                    </span>
+                    <span className="text-slate-400 font-mono text-[10px]">
+                      🟢 Green = Open • 🔴 Red = Sold • ⛔ Crimson = Blocked
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap gap-1.5 p-3 bg-slate-950/70 rounded-xl border border-slate-800 max-h-48 overflow-y-auto">
+                    {rowsWithSeats
+                      .find((r) => r.key === selectedRowKey)
+                      ?.seats.map((s) => {
+                        const isSelected = selectedSeatId === s.id;
+                        const isSold = Boolean(s.guest_name || s.pass_code);
+                        const isBlocked = Boolean(s.is_blocked);
+                        const isSponsor = Boolean(s.sponsor_id);
+                        const isAvailable = !isSold && !isBlocked && !isSponsor;
+
+                        return (
+                          <button
+                            key={s.id}
+                            type="button"
+                            disabled={!isAvailable}
+                            onClick={() => setSelectedSeatId(s.id)}
+                            title={`Seat ${s.id} • ${
+                              isSold ? 'Sold' : isBlocked ? 'Blocked: ' + (s.blocked_reason || 'VIP') : isSponsor ? 'Sponsor' : 'Available'
+                            }`}
+                            className={`h-8 min-w-[36px] px-2 rounded-lg text-xs font-mono font-bold transition-all flex items-center justify-center ${
+                              isSelected
+                                ? 'bg-blue-600 text-white ring-2 ring-white shadow-lg scale-105'
+                                : isBlocked
+                                ? 'bg-red-950/80 text-red-400 border border-red-800/60 cursor-not-allowed opacity-60'
+                                : isSponsor
+                                ? 'bg-cyan-950/80 text-cyan-400 border border-cyan-800/60 cursor-not-allowed opacity-60'
+                                : isSold
+                                ? 'bg-slate-900 text-slate-600 border border-slate-800 cursor-not-allowed line-through'
+                                : 'bg-emerald-950/60 text-emerald-300 border border-emerald-700/60 hover:bg-emerald-600 hover:text-white cursor-pointer'
+                            }`}
+                          >
+                            {s.seat_no}
+                          </button>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex justify-end pt-4">
             <Button
               size="lg"
               className="h-14 px-8 bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-black text-lg rounded-xl shadow-lg"
-              disabled={!selectedBandId}
+              disabled={!selectedBandId || !selectedSeatId}
               onClick={() => setStep(2)}
             >
               Continue to Ticket Type <ArrowRight className="ml-2 w-5 h-5" />
@@ -715,6 +901,10 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
               <span className="font-bold text-white">{selectedBand?.label}</span>
             </div>
             <div className="flex justify-between text-slate-300">
+              <span>Assigned Seat:</span>
+              <span className="font-bold text-emerald-400 font-mono">{selectedSeatId}</span>
+            </div>
+            <div className="flex justify-between text-slate-300">
               <span>Type:</span>
               <span className="font-bold text-white">
                 {ticketType === 'digital' ? 'Digital QR' : `Physical Serial (${physicalSerial})`}
@@ -767,6 +957,10 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
             <h2 className="text-3xl font-black text-white">Pass Issued Successfully!</h2>
             <p className="text-lg font-mono font-bold text-[#E8913A] mt-1">
               Code: {successResult.passCode}
+            </p>
+            <p className="text-sm font-bold text-emerald-400 mt-1 flex items-center justify-center gap-1.5">
+              <MapPin className="w-4 h-4 text-emerald-400" />
+              <span>Assigned Seat: {(successResult as any).seatDetails || selectedSeatId}</span>
             </p>
             <p className="text-slate-400 text-sm mt-0.5">
               {successResult.bandLabel}

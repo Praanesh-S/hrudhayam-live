@@ -119,6 +119,7 @@ export interface Pass {
   undo_token: string | null;
   undo_expires_at: string | null;
   needs_seller_reconciliation: boolean;
+  seat_id?: string | null;
   created_at: string;
   updated_at: string;
   // Joined
@@ -126,6 +127,7 @@ export interface Pass {
   seller?: Member;
   payment?: Payment;
   club?: ParticipatingClub;
+  seat?: SeatData;
 }
 
 export interface Payment {
@@ -282,4 +284,7 @@ export interface SeatData {
   checked_in: boolean;
   ticket_sent?: boolean;
   owner_id?: string | null;
+  is_blocked?: boolean;
+  blocked_reason?: string | null;
+  sponsor_id?: string | null;
 }

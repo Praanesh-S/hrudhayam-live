@@ -32,12 +32,14 @@ export async function createSponsor(input: CreateSponsorInput) {
     const defaultAmount = tierInfo ? tierInfo.amount : 0;
     const finalAmount = input.amount && input.amount > 0 ? input.amount : defaultAmount;
 
-    // Insert sponsor
+    // Insert sponsor (setting both sponsor_name & name, tier & sponsor_tier to avoid null constraints)
     const { data: sponsor, error } = await adminClient
       .from('sponsors')
       .insert({
         sponsor_name: input.sponsor_name.trim(),
+        name: input.sponsor_name.trim(),
         tier: input.tier,
+        sponsor_tier: input.tier,
         amount: finalAmount,
         status: input.status,
         brought_by_member_id: input.brought_by_member_id || null,
@@ -176,3 +178,144 @@ export async function deleteSponsor(id: string) {
     return { error: err.message };
   }
 }
+
+/**
+ * Manually allocate specific venue seats to a sponsor as complimentary passes.
+ * Updates public.seats so they show on the seating map with distinct Cyan color.
+ */
+export async function allocateSponsorSeats(
+  sponsorId: string,
+  seatIds: string[],
+  guestNames?: Record<string, string>
+) {
+  try {
+    const user = await requireUser();
+    const adminClient = createAdminClient();
+
+    if (!seatIds || seatIds.length === 0) {
+      return { error: 'No seats selected for allocation.' };
+    }
+
+    // Fetch sponsor details
+    const { data: sponsor, error: sponsorErr } = await adminClient
+      .from('sponsors')
+      .select('id, sponsor_name, name, complimentary_pass_count')
+      .eq('id', sponsorId)
+      .single();
+
+    if (sponsorErr || !sponsor) return { error: 'Sponsor not found.' };
+
+    const sponsorDisplayName = sponsor.sponsor_name || sponsor.name || 'Sponsor';
+
+    // Check currently allocated count
+    const { count: currentlyAllocated } = await adminClient
+      .from('seats')
+      .select('id', { count: 'exact', head: true })
+      .eq('sponsor_id', sponsorId);
+
+    const availableToAllocate = (sponsor.complimentary_pass_count || 0) - (currentlyAllocated || 0);
+    if (seatIds.length > availableToAllocate) {
+      return {
+        error: `Cannot allocate ${seatIds.length} seats. Sponsor has only ${availableToAllocate} complimentary pass quota remaining.`,
+      };
+    }
+
+    // Verify selected seats are not sold, blocked, or owned by another sponsor
+    const { data: targetSeats, error: seatsErr } = await adminClient
+      .from('seats')
+      .select('id, guest_name, pass_code, is_blocked, sponsor_id, row_label')
+      .in('id', seatIds);
+
+    if (seatsErr) return { error: seatsErr.message };
+
+    for (const s of targetSeats || []) {
+      if (s.row_label === 'SPL VIP') {
+        return { error: `Seat ${s.id} is in the reserved SPL VIP Box and cannot be allocated.` };
+      }
+      if (s.is_blocked) {
+        return { error: `Seat ${s.id} is marked as Blocked/Reserved. Please unblock it first if you wish to allocate it.` };
+      }
+      if (s.sponsor_id && s.sponsor_id !== sponsorId) {
+        return { error: `Seat ${s.id} is already allocated to another sponsor.` };
+      }
+      if (s.guest_name && !s.sponsor_id) {
+        return { error: `Seat ${s.id} already has a passholder/guest assigned.` };
+      }
+    }
+
+    // Allocate seats
+    for (const seatId of seatIds) {
+      const customGuest = guestNames?.[seatId] || `${sponsorDisplayName} Complimentary`;
+      await adminClient
+        .from('seats')
+        .update({
+          sponsor_id: sponsorId,
+          guest_name: customGuest,
+          payment_status: 'received',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', seatId);
+    }
+
+    await logAudit(user.id, 'SPONSOR_SEATS_ALLOCATED', 'sponsors', sponsorId, {
+      allocated_seat_ids: seatIds,
+      count: seatIds.length,
+    });
+
+    revalidatePath('/admin/sponsors');
+    revalidatePath('/admin/bands');
+    revalidatePath('/dashboard');
+    revalidatePath('/sell');
+
+    return { success: true, count: seatIds.length };
+  } catch (err: any) {
+    return { error: err.message };
+  }
+}
+
+/**
+ * De-allocate a complimentary seat from a sponsor, releasing it back to available.
+ */
+export async function deallocateSponsorSeat(seatId: string) {
+  try {
+    const user = await requireUser();
+    const adminClient = createAdminClient();
+
+    const { data: seat } = await adminClient
+      .from('seats')
+      .select('id, sponsor_id')
+      .eq('id', seatId)
+      .single();
+
+    if (!seat || !seat.sponsor_id) {
+      return { error: 'Seat is not currently allocated to a sponsor.' };
+    }
+
+    await adminClient
+      .from('seats')
+      .update({
+        sponsor_id: null,
+        guest_name: null,
+        guest_phone: null,
+        guest_email: null,
+        pass_code: null,
+        payment_status: 'pending',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', seatId);
+
+    await logAudit(user.id, 'SPONSOR_SEAT_DEALLOCATED', 'seats', seatId, {
+      sponsor_id: seat.sponsor_id,
+    });
+
+    revalidatePath('/admin/sponsors');
+    revalidatePath('/admin/bands');
+    revalidatePath('/dashboard');
+    revalidatePath('/sell');
+
+    return { success: true };
+  } catch (err: any) {
+    return { error: err.message };
+  }
+}
+

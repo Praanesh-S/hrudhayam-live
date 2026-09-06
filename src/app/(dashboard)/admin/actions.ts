@@ -70,8 +70,43 @@ export async function updateBandAllocation(bandId: string, newTotal: number, new
 }
 
 /**
+ * Helper to dynamically sync band inventory quotas directly from individual row seat counts.
+ * Ensures Band Quotas = sum of physical seats in assigned rows (always sums to 1,398).
+ */
+export async function syncBandAllocationsFromSeats(adminClient: any) {
+  const { data: seatsData } = await adminClient
+    .from('seats')
+    .select('tier')
+    .neq('row_label', 'SPL VIP');
+
+  const counts: Record<number, number> = {
+    5000: 0,
+    3500: 0,
+    2500: 0,
+    1500: 0,
+  };
+
+  if (seatsData) {
+    for (const s of seatsData) {
+      const tier = s.tier === 3000 ? 3500 : s.tier;
+      if (tier && counts[tier] !== undefined) {
+        counts[tier]++;
+      }
+    }
+  }
+
+  await Promise.all([
+    adminClient.from('bands').update({ total_allocated: counts[5000], total_capacity: counts[5000], updated_at: new Date().toISOString() }).eq('id', 'band_5000'),
+    adminClient.from('bands').update({ total_allocated: counts[3500], total_capacity: counts[3500], updated_at: new Date().toISOString() }).eq('id', 'band_3500'),
+    adminClient.from('bands').update({ total_allocated: counts[2500], total_capacity: counts[2500], updated_at: new Date().toISOString() }).eq('id', 'band_2500'),
+    adminClient.from('bands').update({ total_allocated: counts[1500], total_capacity: counts[1500], updated_at: new Date().toISOString() }).eq('id', 'band_1500'),
+  ]);
+}
+
+/**
  * Bulk-set pricing tier on a range of rows (e.g. Ground Floor Rows A–F to ₹5,000).
- * Updates both the rows table and all individual seat records in public.seats.
+ * Updates both the rows table and all individual seat records in public.seats,
+ * and automatically recalibrates band inventory quotas to match row seat counts.
  */
 export async function bulkSetRowTier(section: 'Ground Floor' | 'Balcony', fromRow: string, toRow: string, tier: number) {
   try {
@@ -102,6 +137,9 @@ export async function bulkSetRowTier(section: 'Ground Floor' | 'Balcony', fromRo
       .update({ tier, updated_at: new Date().toISOString() })
       .in('row_id', targetRowIds);
 
+    // Synchronize band quotas to match exact seat counts
+    await syncBandAllocationsFromSeats(adminClient);
+
     await logAudit(user.id, 'BULK_SET_ROW_TIER', 'rows', `${section} ${fromRow}-${toRow}`, {
       tier,
       rows_count: targetRowIds.length,
@@ -118,6 +156,179 @@ export async function bulkSetRowTier(section: 'Ground Floor' | 'Balcony', fromRo
 }
 
 /**
+ * Assign an individual row to a specific band tier and auto-sync band capacities.
+ */
+export async function assignRowToBand(rowId: string, targetTier: number) {
+  try {
+    const user = await requireSuperOrSystemAdmin();
+    const adminClient = createAdminClient();
+
+    await adminClient.from('rows').update({ tier: targetTier, updated_at: new Date().toISOString() }).eq('id', rowId);
+    await adminClient.from('seats').update({ tier: targetTier, updated_at: new Date().toISOString() }).eq('row_id', rowId);
+
+    await syncBandAllocationsFromSeats(adminClient);
+
+    revalidatePath('/admin/bands');
+    revalidatePath('/sell');
+    revalidatePath('/dashboard');
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to assign row to band.' };
+  }
+}
+
+/**
+ * Block exact individual seats (e.g. ['GF-A-01', 'GF-B-05']).
+ * Blocked seats cannot be sold in /sell.
+ */
+export async function blockExactSeats(seatIds: string[], reason: string = 'VIP / Reserved') {
+  try {
+    const user = await requireSuperOrSystemAdmin();
+    const adminClient = createAdminClient();
+
+    if (!seatIds || seatIds.length === 0) {
+      return { success: false, error: 'No seats selected to block.' };
+    }
+
+    // Verify none of the selected seats are already sold/issued
+    const { data: soldSeats } = await adminClient
+      .from('seats')
+      .select('id, guest_name, pass_code')
+      .in('id', seatIds)
+      .or('guest_name.not.is.null,pass_code.not.is.null');
+
+    if (soldSeats && soldSeats.length > 0) {
+      return {
+        success: false,
+        error: `Cannot block: ${soldSeats.length} of the selected seats already have passes issued or guests assigned.`,
+      };
+    }
+
+    const { error: updateErr } = await adminClient
+      .from('seats')
+      .update({
+        is_blocked: true,
+        blocked_reason: reason.trim() || 'VIP / Reserved',
+        updated_at: new Date().toISOString(),
+      })
+      .in('id', seatIds);
+
+    if (updateErr) throw updateErr;
+
+    await logAudit(user.id, 'SEATS_BLOCKED', 'seats', seatIds.join(','), {
+      seat_count: seatIds.length,
+      seat_ids: seatIds,
+      reason,
+    });
+
+    revalidatePath('/admin/bands');
+    revalidatePath('/sell');
+    revalidatePath('/dashboard');
+
+    return { success: true, count: seatIds.length };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to block seats.' };
+  }
+}
+
+/**
+ * Unblock exact individual seats to release them back for sale.
+ */
+export async function unblockExactSeats(seatIds: string[]) {
+  try {
+    const user = await requireSuperOrSystemAdmin();
+    const adminClient = createAdminClient();
+
+    if (!seatIds || seatIds.length === 0) {
+      return { success: false, error: 'No seats selected to unblock.' };
+    }
+
+    const { error: updateErr } = await adminClient
+      .from('seats')
+      .update({
+        is_blocked: false,
+        blocked_reason: null,
+        updated_at: new Date().toISOString(),
+      })
+      .in('id', seatIds);
+
+    if (updateErr) throw updateErr;
+
+    await logAudit(user.id, 'SEATS_UNBLOCKED', 'seats', seatIds.join(','), {
+      seat_count: seatIds.length,
+      seat_ids: seatIds,
+    });
+
+    revalidatePath('/admin/bands');
+    revalidatePath('/sell');
+    revalidatePath('/dashboard');
+
+    return { success: true, count: seatIds.length };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to unblock seats.' };
+  }
+}
+
+/**
+ * Block an entire row by section and row label (e.g. Balcony Row F).
+ */
+export async function blockRow(section: 'Ground Floor' | 'Balcony', rowLabel: string, reason: string = 'VIP / Reserved') {
+  try {
+    const user = await requireSuperOrSystemAdmin();
+    const adminClient = createAdminClient();
+
+    const { data: rowSeats } = await adminClient
+      .from('seats')
+      .select('id, guest_name, pass_code')
+      .eq('section', section)
+      .eq('row_label', rowLabel);
+
+    if (!rowSeats || rowSeats.length === 0) {
+      return { success: false, error: `Row ${rowLabel} in ${section} not found.` };
+    }
+
+    const soldCount = rowSeats.filter(s => s.guest_name || s.pass_code).length;
+    if (soldCount > 0) {
+      return {
+        success: false,
+        error: `Cannot block entire row: ${soldCount} seats in ${section} Row ${rowLabel} are already sold.`,
+      };
+    }
+
+    const seatIds = rowSeats.map(s => s.id);
+    return await blockExactSeats(seatIds, reason);
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to block row.' };
+  }
+}
+
+/**
+ * Unblock an entire row by section and row label.
+ */
+export async function unblockRow(section: 'Ground Floor' | 'Balcony', rowLabel: string) {
+  try {
+    const user = await requireSuperOrSystemAdmin();
+    const adminClient = createAdminClient();
+
+    const { data: rowSeats } = await adminClient
+      .from('seats')
+      .select('id')
+      .eq('section', section)
+      .eq('row_label', rowLabel);
+
+    if (!rowSeats || rowSeats.length === 0) {
+      return { success: false, error: `Row ${rowLabel} in ${section} not found.` };
+    }
+
+    const seatIds = rowSeats.map(s => s.id);
+    return await unblockExactSeats(seatIds);
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to unblock row.' };
+  }
+}
+
+/**
  * Recalibrate Band Capacities to match the exact venue architectural layout:
  * 1,398 Total Regular Seats: 467 (₹5,000) + 474 (₹3,500) + 0 (₹2,500) + 457 (₹1,500)
  * plus 50 SPL VIP Box seats.
@@ -127,16 +338,11 @@ export async function recalibrateBandsToVenueCapacity() {
     const user = await requireSuperOrSystemAdmin();
     const adminClient = createAdminClient();
 
-    await Promise.all([
-      adminClient.from('bands').update({ total_allocated: 467, total_capacity: 467, price: 5000, updated_at: new Date().toISOString() }).eq('id', 'band_5000'),
-      adminClient.from('bands').update({ total_allocated: 474, total_capacity: 474, price: 3500, updated_at: new Date().toISOString() }).eq('id', 'band_3500'),
-      adminClient.from('bands').update({ total_allocated: 0, total_capacity: 0, price: 2500, updated_at: new Date().toISOString() }).eq('id', 'band_2500'),
-      adminClient.from('bands').update({ total_allocated: 457, total_capacity: 457, price: 1500, updated_at: new Date().toISOString() }).eq('id', 'band_1500'),
-    ]);
+    await syncBandAllocationsFromSeats(adminClient);
 
     await logAudit(user.id, 'RECALIBRATE_VENUE_CAPACITY', 'bands', 'all', {
       total_allocated: 1398,
-      note: 'Recalibrated band capacities to exact architectural blueprint (1,398 regular seats + 50 VIP box)',
+      note: 'Recalibrated band capacities from exact row seat sum (1,398 regular seats + 50 VIP box)',
     });
 
     revalidatePath('/admin/bands');

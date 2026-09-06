@@ -4,6 +4,7 @@ import { getSessionUser } from '@/lib/auth/session';
 import { redirect } from 'next/navigation';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { fetchBandsWithMetrics } from '@/lib/band-utils';
+import { fetchAllSeats } from '@/lib/seat-utils';
 import { SellClient } from './sell-client';
 
 export const metadata = {
@@ -19,11 +20,8 @@ export default async function SellPage() {
 
   const adminClient = createAdminClient();
 
-  // 1. Fetch bands with live remaining counts
-  const bands = await fetchBandsWithMetrics(adminClient);
-
-  // 2. Fetch eligible sellers
-  // Rule R2: Group Admin only sees members of their own team!
+  // 1. Fetch eligible sellers
+  // Rule R2: Non-super admins (sub-admins, group admins, group members) only see members of their own team!
   let membersQuery = adminClient
     .from('members')
     .select(`
@@ -43,22 +41,29 @@ export default async function SellPage() {
     .eq('is_active', true)
     .order('full_name');
 
-  if (user.role === 'group_admin' && user.groupId) {
+  if (user.role !== 'super_admin' && user.role !== 'system_admin' && user.groupId) {
+    membersQuery = membersQuery.eq('group_id', user.groupId);
+  } else if (user.role === 'group_admin' && user.groupId) {
     membersQuery = membersQuery.eq('group_id', user.groupId);
   } else {
     membersQuery = membersQuery.order('group_id');
   }
 
-  const { data: membersData } = await membersQuery;
-  const eligibleSellers = membersData || [];
+  // 2. Fetch in parallel: bands with live remaining counts, sellers, holds, and all venue seats
+  const [bands, membersRes, activeHoldsRes, seats] = await Promise.all([
+    fetchBandsWithMetrics(adminClient),
+    membersQuery,
+    adminClient
+      .from('soft_holds')
+      .select('*, bands(label)')
+      .eq('status', 'active')
+      .gt('expires_at', new Date().toISOString())
+      .order('expires_at', { ascending: true }),
+    fetchAllSeats(adminClient),
+  ]);
 
-  // 3. Fetch active soft holds
-  const { data: activeHolds } = await adminClient
-    .from('soft_holds')
-    .select('*, bands(label)')
-    .eq('status', 'active')
-    .gt('expires_at', new Date().toISOString())
-    .order('expires_at', { ascending: true });
+  const eligibleSellers = membersRes.data || [];
+  const activeHolds = activeHoldsRes.data || [];
 
   return (
     <div className="flex flex-col gap-6 max-w-4xl mx-auto pb-16">
@@ -67,7 +72,7 @@ export default async function SellPage() {
           Sell a Pass
         </h1>
         <p className="text-slate-400 text-sm sm:text-base mt-1">
-          {user.role === 'group_admin' 
+          {user.role !== 'super_admin' && user.role !== 'system_admin' && user.groupId
             ? `Issuing passes for ${user.groupName || 'Team'} • ${user.fullName}`
             : `Administrative Sales Console • ${user.fullName} (${user.role.replace('_', ' ').toUpperCase()})`}
         </p>
@@ -76,6 +81,7 @@ export default async function SellPage() {
       <SellClient
         bands={bands}
         sellers={eligibleSellers}
+        seats={seats || []}
         currentUser={user}
         initialHolds={activeHolds || []}
       />

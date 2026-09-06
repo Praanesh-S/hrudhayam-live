@@ -10,6 +10,7 @@ export interface WhatsAppPassMessageParams {
   passCode: string;
   ticketType: 'digital' | 'physical';
   physicalSerial?: string | null;
+  seatDetails?: string | null;
   passIndex?: number;
   totalPasses?: number;
   paymentStatus?: string;
@@ -65,6 +66,7 @@ export function formatDonorPassMessage(params: WhatsAppPassMessageParams): strin
     passCode,
     ticketType,
     physicalSerial,
+    seatDetails,
     passIndex = 1,
     totalPasses = 1,
     paymentStatus = 'received',
@@ -90,7 +92,7 @@ export function formatDonorPassMessage(params: WhatsAppPassMessageParams): strin
 ⏰ *நேரம்:* மாலை 5:30 மணி முதல்
 
 🎫 *பிரிவு:* *${bandLabel}*
-🔢 *டிக்கெட் எண்:* *${physicalSerial || 'நேரடிச் சீட்டு'}*
+${seatDetails ? `💺 *இருக்கை:* *${seatDetails}*\n` : ''}🔢 *டிக்கெட் எண்:* *${physicalSerial || 'நேரடிச் சீட்டு'}*
 💳 *கட்டணம்:* ${isPaid ? '✓ பெறப்பட்டது' : 'நிலுவையில்'}
 
 _தயவுசெய்து உங்கள் அச்சிடப்பட்ட நுழைவுச் சீட்டை அரங்க நுழைவாயிலில் காண்பிக்கவும்._`;
@@ -107,7 +109,7 @@ _தயவுசெய்து உங்கள் அச்சிடப்ப�
 ⏰ *நேரம்:* மாலை 5:30 மணி முதல்
 
 🎫 *பிரிவு:* *${bandLabel}*
-🔢 *பாஸ் குறியீடு:* *${passCode}*
+${seatDetails ? `💺 *இருக்கை:* *${seatDetails}*\n` : ''}🔢 *பாஸ் குறியீடு:* *${passCode}*
 💳 *கட்டணம்:* ${isPaid ? '✓ பெறப்பட்டது' : 'நிலுவையில்'}
 
 📱 *உங்கள் டிஜிட்டல் பாஸ் மற்றும் QR பார்-கோடு:*
@@ -129,32 +131,30 @@ Thank you for your generous contribution towards Public-Access AEDs in Chennai! 
 ⏰ *Gates Open:* 5:30 PM • *Concert:* 6:30 PM
 
 🎫 *Category:* *${bandLabel}*
-🔢 *Ticket Serial Number:* *${physicalSerial || 'Physical Pass'}*
+${seatDetails ? `💺 *Allocated Seat:* *${seatDetails}*\n` : ''}🔢 *Ticket Serial Number:* *${physicalSerial || 'Physical Pass'}*
 💳 *Payment:* ${isPaid ? '✓ Confirmed / Received' : 'Pending'}
 
-_Please carry and present your physical ticket at the entrance for admission._
-_Seating is on a first-come, first-served basis within the ${bandLabel} area._`;
+_Please carry and present your physical ticket at the entrance for admission._`;
   }
 
   return `🎟️ *HRUDHAYAM LIVE 2026 — Official Donor Pass*${passIndexText}
 ---------------------------------------
 Dear *${donorName}*,
 
-Thank you for your generous contribution towards Public-Access AEDs in Chennai! Your digital pass for *HRUDHAYAM LIVE 2026* is ready.
+Thank you for your generous contribution towards Public-Access AEDs in Chennai! Your donor pass for *HRUDHAYAM LIVE 2026* is confirmed.
 
 📍 *Venue:* The Music Academy, TTK Road, Alwarpet, Chennai
 🗓️ *Date:* Friday, 9 October 2026
 ⏰ *Gates Open:* 5:30 PM • *Concert:* 6:30 PM
 
 🎫 *Category:* *${bandLabel}*
-🔢 *Pass Code:* *${passCode}*
+${seatDetails ? `💺 *Allocated Seat:* *${seatDetails}*\n` : ''}🔢 *Pass Code:* *${passCode}*
 💳 *Payment:* ${isPaid ? '✓ Confirmed / Received' : 'Pending'}
 
-📱 *View Your Official Mobile Pass & Gate QR:*
+📱 *Access your Official Digital E-Pass & Gate QR Code:*
 👉 ${passUrl}
 
-_Please present the QR barcode at the link above at the venue gate for admission._
-_Seating is on a first-come, first-served basis within the ${bandLabel} area._`;
+_Please present the QR code on your mobile device at the gate for rapid admission._`;
 }
 
 /**

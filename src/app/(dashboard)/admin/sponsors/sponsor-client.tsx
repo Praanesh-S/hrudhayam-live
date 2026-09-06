@@ -13,7 +13,10 @@ import {
   Phone,
   Mail,
   Search,
-  Users
+  Users,
+  Ticket,
+  MapPin,
+  X
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -38,21 +41,36 @@ import {
 import { toast } from 'sonner';
 import { SPONSOR_TIERS, SPONSOR_TIER_MAP, type SponsorTierValue } from '@/lib/sponsor-constants';
 import { formatINR } from '@/lib/constants';
-import type { Sponsor, SponsorTier, SponsorStatus, PaymentMode } from '@/lib/types';
+import type { Sponsor, SponsorTier, SponsorStatus, PaymentMode, SeatData, SeatSection } from '@/lib/types';
 import { AuthUser } from '@/lib/auth/session';
-import { createSponsor, updateSponsor, deleteSponsor } from './actions';
+import { 
+  createSponsor, 
+  updateSponsor, 
+  deleteSponsor,
+  allocateSponsorSeats,
+  deallocateSponsorSeat
+} from './actions';
 
 interface SponsorClientProps {
   sponsors: any[];
   members: any[];
+  seats?: SeatData[];
   currentUser: AuthUser;
 }
 
-export function SponsorClient({ sponsors: initialSponsors, members, currentUser }: SponsorClientProps) {
+export function SponsorClient({ sponsors: initialSponsors, members, seats: initialSeats = [], currentUser }: SponsorClientProps) {
   const [sponsors, setSponsors] = useState(initialSponsors);
+  const [seatsList, setSeatsList] = useState<SeatData[]>(initialSeats);
   const [search, setSearch] = useState('');
   const [tierFilter, setTierFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+
+  // Seat Allocation Modal state
+  const [allocatingSponsor, setAllocatingSponsor] = useState<any | null>(null);
+  const [allocatingSection, setAllocatingSection] = useState<SeatSection>('Ground Floor');
+  const [allocatingRow, setAllocatingRow] = useState<string>('A');
+  const [selectedSeatIdsForSponsor, setSelectedSeatIdsForSponsor] = useState<Set<string>>(new Set());
+  const [isAllocatingAction, setIsAllocatingAction] = useState<boolean>(false);
   
   // Dialog state
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -182,6 +200,67 @@ export function SponsorClient({ sponsors: initialSponsors, members, currentUser 
     }
   };
 
+  // Allocate seats to sponsor
+  const handleAllocateSeats = async () => {
+    if (!allocatingSponsor || selectedSeatIdsForSponsor.size === 0) return;
+    setIsAllocatingAction(true);
+    try {
+      const res = await allocateSponsorSeats(
+        allocatingSponsor.id,
+        Array.from(selectedSeatIdsForSponsor)
+      );
+      if (res.error) throw new Error(res.error);
+      toast.success(`${selectedSeatIdsForSponsor.size} seat(s) allocated as complimentary passes!`);
+      // Update local seats
+      setSeatsList(prev =>
+        prev.map(s =>
+          selectedSeatIdsForSponsor.has(s.id)
+            ? {
+                ...s,
+                sponsor_id: allocatingSponsor.id,
+                guest_name: `${allocatingSponsor.sponsor_name || 'Sponsor'} Complimentary`,
+                payment_status: 'received',
+              }
+            : s
+        )
+      );
+      setSelectedSeatIdsForSponsor(new Set());
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to allocate seats');
+    } finally {
+      setIsAllocatingAction(false);
+    }
+  };
+
+  // Release a seat from sponsor
+  const handleReleaseSeat = async (seatId: string) => {
+    setIsAllocatingAction(true);
+    try {
+      const res = await deallocateSponsorSeat(seatId);
+      if (res.error) throw new Error(res.error);
+      toast.success(`Seat ${seatId} released back to available!`);
+      setSeatsList(prev =>
+        prev.map(s =>
+          s.id === seatId
+            ? {
+                ...s,
+                sponsor_id: null,
+                guest_name: null,
+                guest_phone: null,
+                guest_email: null,
+                pass_code: null,
+                payment_status: 'pending',
+              }
+            : s
+        )
+      );
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to release seat');
+    } finally {
+      setIsAllocatingAction(false);
+    }
+  };
+
   // Filter sponsors
   const filteredSponsors = sponsors.filter(s => {
     const q = search.toLowerCase();
@@ -291,16 +370,32 @@ export function SponsorClient({ sponsors: initialSponsors, members, currentUser 
               <tbody className="divide-y divide-[#1D3249]/60 text-slate-200">
                 {filteredSponsors.map((s) => {
                   const isReceived = s.status === 'received';
+                  const assignedSeats = seatsList.filter((st) => st.sponsor_id === s.id);
+                  const compCount = s.complimentary_pass_count || 0;
 
                   return (
                     <tr key={s.id} className="hover:bg-[#0E2032] transition-colors">
                       <td className="p-3 pl-4">
                         <div className="flex flex-col">
                           <span className="font-bold text-white text-sm">{s.sponsor_name}</span>
-                          {s.complimentary_pass_count > 0 && (
-                            <span className="text-[11px] text-amber-400 mt-0.5">
-                              {s.complimentary_pass_count} Complimentary Passes
-                            </span>
+                          {compCount > 0 ? (
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <span className="text-[11px] text-cyan-400 font-bold flex items-center gap-1">
+                                <Ticket className="w-3 h-3" />
+                                {assignedSeats.length} / {compCount} Comp Seats Allocated
+                              </span>
+                              {assignedSeats.length === compCount ? (
+                                <span className="text-[9px] px-1.5 py-0.2 bg-emerald-950 text-emerald-300 border border-emerald-800 rounded-full font-bold">
+                                  ✓ Complete
+                                </span>
+                              ) : (
+                                <span className="text-[9px] px-1.5 py-0.2 bg-amber-950 text-amber-300 border border-amber-800 rounded-full font-mono">
+                                  {compCount - assignedSeats.length} unassigned
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-slate-500 italic mt-0.5">0 Comp Passes</span>
                           )}
                           {s.notes && (
                             <span className="text-[10px] text-slate-400 italic mt-0.5">{s.notes}</span>
@@ -365,6 +460,24 @@ export function SponsorClient({ sponsors: initialSponsors, members, currentUser 
 
                       <td className="p-3 pr-4 text-right whitespace-nowrap">
                         <div className="inline-flex items-center justify-end gap-1">
+                          {compCount > 0 && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setAllocatingSponsor(s);
+                                setSelectedSeatIdsForSponsor(new Set());
+                                setAllocatingSection('Ground Floor');
+                                setAllocatingRow('A');
+                              }}
+                              className="h-8 px-2.5 bg-cyan-950/50 border-cyan-800 hover:bg-cyan-900/70 text-cyan-300 text-xs font-bold flex items-center gap-1 shadow-xs"
+                              title="Allocate complimentary seats on blueprint map"
+                            >
+                              <Ticket className="w-3.5 h-3.5 text-cyan-400" />
+                              <span>Allocate ({assignedSeats.length}/{compCount})</span>
+                            </Button>
+                          )}
+
                           <Link
                             href={`/admin/sponsors/${s.id}/print`}
                             target="_blank"
@@ -595,6 +708,204 @@ export function SponsorClient({ sponsors: initialSponsors, members, currentUser 
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Complimentary Seat Allocator Dialog */}
+      {allocatingSponsor && (
+        <Dialog open={Boolean(allocatingSponsor)} onOpenChange={(open) => !open && setAllocatingSponsor(null)}>
+          <DialogContent className="bg-[#0B1724] border-[#1D3249] text-white sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="text-lg font-bold flex items-center gap-2 text-cyan-300">
+                <Building2 className="w-5 h-5 text-cyan-400" />
+                <span>Complimentary Seat Allocator</span>
+              </DialogTitle>
+              <DialogDescription className="text-xs text-slate-400">
+                Allocate designated venue seats for <strong className="text-white">{allocatingSponsor.sponsor_name}</strong>. Allocated seats will appear in distinct Vibrant Cyan on the blueprint map and will be marked as issued complimentary passes.
+              </DialogDescription>
+            </DialogHeader>
+
+            {(() => {
+              const currentSponsorSeats = seatsList.filter((st) => st.sponsor_id === allocatingSponsor.id);
+              const maxAllowed = allocatingSponsor.complimentary_pass_count || 0;
+              const remainingSlots = maxAllowed - currentSponsorSeats.length;
+
+              const availableSeatsInRow = seatsList.filter(
+                (st) =>
+                  st.section === allocatingSection &&
+                  st.row_label === allocatingRow &&
+                  st.row_label !== 'SPL VIP' &&
+                  !st.is_blocked &&
+                  !st.sponsor_id &&
+                  !st.guest_name &&
+                  !st.pass_code
+              );
+
+              return (
+                <div className="space-y-5 py-2">
+                  {/* Quota Summary Box */}
+                  <div className="p-3.5 bg-[#07111C] rounded-xl border border-[#1D3249] flex items-center justify-between">
+                    <div>
+                      <span className="text-xs text-slate-400 block">Sponsor Pass Quota</span>
+                      <span className="text-sm font-bold text-white">
+                        {currentSponsorSeats.length} of {maxAllowed} Allocated
+                      </span>
+                    </div>
+                    <Badge className={remainingSlots > 0 ? 'bg-cyan-950 text-cyan-300 border-cyan-800' : 'bg-emerald-950 text-emerald-300 border-emerald-800'}>
+                      {remainingSlots > 0 ? `${remainingSlots} Slots Remaining` : 'Quota Fulfilled'}
+                    </Badge>
+                  </div>
+
+                  {/* Section 1: Currently Allocated Seats */}
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold text-slate-300">Currently Allocated Seats (Cyan on Map):</Label>
+                    {currentSponsorSeats.length === 0 ? (
+                      <p className="text-xs text-slate-500 italic p-3 bg-[#07111C] rounded-lg border border-slate-800">
+                        No complimentary seats allocated yet. Use the picker below to allocate seats.
+                      </p>
+                    ) : (
+                      <div className="flex flex-wrap gap-2 p-3 bg-[#07111C] rounded-lg border border-slate-800">
+                        {currentSponsorSeats.map((st) => (
+                          <div
+                            key={st.id}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cyan-950 border border-cyan-700 text-cyan-200 text-xs font-mono font-bold"
+                          >
+                            <span>{st.id} ({st.section} • Row {st.row_label})</span>
+                            <button
+                              type="button"
+                              onClick={() => handleReleaseSeat(st.id)}
+                              disabled={isAllocatingAction}
+                              className="hover:text-rose-400 text-slate-400 transition-colors p-0.5 rounded cursor-pointer"
+                              title="Release seat back to available inventory"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Section 2: Allocate New Seats */}
+                  {remainingSlots > 0 ? (
+                    <div className="space-y-3 pt-2 border-t border-[#1D3249]">
+                      <div className="flex justify-between items-center">
+                        <Label className="text-xs font-bold text-slate-300">
+                          Select Seats to Allocate ({selectedSeatIdsForSponsor.size} / {remainingSlots} selected):
+                        </Label>
+                      </div>
+
+                      {/* Section & Row Pickers */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <span className="text-[11px] text-slate-400">Venue Section</span>
+                          <select
+                            value={allocatingSection}
+                            onChange={(e) => {
+                              setAllocatingSection(e.target.value as SeatSection);
+                              setSelectedSeatIdsForSponsor(new Set());
+                            }}
+                            className="w-full h-9 bg-[#07111C] border border-[#1D3249] text-white text-xs rounded-lg px-2"
+                          >
+                            <option value="Ground Floor">Ground Floor</option>
+                            <option value="Balcony">Balcony</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-1">
+                          <span className="text-[11px] text-slate-400">Row</span>
+                          <select
+                            value={allocatingRow}
+                            onChange={(e) => {
+                              setAllocatingRow(e.target.value);
+                              setSelectedSeatIdsForSponsor(new Set());
+                            }}
+                            className="w-full h-9 bg-[#07111C] border border-[#1D3249] text-white text-xs rounded-lg px-2 font-mono"
+                          >
+                            {['A','B','C','D','E','F','G','H','I','J','K','L','M','N'].map((r) => (
+                              <option key={r} value={r}>Row {r}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Available Seats in Row Chips */}
+                      <div className="space-y-1.5">
+                        <div className="text-[11px] text-slate-400 flex items-center justify-between">
+                          <span>Available Seats in {allocatingSection} Row {allocatingRow}:</span>
+                          <span className="font-mono">{availableSeatsInRow.length} available</span>
+                        </div>
+
+                        {availableSeatsInRow.length === 0 ? (
+                          <div className="p-4 text-center text-xs text-slate-500 bg-[#07111C] rounded-lg border border-slate-800">
+                            No available seats in {allocatingSection} Row {allocatingRow}. (All seats in this row are already sold, blocked, or allocated).
+                          </div>
+                        ) : (
+                          <div className="flex flex-wrap gap-1.5 p-3 bg-[#07111C] rounded-lg border border-slate-800 max-h-48 overflow-y-auto">
+                            {availableSeatsInRow.map((st) => {
+                              const isSelected = selectedSeatIdsForSponsor.has(st.id);
+                              return (
+                                <button
+                                  key={st.id}
+                                  type="button"
+                                  onClick={() => {
+                                    const next = new Set(selectedSeatIdsForSponsor);
+                                    if (next.has(st.id)) {
+                                      next.delete(st.id);
+                                    } else {
+                                      if (next.size >= remainingSlots) {
+                                        toast.error(`You can only allocate up to ${remainingSlots} remaining seats.`);
+                                        return;
+                                      }
+                                      next.add(st.id);
+                                    }
+                                    setSelectedSeatIdsForSponsor(next);
+                                  }}
+                                  className={`px-2 py-1 rounded text-xs font-mono font-bold transition-all ${
+                                    isSelected
+                                      ? 'bg-cyan-500 text-slate-950 ring-2 ring-white scale-105'
+                                      : 'bg-[#15283C] text-slate-300 hover:bg-[#1C3652] hover:text-white border border-[#234263]'
+                                  }`}
+                                >
+                                  #{st.seat_no}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-4 text-center text-xs text-emerald-400 bg-emerald-950/40 rounded-xl border border-emerald-800">
+                      ✓ All {maxAllowed} complimentary tickets for this sponsor have been fully allocated. If you need to re-allocate, release one of the seats above first.
+                    </div>
+                  )}
+
+                  <DialogFooter className="pt-2 gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => setAllocatingSponsor(null)}
+                      className="text-slate-400 hover:text-white text-xs"
+                    >
+                      Close
+                    </Button>
+
+                    {remainingSlots > 0 && (
+                      <Button
+                        type="button"
+                        disabled={isAllocatingAction || selectedSeatIdsForSponsor.size === 0}
+                        onClick={handleAllocateSeats}
+                        className="bg-cyan-500 hover:bg-cyan-600 text-slate-950 font-bold text-xs"
+                      >
+                        {isAllocatingAction ? 'Allocating...' : `Allocate ${selectedSeatIdsForSponsor.size} Seats (Cyan)`}
+                      </Button>
+                    )}
+                  </DialogFooter>
+                </div>
+              );
+            })()}
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

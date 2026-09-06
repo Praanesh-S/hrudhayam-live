@@ -8,6 +8,11 @@ import {
   createProtectedBlock, 
   releaseProtectedBlock,
   bulkSetRowTier,
+  assignRowToBand,
+  blockExactSeats,
+  unblockExactSeats,
+  blockRow,
+  unblockRow,
   recalibrateBandsToVenueCapacity
 } from '../actions';
 import { Button } from '@/components/ui/button';
@@ -72,6 +77,7 @@ export function BandsClient({
   const [assignFromRow, setAssignFromRow] = useState<string>('A');
   const [assignToRow, setAssignToRow] = useState<string>('F');
   const [assignTier, setAssignTier] = useState<number>(5000);
+  const [matrixSection, setMatrixSection] = useState<SeatSection>('Ground Floor');
 
   const [isLoading, setIsLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -152,6 +158,40 @@ export function BandsClient({
       setShowRowAssigner(false);
     } else {
       setStatusMessage({ type: 'error', text: res.error || 'Failed to update row tiers.' });
+    }
+  };
+
+  const handleAssignRowToBand = async (rowId: string, tier: number) => {
+    setIsLoading(true);
+    setStatusMessage(null);
+    const res = await assignRowToBand(rowId, tier);
+    setIsLoading(false);
+    if (res.success) {
+      setStatusMessage({ 
+        type: 'success', 
+        text: `Row assigned to ₹${tier.toLocaleString('en-IN')}. Band quotas updated dynamically from assigned seats!` 
+      });
+    } else {
+      setStatusMessage({ type: 'error', text: res.error || 'Failed to assign row.' });
+    }
+  };
+
+  const handleToggleRowBlock = async (section: SeatSection, rowLabel: string, currentlyBlocked: boolean) => {
+    setIsLoading(true);
+    setStatusMessage(null);
+    const res = currentlyBlocked 
+      ? await unblockRow(section, rowLabel)
+      : await blockRow(section, rowLabel, 'VIP / Reserved');
+    setIsLoading(false);
+    if (res.success) {
+      setStatusMessage({ 
+        type: 'success', 
+        text: currentlyBlocked 
+          ? `Row ${rowLabel} (${section}) unblocked and released back to sellable inventory!` 
+          : `Row ${rowLabel} (${section}) blocked as Reserved. It cannot be sold until unblocked.` 
+      });
+    } else {
+      setStatusMessage({ type: 'error', text: res.error || 'Failed to toggle row block.' });
     }
   };
 
@@ -426,118 +466,194 @@ export function BandsClient({
       ───────────────────────────────────────────────────────────── */}
       {activeTab === 'blueprint' && (
         <div className="space-y-4">
-          <SeatMap seats={seats} rows={rows} />
+          <SeatMap 
+            seats={seats} 
+            rows={rows} 
+            enableSeatBlocking={true}
+            onBlockSeats={blockExactSeats}
+            onUnblockSeats={unblockExactSeats}
+            onBlockRow={blockRow}
+            onUnblockRow={unblockRow}
+          />
         </div>
       )}
 
       {/* ─────────────────────────────────────────────────────────────
-          5. TAB 2: PRICE BANDS INVENTORY
+          5. TAB 2: PRICE BANDS INVENTORY & ROW ALLOCATION MATRIX
       ───────────────────────────────────────────────────────────── */}
       {activeTab === 'bands' && (
-        <div className="space-y-4">
+        <div className="space-y-6">
           <div className="flex justify-between items-center">
             <div>
               <h3 className="text-lg font-bold text-white flex items-center gap-2">
                 <Layers className="w-5 h-5 text-[#E8913A]" /> Price Bands Inventory Quotas
               </h3>
               <p className="text-xs text-slate-400">
-                Derived remaining capacity: Total Allocated - Active Passes - Active Holds.
+                Derived remaining capacity: Total Allocated (sum of assigned rows) - Active Passes - Active Holds. Total capacity is strictly 1,398 sellable seats.
               </p>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {bands.map((b) => {
-              const isEditing = editingBandId === b.id;
-              const issuedCount = b.sold_count ?? 0;
-
               return (
                 <Card key={b.id} className="bg-[#131F2E] border border-slate-800 rounded-2xl overflow-hidden shadow-lg">
-                  <CardContent className="p-6 space-y-4">
+                  <CardContent className="p-5 space-y-3">
                     <div className="flex justify-between items-start">
                       <div>
-                        <h3 className="text-xl font-black text-white">{b.label}</h3>
-                        <div className="text-2xl font-black text-[#E8913A] font-mono mt-0.5">
+                        <h3 className="text-lg font-black text-white">{b.label}</h3>
+                        <div className="text-xl font-black text-[#E8913A] font-mono mt-0.5">
                           ₹{b.price.toLocaleString('en-IN')}
                         </div>
                       </div>
-                      {!isEditing && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => startEditBand(b)}
-                          className="bg-[#1A2839] border-slate-700 text-white hover:bg-slate-800 rounded-xl text-xs h-8"
-                        >
-                          Edit
-                        </Button>
-                      )}
+                      <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-800 text-slate-300 font-mono">
+                        {b.total_allocated} seats
+                      </span>
                     </div>
 
-                    {isEditing ? (
-                      <div className="space-y-3 p-4 bg-slate-900/80 border border-amber-500/30 rounded-xl">
-                        <div className="space-y-1">
-                          <Label className="text-xs font-bold text-slate-300">Total Allocated Seats</Label>
-                          <Input
-                            type="number"
-                            value={newAllocation}
-                            onChange={(e) => setNewAllocation(Number(e.target.value))}
-                            className="h-10 bg-[#1A2839] border-slate-700 text-white rounded-lg font-mono text-base"
-                          />
-                          <span className="text-[11px] text-slate-500">
-                            Must be &ge; {issuedCount} (already issued passes).
-                          </span>
-                        </div>
-
-                        <div className="space-y-1">
-                          <Label className="text-xs font-bold text-slate-300">Price (₹)</Label>
-                          <Input
-                            type="number"
-                            value={newPrice}
-                            onChange={(e) => setNewPrice(Number(e.target.value))}
-                            className="h-10 bg-[#1A2839] border-slate-700 text-white rounded-lg font-mono text-base"
-                          />
-                        </div>
-
-                        <div className="flex justify-end gap-2 pt-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setEditingBandId(null)}
-                            className="text-slate-400 hover:text-white text-xs h-8"
-                          >
-                            Cancel
-                          </Button>
-                          <Button
-                            size="sm"
-                            disabled={isLoading || newAllocation < issuedCount}
-                            onClick={() => handleSaveBand(b.id)}
-                            className="bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-bold rounded-lg text-xs h-8"
-                          >
-                            {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
-                            Save
-                          </Button>
-                        </div>
+                    <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-800 text-center">
+                      <div className="p-2 bg-slate-900/40 rounded-xl">
+                        <div className="text-[10px] text-slate-400 font-bold uppercase">Allocated</div>
+                        <div className="text-base font-bold text-white font-mono">{b.total_allocated}</div>
                       </div>
-                    ) : (
-                      <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-800 text-center">
-                        <div className="p-2 bg-slate-900/40 rounded-xl">
-                          <div className="text-xs text-slate-400">Allocated</div>
-                          <div className="text-lg font-bold text-white font-mono">{b.total_allocated}</div>
-                        </div>
-                        <div className="p-2 bg-slate-900/40 rounded-xl">
-                          <div className="text-xs text-slate-400">Sold</div>
-                          <div className="text-lg font-bold text-[#E8913A] font-mono">{b.sold_count}</div>
-                        </div>
-                        <div className="p-2 bg-slate-900/40 rounded-xl">
-                          <div className="text-xs text-slate-400">Remaining</div>
-                          <div className="text-lg font-bold text-emerald-400 font-mono">{b.remaining_count}</div>
-                        </div>
+                      <div className="p-2 bg-slate-900/40 rounded-xl">
+                        <div className="text-[10px] text-slate-400 font-bold uppercase">Sold</div>
+                        <div className="text-base font-bold text-[#E8913A] font-mono">{b.sold_count}</div>
                       </div>
-                    )}
+                      <div className="p-2 bg-slate-900/40 rounded-xl">
+                        <div className="text-[10px] text-slate-400 font-bold uppercase">Remaining</div>
+                        <div className="text-base font-bold text-emerald-400 font-mono">{b.remaining_count}</div>
+                      </div>
+                    </div>
                   </CardContent>
                 </Card>
               );
             })}
+          </div>
+
+          {/* Row-to-Band Allocation & Row Blocking Matrix */}
+          <div className="bg-[#131F2E] border border-slate-800 rounded-2xl p-5 space-y-4 shadow-xl">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-slate-800">
+              <div>
+                <h4 className="text-base font-bold text-white flex items-center gap-2">
+                  <Sliders className="w-4 h-4 text-amber-400" />
+                  Row-to-Band Allocation & Row Blocking Matrix
+                </h4>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Quotas are derived directly from the physical seats in assigned rows. Changing a row&apos;s tier auto-recalculates band quotas immediately.
+                </p>
+              </div>
+
+              <div className="inline-flex p-1 bg-[#0E1722] rounded-xl border border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setMatrixSection('Ground Floor')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    matrixSection === 'Ground Floor'
+                      ? 'bg-[#E8913A] text-slate-950 shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Ground Floor (Rows A–N: 648)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMatrixSection('Balcony')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    matrixSection === 'Balcony'
+                      ? 'bg-[#E8913A] text-slate-950 shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Balcony (Rows A–N: 750)
+                </button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-800 text-slate-400 bg-slate-900/50">
+                    <th className="p-3">Row</th>
+                    <th className="p-3">Total Seats</th>
+                    <th className="p-3">Assigned Price Band</th>
+                    <th className="p-3">Seat Breakdown</th>
+                    <th className="p-3 text-right">Row Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 text-slate-200">
+                  {rows
+                    .filter((r) => r.section === matrixSection && r.row_label !== 'SPL VIP')
+                    .sort((a, b) => a.display_order - b.display_order)
+                    .map((r) => {
+                      const rowSeats = seats.filter(
+                        (s) => s.section === r.section && s.row_label === r.row_label && s.row_label !== 'SPL VIP'
+                      );
+                      const blockedCount = rowSeats.filter((s) => s.is_blocked).length;
+                      const soldCount = rowSeats.filter((s) => (s.payment_status || '').toLowerCase() === 'received' || s.guest_name).length;
+                      const availableCount = rowSeats.length - blockedCount - soldCount;
+                      const isRowFullyBlocked = rowSeats.length > 0 && blockedCount === rowSeats.length;
+
+                      return (
+                        <tr key={r.id} className="hover:bg-slate-800/40 transition-colors">
+                          <td className="p-3 font-mono font-bold text-amber-400 text-sm">
+                            Row {r.row_label}
+                          </td>
+                          <td className="p-3 font-mono font-bold text-white">
+                            {r.seat_count || rowSeats.length} Seats
+                          </td>
+                          <td className="p-3">
+                            <select
+                              value={r.tier || 5000}
+                              disabled={isLoading}
+                              onChange={(e) => handleAssignRowToBand(r.id, Number(e.target.value))}
+                              className="bg-[#1A2839] border border-slate-700 text-white rounded-lg px-2.5 py-1 text-xs font-bold focus:outline-hidden focus:border-amber-400 cursor-pointer"
+                            >
+                              <option value={5000}>₹5,000 (Band A - Gold)</option>
+                              <option value={3500}>₹3,500 (Band B - Purple)</option>
+                              <option value={2500}>₹2,500 (Band C - Teal)</option>
+                              <option value={1500}>₹1,500 (Band D - Slate)</option>
+                            </select>
+                          </td>
+                          <td className="p-3">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-800 text-slate-300 font-mono">
+                                {availableCount} Open
+                              </span>
+                              {blockedCount > 0 && (
+                                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-950 text-rose-300 border border-rose-800 font-mono">
+                                  {blockedCount} Blocked
+                                </span>
+                              )}
+                              {soldCount > 0 && (
+                                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono">
+                                  {soldCount} Sold
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="p-3 text-right">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={isLoading || (soldCount > 0 && !isRowFullyBlocked)}
+                              onClick={() => handleToggleRowBlock(r.section, r.row_label, isRowFullyBlocked)}
+                              className={`h-7 px-2.5 text-xs font-bold rounded-lg ${
+                                isRowFullyBlocked
+                                  ? 'bg-emerald-950 text-emerald-300 border-emerald-800 hover:bg-emerald-900'
+                                  : 'bg-rose-950/60 text-rose-300 border-rose-800 hover:bg-rose-900'
+                              }`}
+                              title={soldCount > 0 && !isRowFullyBlocked ? 'Cannot block row with sold passes' : undefined}
+                            >
+                              {isRowFullyBlocked ? '🔓 Unblock Row' : '🔒 Block Row'}
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}

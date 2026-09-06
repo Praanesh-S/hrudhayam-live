@@ -10,6 +10,7 @@ import { getSeatColor } from '@/lib/seat-utils';
 import { formatINR } from '@/lib/constants';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { 
   Crown, 
@@ -18,7 +19,11 @@ import {
   Filter,
   Lock,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Building2,
+  Shield,
+  Loader2,
+  X
 } from 'lucide-react';
 import type { SeatSection, SeatData, VenueRow } from '@/lib/types';
 
@@ -27,19 +32,34 @@ interface SeatMapProps {
   rows?: VenueRow[];
   onSeatClick?: (seat: SeatData) => void;
   compact?: boolean;
+  enableSeatBlocking?: boolean;
+  onBlockSeats?: (seatIds: string[], reason: string) => Promise<any>;
+  onUnblockSeats?: (seatIds: string[]) => Promise<any>;
+  onBlockRow?: (section: SeatSection, rowLabel: string, reason: string) => Promise<any>;
+  onUnblockRow?: (section: SeatSection, rowLabel: string) => Promise<any>;
 }
 
-type FilterType = 'all' | '5000' | '3500' | '2500' | '1500' | 'vip' | 'paid' | 'unpaid' | 'empty';
+type FilterType = 'all' | '5000' | '3500' | '2500' | '1500' | 'vip' | 'blocked' | 'sponsor' | 'paid' | 'unpaid' | 'empty';
 
 export default function SeatMap({
   seats,
   rows,
   onSeatClick,
   compact = false,
+  enableSeatBlocking = false,
+  onBlockSeats,
+  onUnblockSeats,
+  onBlockRow,
+  onUnblockRow,
 }: SeatMapProps) {
   const [selectedFloor, setSelectedFloor] = useState<SeatSection>('Ground Floor');
   const [activeFilter, setActiveFilter] = useState<FilterType>('all');
   const [selectedSeat, setSelectedSeat] = useState<SeatData | null>(null);
+
+  // Exact seat multi-selection for blocking
+  const [selectedSeatIds, setSelectedSeatIds] = useState<Set<string>>(new Set());
+  const [blockReason, setBlockReason] = useState<string>('VIP / Reserved');
+  const [isBlockingAction, setIsBlockingAction] = useState<boolean>(false);
 
   // Multi-key quick lookup map for fast rendering
   const seatLookup = useMemo(() => {
@@ -75,7 +95,6 @@ export default function SeatMap({
 
   // Floor stats
   const floorStats = useMemo(() => {
-    // Ground floor regular seats = 648, Balcony = 750
     const regularTotal = selectedFloor === 'Ground Floor' ? 648 : 750;
     const vipTotal = selectedFloor === 'Ground Floor' ? 50 : 0;
     const total = regularTotal + vipTotal;
@@ -83,6 +102,8 @@ export default function SeatMap({
     const filled = floorSeats.filter((s) => s.guest_name && s.guest_name.trim() !== '').length;
     const paid = floorSeats.filter((s) => (s.payment_status || '').toLowerCase() === 'received').length;
     const checkedIn = floorSeats.filter((s) => s.checked_in).length;
+    const blocked = floorSeats.filter((s) => s.is_blocked).length;
+    const sponsored = floorSeats.filter((s) => s.sponsor_id).length;
     const potentialRevenue = floorSeats.reduce((acc, s) => acc + (s.tier || 0), 0);
     const receivedRevenue = floorSeats
       .filter((s) => (s.payment_status || '').toLowerCase() === 'received')
@@ -94,7 +115,9 @@ export default function SeatMap({
       vipTotal, 
       filled, 
       paid, 
-      checkedIn, 
+      checkedIn,
+      blocked,
+      sponsored,
       potentialRevenue, 
       receivedRevenue 
     };
@@ -108,26 +131,96 @@ export default function SeatMap({
     if (activeFilter === '3500') return seat.tier === 3500 || seat.tier === 3000;
     if (activeFilter === '2500') return seat.tier === 2500;
     if (activeFilter === '1500') return seat.tier === 1500;
-    if (activeFilter === 'vip') return seat.obligation != null || seat.row_label === 'SPL VIP';
+    if (activeFilter === 'vip') return seat.obligation === 'chief' || seat.row_label === 'SPL VIP';
+    if (activeFilter === 'blocked') return Boolean(seat.is_blocked);
+    if (activeFilter === 'sponsor') return Boolean(seat.sponsor_id || seat.obligation === 'sponsor');
     if (activeFilter === 'paid') return (seat.payment_status || '').toLowerCase() === 'received';
     if (activeFilter === 'unpaid') return Boolean(seat.guest_name && (seat.payment_status || '').toLowerCase() === 'pending');
-    if (activeFilter === 'empty') return !seat.guest_name && seat.row_label !== 'SPL VIP';
+    if (activeFilter === 'empty') return !seat.guest_name && !seat.is_blocked && !seat.sponsor_id && seat.row_label !== 'SPL VIP';
     return true;
   };
 
   const rowLabels = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N'];
 
-  // Color resolver
+  // Exact seat toggle for blocking
+  const toggleSeatSelection = (seat: SeatData) => {
+    if (!enableSeatBlocking) {
+      setSelectedSeat(seat);
+      onSeatClick?.(seat);
+      return;
+    }
+    // SPL VIP seats cannot be blocked/edited
+    if (seat.row_label === 'SPL VIP') {
+      setSelectedSeat(seat);
+      onSeatClick?.(seat);
+      return;
+    }
+
+    const next = new Set(selectedSeatIds);
+    if (next.has(seat.id)) {
+      next.delete(seat.id);
+    } else {
+      next.add(seat.id);
+    }
+    setSelectedSeatIds(next);
+    setSelectedSeat(seat);
+    onSeatClick?.(seat);
+  };
+
+  // Row selection toggle
+  const toggleRowSelection = (section: SeatSection, rowLetter: string) => {
+    if (!enableSeatBlocking) return;
+    const rowSeats = floorSeats.filter(
+      (s) => s.section === section && s.row_label === rowLetter && s.row_label !== 'SPL VIP'
+    );
+    if (rowSeats.length === 0) return;
+
+    const next = new Set(selectedSeatIds);
+    const allSelected = rowSeats.every((s) => next.has(s.id));
+
+    if (allSelected) {
+      rowSeats.forEach((s) => next.delete(s.id));
+    } else {
+      rowSeats.forEach((s) => next.add(s.id));
+    }
+    setSelectedSeatIds(next);
+  };
+
+  const handleBlockSelected = async () => {
+    if (!onBlockSeats || selectedSeatIds.size === 0) return;
+    setIsBlockingAction(true);
+    try {
+      await onBlockSeats(Array.from(selectedSeatIds), blockReason);
+      setSelectedSeatIds(new Set());
+    } finally {
+      setIsBlockingAction(false);
+    }
+  };
+
+  const handleUnblockSelected = async () => {
+    if (!onUnblockSeats || selectedSeatIds.size === 0) return;
+    setIsBlockingAction(true);
+    try {
+      await onUnblockSeats(Array.from(selectedSeatIds));
+      setSelectedSeatIds(new Set());
+    } finally {
+      setIsBlockingAction(false);
+    }
+  };
+
+  // High-Contrast Distinct Color Resolver
   const getSeatPillBg = (seat?: SeatData) => {
     if (!seat) return '#334E68';
-    if (seat.obligation != null || seat.row_label === 'SPL VIP') return '#8B5CF6'; // Royal Purple VIP
-    if (seat.checked_in) return '#0284C7'; // Sky Blue
-    if ((seat.payment_status || '').toLowerCase() === 'received') return '#10B981'; // Emerald Green
-    if (seat.guest_name && seat.guest_name.trim() !== '') return '#EF4444'; // Red for Pending
-    if (seat.tier === 5000) return '#F59E0B'; // Amber Gold
-    if (seat.tier === 3500 || seat.tier === 3000) return '#8B5CF6'; // Purple / Gold
-    if (seat.tier === 2500) return '#0D9488'; // Teal
-    if (seat.tier === 1500) return '#64748B'; // Steel Slate
+    if (seat.row_label === 'SPL VIP' || seat.obligation === 'chief') return '#8B5CF6'; // Royal Purple VIP Box
+    if (seat.is_blocked) return '#BE123C'; // Deep Crimson (Blocked / Reserved)
+    if (seat.sponsor_id || seat.obligation === 'sponsor') return '#06B6D4'; // Vibrant Cyan (Sponsor Complimentary)
+    if (seat.checked_in) return '#0284C7'; // Sky Blue (Checked in)
+    if ((seat.payment_status || '').toLowerCase() === 'received') return '#10B981'; // Emerald Green (Paid Pass)
+    if (seat.guest_name && seat.guest_name.trim() !== '') return '#F97316'; // Amber Orange (Pending)
+    if (seat.tier === 5000) return '#F59E0B'; // Amber Gold (Band A)
+    if (seat.tier === 3500 || seat.tier === 3000) return '#A855F7'; // Violet Purple (Band B)
+    if (seat.tier === 2500) return '#0D9488'; // Teal (Band C)
+    if (seat.tier === 1500) return '#64748B'; // Steel Slate (Band D)
     return '#334E68'; // Unassigned default slate
   };
 
@@ -264,7 +357,7 @@ export default function SeatMap({
             <Button
               size="sm"
               variant={activeFilter === '3500' ? 'default' : 'outline'}
-              className={activeFilter === '3500' ? 'bg-[#8B5CF6] text-white font-bold h-8 text-xs' : 'text-purple-300 border-purple-800 bg-purple-950/40 text-xs h-8'}
+              className={activeFilter === '3500' ? 'bg-[#A855F7] text-white font-bold h-8 text-xs' : 'text-purple-300 border-purple-800 bg-purple-950/40 text-xs h-8'}
               onClick={() => setActiveFilter('3500')}
             >
               ₹3,500 Tier
@@ -295,6 +388,22 @@ export default function SeatMap({
             </Button>
             <Button
               size="sm"
+              variant={activeFilter === 'blocked' ? 'default' : 'outline'}
+              className={activeFilter === 'blocked' ? 'bg-[#BE123C] text-white font-bold h-8 text-xs' : 'text-rose-400 border-rose-800 bg-rose-950/40 text-xs h-8 flex items-center gap-1'}
+              onClick={() => setActiveFilter('blocked')}
+            >
+              <Lock className="w-3 h-3" /> Blocked / Reserved
+            </Button>
+            <Button
+              size="sm"
+              variant={activeFilter === 'sponsor' ? 'default' : 'outline'}
+              className={activeFilter === 'sponsor' ? 'bg-[#06B6D4] text-slate-950 font-bold h-8 text-xs' : 'text-cyan-300 border-cyan-800 bg-cyan-950/40 text-xs h-8 flex items-center gap-1'}
+              onClick={() => setActiveFilter('sponsor')}
+            >
+              <Building2 className="w-3 h-3" /> Sponsor Comp
+            </Button>
+            <Button
+              size="sm"
               variant={activeFilter === 'paid' ? 'default' : 'outline'}
               className={activeFilter === 'paid' ? 'bg-[#10B981] text-slate-950 font-bold h-8 text-xs' : 'text-emerald-300 border-emerald-800 bg-emerald-950/40 text-xs h-8'}
               onClick={() => setActiveFilter('paid')}
@@ -304,7 +413,7 @@ export default function SeatMap({
             <Button
               size="sm"
               variant={activeFilter === 'unpaid' ? 'default' : 'outline'}
-              className={activeFilter === 'unpaid' ? 'bg-[#EF4444] text-white font-bold h-8 text-xs' : 'text-red-300 border-red-800 bg-red-950/40 text-xs h-8'}
+              className={activeFilter === 'unpaid' ? 'bg-[#F97316] text-white font-bold h-8 text-xs' : 'text-amber-400 border-amber-800 bg-amber-950/40 text-xs h-8'}
               onClick={() => setActiveFilter('unpaid')}
             >
               Pending
@@ -327,7 +436,7 @@ export default function SeatMap({
             <span>₹5,000 Tier</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className="w-3 h-3 rounded-xs bg-[#8B5CF6] inline-block shadow-xs"></span>
+            <span className="w-3 h-3 rounded-xs bg-[#A855F7] inline-block shadow-xs"></span>
             <span>₹3,500 Tier</span>
           </div>
           <div className="flex items-center gap-1.5">
@@ -341,7 +450,19 @@ export default function SeatMap({
           <div className="flex items-center gap-1.5">
             <span className="w-3 h-3 rounded-xs bg-[#8B5CF6] inline-block border border-purple-400 shadow-xs"></span>
             <span className="font-bold text-purple-300 flex items-center gap-1">
-              <Crown className="w-3 h-3" /> VIP Box (50 Seats - Non-editable)
+              <Crown className="w-3 h-3" /> VIP Box (50 Seats)
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="w-3 h-3 rounded-xs bg-[#BE123C] inline-block shadow-xs"></span>
+            <span className="font-bold text-rose-300 flex items-center gap-1">
+              <Lock className="w-3 h-3" /> Blocked / Reserved
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="w-3 h-3 rounded-xs bg-[#06B6D4] inline-block shadow-xs"></span>
+            <span className="font-bold text-cyan-300 flex items-center gap-1">
+              <Building2 className="w-3 h-3" /> Sponsor Comp
             </span>
           </div>
           <div className="flex items-center gap-1.5">
@@ -349,8 +470,12 @@ export default function SeatMap({
             <span>Paid Pass</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className="w-3 h-3 rounded-xs bg-[#EF4444] inline-block shadow-xs"></span>
+            <span className="w-3 h-3 rounded-xs bg-[#F97316] inline-block shadow-xs"></span>
             <span>Pending</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="w-3 h-3 rounded-xs bg-[#0284C7] inline-block shadow-xs"></span>
+            <span>Checked In</span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="w-3 h-3 rounded-xs bg-[#334E68] border border-slate-600 inline-block"></span>
@@ -456,9 +581,17 @@ export default function SeatMap({
                   return (
                     <div key={rowLetter} className="flex items-center gap-2 group">
                       {/* Left Row Label */}
-                      <span className="text-xs font-mono font-bold text-amber-400 w-5 text-center shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => toggleRowSelection('Ground Floor', rowLetter)}
+                        disabled={!enableSeatBlocking}
+                        title={enableSeatBlocking ? `Click to select / deselect Row ${rowLetter}` : undefined}
+                        className={`text-xs font-mono font-bold text-amber-400 w-5 text-center shrink-0 rounded transition-all ${
+                          enableSeatBlocking ? 'hover:bg-amber-400 hover:text-slate-950 cursor-pointer' : ''
+                        }`}
+                      >
                         {rowLetter}
-                      </span>
+                      </button>
 
                       {/* Row Blocks Container */}
                       <div className="flex-1 flex items-center justify-between gap-3">
@@ -486,17 +619,18 @@ export default function SeatMap({
                                   checked_in: false,
                                 };
 
+                                const isSelected = selectedSeatIds.has(effectiveSeat.id);
+
                                 return (
                                   <button
                                     key={seatNum}
                                     type="button"
-                                    onClick={() => {
-                                      setSelectedSeat(effectiveSeat);
-                                      onSeatClick?.(effectiveSeat);
-                                    }}
-                                    title={`Seat ${effectiveSeat.id} • ${effectiveSeat.tier ? '₹' + effectiveSeat.tier : 'Available'} • Row ${rowLetter}`}
+                                    onClick={() => toggleSeatSelection(effectiveSeat)}
+                                    title={`Seat ${effectiveSeat.id} • ${effectiveSeat.tier ? '₹' + effectiveSeat.tier : 'Available'} • Row ${rowLetter}${effectiveSeat.is_blocked ? ' (BLOCKED)' : ''}`}
                                     className={`h-4 min-w-[14px] px-0.5 rounded-[3px] text-[8px] font-mono font-medium flex items-center justify-center transition-all cursor-pointer shadow-2xs hover:scale-125 hover:z-20 text-white ${
                                       isDimmed ? 'opacity-20 saturate-0' : 'opacity-100'
+                                    } ${
+                                      isSelected ? 'ring-2 ring-white outline-2 outline-blue-500 scale-125 z-10 font-black shadow-lg' : ''
                                     }`}
                                     style={{ backgroundColor: seatBg }}
                                   >
@@ -519,9 +653,17 @@ export default function SeatMap({
                       </div>
 
                       {/* Right Row Label */}
-                      <span className="text-xs font-mono font-bold text-amber-400 w-5 text-center shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => toggleRowSelection('Ground Floor', rowLetter)}
+                        disabled={!enableSeatBlocking}
+                        title={enableSeatBlocking ? `Click to select / deselect Row ${rowLetter}` : undefined}
+                        className={`text-xs font-mono font-bold text-amber-400 w-5 text-center shrink-0 rounded transition-all ${
+                          enableSeatBlocking ? 'hover:bg-amber-400 hover:text-slate-950 cursor-pointer' : ''
+                        }`}
+                      >
                         {rowLetter}
-                      </span>
+                      </button>
                     </div>
                   );
                 })}
@@ -555,9 +697,17 @@ export default function SeatMap({
 
                 return (
                   <div key={rowLetter} className="flex items-center gap-2 group">
-                    <span className="text-xs font-mono font-bold text-amber-400 w-5 text-center shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => toggleRowSelection('Balcony', rowLetter)}
+                      disabled={!enableSeatBlocking}
+                      title={enableSeatBlocking ? `Click to select / deselect Row ${rowLetter}` : undefined}
+                      className={`text-xs font-mono font-bold text-amber-400 w-5 text-center shrink-0 rounded transition-all ${
+                        enableSeatBlocking ? 'hover:bg-amber-400 hover:text-slate-950 cursor-pointer' : ''
+                      }`}
+                    >
                       {rowLetter}
-                    </span>
+                    </button>
 
                     <div className="flex-1 flex items-center justify-between gap-3">
                       {config.blocks.map((block, bIdx) => (
@@ -584,17 +734,18 @@ export default function SeatMap({
                                 checked_in: false,
                               };
 
+                              const isSelected = selectedSeatIds.has(effectiveSeat.id);
+
                               return (
                                 <button
                                   key={seatNum}
                                   type="button"
-                                  onClick={() => {
-                                    setSelectedSeat(effectiveSeat);
-                                    onSeatClick?.(effectiveSeat);
-                                  }}
-                                  title={`Seat ${effectiveSeat.id} • ${effectiveSeat.tier ? '₹' + effectiveSeat.tier : 'Available'} • Row ${rowLetter}`}
+                                  onClick={() => toggleSeatSelection(effectiveSeat)}
+                                  title={`Seat ${effectiveSeat.id} • ${effectiveSeat.tier ? '₹' + effectiveSeat.tier : 'Available'} • Row ${rowLetter}${effectiveSeat.is_blocked ? ' (BLOCKED)' : ''}`}
                                   className={`h-4 min-w-[14px] px-0.5 rounded-[3px] text-[8px] font-mono font-medium flex items-center justify-center transition-all cursor-pointer shadow-2xs hover:scale-125 hover:z-20 text-white ${
                                     isDimmed ? 'opacity-20 saturate-0' : 'opacity-100'
+                                  } ${
+                                    isSelected ? 'ring-2 ring-white outline-2 outline-blue-500 scale-125 z-10 font-black shadow-lg' : ''
                                   }`}
                                   style={{ backgroundColor: seatBg }}
                                 >
@@ -615,9 +766,17 @@ export default function SeatMap({
                       ))}
                     </div>
 
-                    <span className="text-xs font-mono font-bold text-amber-400 w-5 text-center shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => toggleRowSelection('Balcony', rowLetter)}
+                      disabled={!enableSeatBlocking}
+                      title={enableSeatBlocking ? `Click to select / deselect Row ${rowLetter}` : undefined}
+                      className={`text-xs font-mono font-bold text-amber-400 w-5 text-center shrink-0 rounded transition-all ${
+                        enableSeatBlocking ? 'hover:bg-amber-400 hover:text-slate-950 cursor-pointer' : ''
+                      }`}
+                    >
                       {rowLetter}
-                    </span>
+                    </button>
                   </div>
                 );
               })}
@@ -626,7 +785,58 @@ export default function SeatMap({
         </div>
       </div>
 
-      {/* 5. Selected Seat Inspection Modal / Card */}
+      {/* 5. Sticky Action Toolbar for Exact Seat Blocking */}
+      {enableSeatBlocking && selectedSeatIds.size > 0 && (
+        <div className="sticky bottom-4 z-40 bg-[#081522]/95 backdrop-blur-md border-2 border-blue-500/80 p-4 rounded-2xl shadow-2xl flex flex-wrap items-center justify-between gap-4 text-white animate-in slide-in-from-bottom-4">
+          <div className="flex items-center gap-3 flex-wrap">
+            <Badge className="bg-blue-600 text-white font-mono text-xs px-3 py-1 font-bold shadow-sm">
+              {selectedSeatIds.size} {selectedSeatIds.size === 1 ? 'Seat' : 'Seats'} Selected
+            </Badge>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-300 font-medium">Reason:</span>
+              <Input
+                value={blockReason}
+                onChange={(e) => setBlockReason(e.target.value)}
+                placeholder="e.g. VIP / Reserved / Sponsor Row"
+                className="h-8 w-44 sm:w-60 bg-[#0F2236] border-slate-700 text-xs text-white"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              size="sm"
+              disabled={isBlockingAction}
+              onClick={handleBlockSelected}
+              className="bg-rose-600 hover:bg-rose-700 text-white font-bold h-8 text-xs flex items-center gap-1.5 shadow-md"
+            >
+              {isBlockingAction ? <Loader2 className="w-3 h-3 animate-spin" /> : <Lock className="w-3 h-3" />}
+              Block as Reserved
+            </Button>
+
+            <Button
+              size="sm"
+              disabled={isBlockingAction}
+              onClick={handleUnblockSelected}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-8 text-xs flex items-center gap-1.5 shadow-md"
+            >
+              {isBlockingAction ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
+              Unblock / Release to Sell
+            </Button>
+
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setSelectedSeatIds(new Set())}
+              className="text-slate-400 hover:text-white h-8 text-xs"
+            >
+              Clear
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* 6. Selected Seat Inspection Modal / Card */}
       {selectedSeat && (
         <Card className="bg-[#0F2236] border-2 border-amber-500/50 p-4 rounded-2xl shadow-xl text-white animate-in fade-in-50">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -639,9 +849,17 @@ export default function SeatMap({
                   {selectedSeat.section} • Row {selectedSeat.row_label} • Seat #{selectedSeat.seat_no}
                 </Badge>
 
-                {selectedSeat.row_label === 'SPL VIP' || selectedSeat.obligation != null ? (
+                {selectedSeat.row_label === 'SPL VIP' || selectedSeat.obligation === 'chief' ? (
                   <Badge className="bg-purple-900 text-purple-200 border border-purple-600 text-xs font-bold flex items-center gap-1">
                     <Lock className="w-3 h-3" /> VIP Reserved (Non-editable)
+                  </Badge>
+                ) : selectedSeat.is_blocked ? (
+                  <Badge className="bg-rose-950 text-rose-300 border border-rose-700 text-xs font-bold flex items-center gap-1">
+                    <Lock className="w-3 h-3" /> Blocked: {selectedSeat.blocked_reason || 'Reserved'}
+                  </Badge>
+                ) : selectedSeat.sponsor_id || selectedSeat.obligation === 'sponsor' ? (
+                  <Badge className="bg-cyan-950 text-cyan-300 border border-cyan-700 text-xs font-bold flex items-center gap-1">
+                    <Building2 className="w-3 h-3" /> Sponsor Complimentary
                   </Badge>
                 ) : selectedSeat.tier ? (
                   <Badge className="bg-amber-500 text-slate-950 font-bold text-xs font-mono">
@@ -654,9 +872,17 @@ export default function SeatMap({
                 )}
               </div>
 
-              {selectedSeat.row_label === 'SPL VIP' || selectedSeat.obligation != null ? (
+              {selectedSeat.row_label === 'SPL VIP' || selectedSeat.obligation === 'chief' ? (
                 <p className="text-xs text-purple-300 font-medium">
                   🔒 This seat is part of the Special VIP Box reserved exclusively for Chief Guests, Trust Dignitaries, and Officials. It is strictly non-editable and protected from public selling.
+                </p>
+              ) : selectedSeat.is_blocked ? (
+                <p className="text-xs text-rose-300 font-medium">
+                  🚫 This seat is blocked from sale ({selectedSeat.blocked_reason || 'VIP / Reserved'}). It will not appear in the selling console until released back.
+                </p>
+              ) : selectedSeat.sponsor_id ? (
+                <p className="text-xs text-cyan-300 font-medium">
+                  🏢 Allocated as a complimentary pass for Corporate Sponsor.
                 </p>
               ) : (
                 <p className="text-xs text-slate-300">
@@ -669,8 +895,54 @@ export default function SeatMap({
               )}
             </div>
 
-            <div className="flex items-center gap-2">
-              {selectedSeat.row_label !== 'SPL VIP' && (
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Quick Block / Unblock Actions for inspected seat */}
+              {enableSeatBlocking && selectedSeat.row_label !== 'SPL VIP' && (
+                <>
+                  {selectedSeat.is_blocked ? (
+                    <Button
+                      size="sm"
+                      disabled={isBlockingAction}
+                      onClick={async () => {
+                        if (!onUnblockSeats) return;
+                        setIsBlockingAction(true);
+                        try {
+                          await onUnblockSeats([selectedSeat.id]);
+                          setSelectedSeat((prev) => (prev ? { ...prev, is_blocked: false, blocked_reason: undefined } : null));
+                        } finally {
+                          setIsBlockingAction(false);
+                        }
+                      }}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-8 text-xs flex items-center gap-1 shadow-xs"
+                    >
+                      {isBlockingAction ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
+                      Unblock Seat
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      disabled={isBlockingAction || Boolean(selectedSeat.guest_name)}
+                      onClick={async () => {
+                        if (!onBlockSeats) return;
+                        setIsBlockingAction(true);
+                        try {
+                          await onBlockSeats([selectedSeat.id], blockReason);
+                          setSelectedSeat((prev) => (prev ? { ...prev, is_blocked: true, blocked_reason: blockReason } : null));
+                        } finally {
+                          setIsBlockingAction(false);
+                        }
+                      }}
+                      className="bg-rose-600 hover:bg-rose-700 text-white font-bold h-8 text-xs flex items-center gap-1 shadow-xs"
+                      title={selectedSeat.guest_name ? 'Cannot block seat with pass issued' : undefined}
+                    >
+                      {isBlockingAction ? <Loader2 className="w-3 h-3 animate-spin" /> : <Lock className="w-3 h-3" />}
+                      Block Seat
+                    </Button>
+                  )}
+                </>
+              )}
+
+              {selectedSeat.row_label !== 'SPL VIP' && !selectedSeat.is_blocked && (
                 <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
                   (selectedSeat.payment_status || '').toLowerCase() === 'received'
                     ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
