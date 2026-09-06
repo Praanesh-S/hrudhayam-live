@@ -1,79 +1,69 @@
 export const dynamic = 'force-dynamic';
 
-import { createClient } from '@/lib/supabase/server';
+import { getSessionUser } from '@/lib/auth/session';
+import { redirect } from 'next/navigation';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { fetchEventSummaryMetrics } from '@/lib/band-utils';
-import { formatINR, BANDS_CONFIG } from '@/lib/constants';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
-import { redirect } from 'next/navigation';
 import { 
   Ticket, 
   Users, 
   Layers, 
-  DollarSign, 
-  ScanLine, 
   PlusCircle, 
-  Settings2, 
-  FileSpreadsheet, 
   CheckCircle2, 
-  Clock, 
-  ArrowUpRight, 
-  Share2, 
-  ShieldCheck, 
-  Sparkles,
-  Heart
+  Heart,
+  Trophy,
+  Building2,
+  ScanLine,
+  Download,
+  Printer,
+  CreditCard,
+  Camera
 } from 'lucide-react';
 
 export const metadata = {
-  title: 'Dashboard | Hrudhayam LIVE',
+  title: 'Fill & Goal Dashboard | Hrudhayam LIVE',
 };
 
 export default async function DashboardPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect('/login');
-  }
+  const user = await getSessionUser();
+  if (!user) redirect('/login');
 
   const adminClient = createAdminClient();
 
-  const { data: profile } = await adminClient
-    .from('profiles')
-    .select('*')
-    .eq('id', user.id)
-    .single();
-
-  if (!profile || !profile.is_active) {
-    redirect('/onboard');
-  }
-
-  // Fetch summary metrics & latest sales in parallel
-  const [metrics, recentSalesRes, poolsRes] = await Promise.all([
+  // Fetch metrics & recent passes in parallel
+  const [metrics, recentPassesRes] = await Promise.all([
     fetchEventSummaryMetrics(adminClient),
     adminClient
-      .from('sales')
-      .select('*, band:bands(name, standard_price), seller:profiles!sales_sold_by_fkey(full_name)')
-      .eq('cancelled', false)
+      .from('passes')
+      .select(`
+        id,
+        pass_code,
+        ticket_type,
+        physical_serial,
+        donor_name,
+        donor_phone,
+        status,
+        created_at,
+        band:bands(label, price),
+        seller:members(full_name, groups(name)),
+        payments(amount, status)
+      `)
       .order('created_at', { ascending: false })
       .limit(6),
-    adminClient
-      .from('reserved_pools')
-      .select('*, entries:reserved_entries(id)')
-      .order('display_order', { ascending: true }),
   ]);
 
-  const recentSales = recentSalesRes.data || [];
-  const pools = poolsRes.data || [];
-  const isSuperOrSystemAdmin = profile.role === 'super_admin' || profile.role === 'system_admin';
+  const recentPasses = recentPassesRes.data || [];
+  const occupancyPercent = metrics.totalCapacity > 0
+    ? Math.round((metrics.totalSold / metrics.totalCapacity) * 100)
+    : 0;
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto pb-16">
-      {/* 1. Header & Live Banner */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-[#0F2236] p-6 rounded-3xl border border-[#243D56] shadow-xl text-white">
+      {/* 1. Header Banner */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-[#131F2E] p-6 rounded-3xl border border-slate-800 shadow-xl text-white">
         <div className="space-y-1">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-bold tracking-wider uppercase mb-1">
             <Heart className="w-3.5 h-3.5 fill-amber-400" />
@@ -83,284 +73,229 @@ export default async function DashboardPage() {
             Hrudhayam LIVE 2026
           </h1>
           <p className="text-xs text-slate-400">
-            Charity Musical Concert in Aid of Public-Access AEDs • Band-Based Allocation
+            Charity Musical Concert • Friday, 9 October 2026 • The Music Academy, Chennai
           </p>
         </div>
 
-        {/* Quick Action Buttons */}
+        {/* Quick Action Navigation */}
         <div className="flex items-center gap-2 flex-wrap">
-          {profile.role !== 'system_admin' && (
-            <Link href="/sell">
-              <Button className="bg-gradient-to-r from-[#E8913A] to-[#D97706] hover:from-[#D97706] hover:to-[#B45309] text-slate-950 font-black text-xs rounded-xl h-10 px-4 gap-1.5 shadow-md">
-                <PlusCircle className="w-4 h-4" />
-                <span>Sell a Pass</span>
-              </Button>
-            </Link>
-          )}
-
-          <Link href="/checkin">
-            <Button variant="outline" className="bg-[#162C42] hover:bg-[#1E3B5A] text-sky-400 border-sky-800/60 font-bold text-xs rounded-xl h-10 px-4 gap-1.5">
-              <ScanLine className="w-4 h-4" />
-              <span>Door Scanner</span>
+          <Link href="/sell">
+            <Button className="bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-black text-xs rounded-xl h-10 px-4 gap-1.5 shadow-md">
+              <PlusCircle className="w-4 h-4" />
+              <span>Sell a Pass</span>
             </Button>
           </Link>
 
-          {isSuperOrSystemAdmin && (
-            <Link href="/setup">
-              <Button variant="outline" className="bg-[#162C42] hover:bg-[#1E3B5A] text-slate-200 border-[#2A4866] font-semibold text-xs rounded-xl h-10 px-4 gap-1.5">
-                <Settings2 className="w-4 h-4 text-slate-400" />
-                <span>Set Up Bands</span>
-              </Button>
-            </Link>
-          )}
+          <Link href="/checkin">
+            <Button variant="outline" className="bg-[#1A2839] hover:bg-[#253950] border-slate-700 text-white font-bold text-xs rounded-xl h-10 px-3.5 gap-1.5">
+              <ScanLine className="w-4 h-4 text-[#E8913A]" />
+              <span>Gate Scan</span>
+            </Button>
+          </Link>
+
+          <Link href="/leaderboard">
+            <Button variant="outline" className="bg-[#1A2839] hover:bg-[#253950] border-slate-700 text-white font-bold text-xs rounded-xl h-10 px-3.5 gap-1.5">
+              <Trophy className="w-4 h-4 text-amber-400" />
+              <span>Leaderboard</span>
+            </Button>
+          </Link>
+
+          <a href="/api/export" download>
+            <Button variant="outline" className="bg-[#1A2839] hover:bg-[#253950] border-slate-700 text-white font-bold text-xs rounded-xl h-10 px-3.5 gap-1.5">
+              <Download className="w-4 h-4 text-emerald-400" />
+              <span>Export</span>
+            </Button>
+          </a>
+
+          <a href="/api/manifest" target="_blank" rel="noopener noreferrer">
+            <Button variant="outline" className="bg-[#1A2839] hover:bg-[#253950] border-slate-700 text-white font-bold text-xs rounded-xl h-10 px-3.5 gap-1.5">
+              <Printer className="w-4 h-4 text-sky-400" />
+              <span>Manifest</span>
+            </Button>
+          </a>
         </div>
       </div>
 
-      {/* 2. Top Fundraising & Capacity Metrics */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <div className="bg-[#131F2E] p-4 rounded-2xl border border-[#223345] shadow-md">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Band Capacity</span>
-          <span className="text-2xl font-extrabold text-white mt-1 block font-mono">{metrics.totalCapacity.toLocaleString()}</span>
-          <span className="text-[10px] text-slate-500 block mt-0.5">Commercial seats</span>
+      {/* 2. Public-Access AED Project Goal Banner (§11, Goal Visualization) */}
+      <div className="p-6 sm:p-7 rounded-3xl bg-gradient-to-r from-red-950/80 via-slate-900 to-amber-950/70 border-2 border-red-500/40 shadow-2xl">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div>
+            <span className="text-xs font-bold text-red-400 uppercase tracking-wider flex items-center gap-1.5">
+              <Heart className="w-4 h-4 fill-red-500 text-red-500" /> Project Objective: Public-Access Automated External Defibrillators
+            </span>
+            <h2 className="text-2xl sm:text-3xl font-black text-white mt-1">
+              {metrics.fundedStations} AED Stations Funded
+            </h2>
+            <p className="text-xs sm:text-sm text-slate-300 mt-0.5">
+              ₹1,50,000 per outdoor weatherproof life-saving station in high footfall public spots across Chennai.
+            </p>
+          </div>
+
+          <div className="text-left sm:text-right">
+            <span className="text-xs text-slate-400 uppercase">Target: 25 Stations</span>
+            <div className="text-3xl font-black text-[#E8913A] font-mono">
+              ₹{metrics.totalRaised.toLocaleString('en-IN')}
+            </div>
+            <span className="text-xs text-slate-400">Total Net Raised to Date</span>
+          </div>
         </div>
 
-        <div className="bg-[#131F2E] p-4 rounded-2xl border border-[#223345] shadow-md">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Seats Sold</span>
-          <span className="text-2xl font-extrabold text-[#E8913A] mt-1 block font-mono">{metrics.totalSold.toLocaleString()}</span>
-          <span className="text-[10px] text-slate-500 block mt-0.5">
-            {metrics.totalCapacity > 0 ? `${Math.round((metrics.totalSold / metrics.totalCapacity) * 100)}% filled` : '0%'}
-          </span>
-        </div>
-
-        <div className="bg-[#131F2E] p-4 rounded-2xl border border-[#223345] shadow-md">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Remaining Available</span>
-          <span className="text-2xl font-extrabold text-sky-400 mt-1 block font-mono">{metrics.totalRemaining.toLocaleString()}</span>
-          <span className="text-[10px] text-slate-500 block mt-0.5">Open for sale</span>
-        </div>
-
-        <div className="bg-[#131F2E] p-4 rounded-2xl border border-[#223345] shadow-md">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Collected Revenue</span>
-          <span className="text-2xl font-extrabold text-emerald-400 mt-1 block font-mono">{formatINR(metrics.totalCollected)}</span>
-          <span className="text-[10px] text-emerald-500/80 block mt-0.5">Confirmed funds</span>
-        </div>
-
-        <div className="bg-[#131F2E] p-4 rounded-2xl border border-[#223345] shadow-md">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Pending Collections</span>
-          <span className="text-2xl font-extrabold text-amber-400 mt-1 block font-mono">{formatINR(metrics.totalPending)}</span>
-          <span className="text-[10px] text-amber-500/80 block mt-0.5">Awaiting payment</span>
-        </div>
-
-        <div className="bg-[#131F2E] p-4 rounded-2xl border border-[#223345] shadow-md">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Gate Admissions</span>
-          <span className="text-2xl font-extrabold text-purple-400 mt-1 block font-mono">{metrics.totalCheckedIn.toLocaleString()}</span>
-          <span className="text-[10px] text-purple-400/80 block mt-0.5">
-            {metrics.totalSold > 0 ? `${Math.round((metrics.totalCheckedIn / metrics.totalSold) * 100)}% scanned` : '0% scanned'}
-          </span>
+        {/* Partial Station Progress Bar */}
+        <div className="mt-5 space-y-1.5">
+          <div className="flex justify-between text-xs font-semibold text-slate-300">
+            <span>Station #{metrics.fundedStations + 1} Progress</span>
+            <span className="font-mono text-amber-400">{metrics.partialStationPercent}% funded towards next station</span>
+          </div>
+          <div className="w-full bg-slate-950/80 h-3 rounded-full overflow-hidden border border-red-900/40">
+            <div
+              className="bg-gradient-to-r from-red-500 to-amber-400 h-full transition-all duration-500"
+              style={{ width: `${metrics.partialStationPercent}%` }}
+            />
+          </div>
         </div>
       </div>
 
-      {/* 3. 4 PRICE BANDS LIVE CARDS */}
+      {/* 3. Top High-Level Campaign KPIs */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-[#131F2E] border border-slate-800 p-5 rounded-2xl">
+          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Passes Sold</span>
+          <div className="text-3xl font-black text-white font-mono mt-1">
+            {metrics.totalSold} <span className="text-base text-slate-500 font-normal">/ {metrics.totalCapacity}</span>
+          </div>
+          <div className="w-full bg-slate-800 h-1.5 rounded-full mt-3 overflow-hidden">
+            <div className="bg-[#E8913A] h-full" style={{ width: `${occupancyPercent}%` }} />
+          </div>
+          <span className="text-[11px] text-slate-400 mt-1.5 block">{occupancyPercent}% Concert Fill</span>
+        </div>
+
+        <div className="bg-[#131F2E] border border-slate-800 p-5 rounded-2xl">
+          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Available Remaining</span>
+          <div className="text-3xl font-black text-emerald-400 font-mono mt-1">
+            {metrics.totalRemaining}
+          </div>
+          <span className="text-[11px] text-slate-400 mt-3 block">Across 4 Price Bands</span>
+        </div>
+
+        <div className="bg-[#131F2E] border border-slate-800 p-5 rounded-2xl">
+          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Collected Funds</span>
+          <div className="text-3xl font-black text-emerald-400 font-mono mt-1 truncate">
+            ₹{metrics.totalCollected.toLocaleString('en-IN')}
+          </div>
+          <span className="text-[11px] text-slate-400 mt-3 block">Passes + Sponsors Received</span>
+        </div>
+
+        <div className="bg-[#131F2E] border border-slate-800 p-5 rounded-2xl">
+          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Pending Commitments</span>
+          <div className="text-3xl font-black text-[#E8913A] font-mono mt-1 truncate">
+            ₹{metrics.totalPending.toLocaleString('en-IN')}
+          </div>
+          <span className="text-[11px] text-slate-400 mt-3 block">Follow-up pledges</span>
+        </div>
+      </div>
+
+      {/* 4. Live Band-by-Band Inventory Fill Cards */}
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-            <Layers className="w-5 h-5 text-[#E8913A]" />
-            <span>4 Price Bands Status</span>
-          </h2>
-          <span className="text-xs text-slate-400">Live inventory tracking</span>
-        </div>
+        <h3 className="text-xl font-bold text-white flex items-center gap-2">
+          <Layers className="w-5 h-5 text-[#E8913A]" /> Seating Band Capacities & Remaining
+        </h3>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {metrics.bands.map((band) => {
-            const sold = band.sold_count || 0;
-            const cap = band.total_capacity || 0;
-            const rem = band.remaining_count || 0;
-            const occupancy = cap > 0 ? Math.min(100, Math.round((sold / cap) * 100)) : 0;
-            const config = BANDS_CONFIG.find(c => c.id === band.id);
+            const sold = band.sold_count ?? 0;
+            const cap = band.total_allocated ?? 0;
+            const rem = band.remaining_count ?? 0;
+            const pct = cap > 0 ? Math.round((sold / cap) * 100) : 0;
+            const isSoldOut = rem <= 0;
 
             return (
-              <Card key={band.id} className="bg-[#131F2E] border-[#223345] rounded-2xl shadow-xl overflow-hidden flex flex-col justify-between">
-                <CardHeader className="bg-[#0E1724] pb-3 border-b border-[#223345]">
-                  <div className="flex items-center justify-between">
-                    <Badge className={`${config?.bgColor || 'bg-amber-500/10'} ${config?.textColor || 'text-amber-400'} border ${config?.borderColor || 'border-amber-500/30'} text-xs font-bold font-mono`}>
-                      {band.name}
-                    </Badge>
-                    <span className="text-sm font-black font-mono text-white">
-                      {formatINR(band.standard_price)}
+              <div
+                key={band.id}
+                className="bg-[#131F2E] border border-slate-800 p-5 rounded-2xl flex flex-col justify-between"
+              >
+                <div>
+                  <div className="flex justify-between items-start">
+                    <span className="font-bold text-base text-white">{band.label}</span>
+                    <span className="font-black text-lg text-[#E8913A] font-mono">
+                      ₹{band.price.toLocaleString('en-IN')}
                     </span>
                   </div>
-                </CardHeader>
 
-                <CardContent className="p-5 space-y-4 flex-1 flex flex-col justify-between">
-                  <div className="space-y-3">
-                    <div className="grid grid-cols-3 gap-2 text-center">
-                      <div className="p-2 bg-[#0F1A26] rounded-xl border border-[#24364A]">
-                        <span className="text-[9px] uppercase font-bold text-slate-400 block">Capacity</span>
-                        <span className="text-sm font-extrabold text-white font-mono">{cap}</span>
-                      </div>
-                      <div className="p-2 bg-[#0F1A26] rounded-xl border border-[#24364A]">
-                        <span className="text-[9px] uppercase font-bold text-slate-400 block">Sold</span>
-                        <span className="text-sm font-extrabold text-[#E8913A] font-mono">{sold}</span>
-                      </div>
-                      <div className="p-2 bg-[#0F1A26] rounded-xl border border-[#24364A]">
-                        <span className="text-[9px] uppercase font-bold text-slate-400 block">Remaining</span>
-                        <span className={`text-sm font-extrabold font-mono ${rem > 0 ? 'text-sky-400' : 'text-red-400'}`}>{rem}</span>
-                      </div>
+                  <div className="mt-4 space-y-1">
+                    <div className="flex justify-between text-xs text-slate-400 font-medium">
+                      <span>Sold: {sold} / {cap}</span>
+                      <span className={isSoldOut ? 'text-red-400 font-bold' : 'text-emerald-400 font-bold'}>
+                        {isSoldOut ? 'Sold Out' : `${rem} left`}
+                      </span>
                     </div>
-
-                    {/* Progress Bar */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-[11px]">
-                        <span className="text-slate-400">Sold Out</span>
-                        <span className="font-bold text-white">{occupancy}%</span>
-                      </div>
-                      <div className="w-full bg-[#1A2839] rounded-full h-2 overflow-hidden">
-                        <div
-                          className="h-full rounded-full transition-all duration-300"
-                          style={{ 
-                            width: `${occupancy}%`,
-                            backgroundColor: config?.color || '#F59E0B'
-                          }}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Financial summary */}
-                    <div className="pt-2 border-t border-[#223345] text-[11px] space-y-1 text-slate-400">
-                      <div className="flex justify-between">
-                        <span>Collected:</span>
-                        <strong className="text-emerald-400">{formatINR(band.collected_amount || 0)}</strong>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Pending:</span>
-                        <strong className="text-amber-400">{formatINR(band.pending_amount || 0)}</strong>
-                      </div>
+                    <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                      <div className="bg-[#E8913A] h-full transition-all" style={{ width: `${pct}%` }} />
                     </div>
                   </div>
+                </div>
 
-                  <div className="pt-2">
-                    {profile.role !== 'system_admin' && (
-                      <Link href={`/sell?band=${band.id}`}>
-                        <Button 
-                          size="sm" 
-                          disabled={rem <= 0}
-                          className="w-full bg-[#1A2839] hover:bg-[#24364A] text-slate-200 text-xs font-semibold rounded-xl border border-[#2A3F55] h-8"
-                        >
-                          {rem > 0 ? `Sell in ${band.name.split(' ')[0]}` : 'Sold Out'}
-                        </Button>
-                      </Link>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
+                <div className="pt-4 mt-3 border-t border-slate-800/80 flex justify-between text-xs text-slate-400">
+                  <span>Holds: {band.active_holds_count || 0}</span>
+                  <span className="font-mono text-white">₹{((band.collected_amount || 0)).toLocaleString('en-IN')}</span>
+                </div>
+              </div>
             );
           })}
         </div>
       </div>
 
-      {/* 4. LOWER SECTION: RESERVED QUOTAS & RECENT SALES FEED */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Reserved Pools Card */}
-        <Card className="bg-[#131F2E] border-[#223345] rounded-2xl shadow-xl overflow-hidden lg:col-span-1">
-          <CardHeader className="bg-[#0E1724] pb-3 border-b border-[#223345]">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base font-bold text-white flex items-center gap-2">
-                <Users className="w-4 h-4 text-purple-400" />
-                <span>Reserved Quotas</span>
-              </CardTitle>
-              <Badge variant="outline" className="text-[10px] text-purple-300 border-purple-800">
-                {metrics.totalReservedSeats} Seats Set Aside
-              </Badge>
-            </div>
-            <CardDescription className="text-xs text-slate-400">
-              Complimentary dignitary and event pools.
-            </CardDescription>
-          </CardHeader>
+      {/* 5. Recent Pass Issuance Activity */}
+      <div className="space-y-4">
+        <div className="flex justify-between items-center">
+          <h3 className="text-xl font-bold text-white flex items-center gap-2">
+            <Ticket className="w-5 h-5 text-emerald-400" /> Recent Pass Issuances
+          </h3>
+          <Link href="/guests" className="text-xs text-[#E8913A] hover:underline font-bold">
+            View All Passes &rarr;
+          </Link>
+        </div>
 
-          <CardContent className="p-4 space-y-3">
-            {pools.map((pool) => {
-              const namedCount = pool.entries?.length || 0;
+        <div className="space-y-3">
+          {recentPasses.length === 0 ? (
+            <div className="p-8 text-center bg-[#131F2E] border border-slate-800 rounded-2xl text-slate-500 text-sm">
+              No passes issued yet. Click &quot;Sell a Pass&quot; to issue the first pass!
+            </div>
+          ) : (
+            recentPasses.map((p: any) => {
+              const bandObj = Array.isArray(p.band) ? p.band[0] : p.band;
+              const sellerObj = Array.isArray(p.seller) ? p.seller[0] : p.seller;
+              const groupObj = Array.isArray(sellerObj?.groups) ? sellerObj.groups[0] : sellerObj?.groups;
+              const paymentObj = Array.isArray(p.payments) ? p.payments[0] : p.payments;
+
               return (
-                <div key={pool.id} className="p-3 bg-[#0E1724] rounded-xl border border-[#24364A] flex items-center justify-between text-xs">
+                <div
+                  key={p.id}
+                  className="p-4 sm:p-5 bg-[#131F2E] border border-slate-800 rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3"
+                >
                   <div>
-                    <span className="font-bold text-white block">{pool.name}</span>
-                    <span className="text-[10px] text-slate-400">{namedCount} of {pool.total_count} Named</span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-bold text-base text-[#E8913A]">{p.pass_code}</span>
+                      <span className="text-white font-bold text-base">{p.donor_name}</span>
+                      <span className="text-xs text-slate-400 font-mono">({p.donor_phone})</span>
+                    </div>
+                    <div className="text-xs text-slate-400 mt-1">
+                      {bandObj?.label || 'General'} • Seller: {sellerObj?.full_name || 'N/A'}{' '}
+                      {groupObj?.name ? `[${groupObj.name}]` : ''}
+                    </div>
                   </div>
-                  <Badge className="bg-purple-950 text-purple-300 border border-purple-800 font-mono font-bold">
-                    {pool.total_count} seats
-                  </Badge>
+
+                  <div className="text-left sm:text-right w-full sm:w-auto border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-800">
+                    <div className="font-mono font-bold text-base text-emerald-400">
+                      ₹{(paymentObj?.amount || bandObj?.price || 0).toLocaleString('en-IN')}
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      {new Date(p.created_at).toLocaleDateString('en-IN')}
+                    </div>
+                  </div>
                 </div>
               );
-            })}
-
-            {isSuperOrSystemAdmin && (
-              <Link href="/setup">
-                <Button variant="outline" size="sm" className="w-full bg-[#1A2839] hover:bg-[#24364A] text-slate-300 text-xs border-[#2A3F55] h-8 mt-2">
-                  Manage Quotas & Fill Names
-                </Button>
-              </Link>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Recent Sales Activity Feed */}
-        <Card className="bg-[#131F2E] border-[#223345] rounded-2xl shadow-xl overflow-hidden lg:col-span-2">
-          <CardHeader className="bg-[#0E1724] pb-3 border-b border-[#223345]">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base font-bold text-white flex items-center gap-2">
-                <Ticket className="w-4 h-4 text-emerald-400" />
-                <span>Recent Team Sales Feed</span>
-              </CardTitle>
-              <Link href="/guests" className="text-xs text-amber-400 hover:underline flex items-center gap-1">
-                <span>View All ({metrics.totalSold})</span>
-                <ArrowUpRight className="w-3.5 h-3.5" />
-              </Link>
-            </div>
-            <CardDescription className="text-xs text-slate-400">
-              Live updates across all team member sales.
-            </CardDescription>
-          </CardHeader>
-
-          <CardContent className="p-4">
-            {recentSales.length === 0 ? (
-              <div className="p-8 text-center text-slate-500 text-xs">
-                No passes recorded yet. Click &quot;Sell a Pass&quot; to begin.
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {recentSales.map((sale) => {
-                  const bandConfig = BANDS_CONFIG.find(c => c.id === sale.band_id);
-                  return (
-                    <div 
-                      key={sale.id} 
-                      className="p-3 bg-[#0E1724] rounded-xl border border-[#24364A] flex items-center justify-between text-xs hover:bg-[#122232] transition-colors"
-                    >
-                      <div className="flex items-center gap-3">
-                        <span className="font-mono text-xs font-bold text-amber-400">
-                          {sale.pass_code}
-                        </span>
-                        <div>
-                          <span className="font-bold text-white block">{sale.donor_name}</span>
-                          <span className="text-[10px] text-slate-400">
-                            Sold by {sale.seller?.full_name || 'Team'} • {sale.donor_phone}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <Badge className={`${bandConfig?.bgColor || 'bg-amber-500/10'} ${bandConfig?.textColor || 'text-amber-400'} border ${bandConfig?.borderColor || 'border-amber-500/30'} text-[10px] font-bold`}>
-                          {sale.band?.name || 'Band'}
-                        </Badge>
-                        <Badge className={`text-[10px] ${sale.payment_status === 'paid' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-amber-950 text-amber-300 border border-amber-800'}`}>
-                          {sale.payment_status === 'paid' ? 'Paid' : 'Pending'}
-                        </Badge>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+            })
+          )}
+        </div>
       </div>
     </div>
   );

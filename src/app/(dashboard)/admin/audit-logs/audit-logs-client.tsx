@@ -3,30 +3,14 @@
 import { useState } from 'react';
 import { format } from 'date-fns';
 import { 
-  Clock, 
   Search, 
-  Filter, 
   ChevronDown, 
   ChevronRight, 
-  History,
-  ShieldAlert,
-  User,
-  Tag,
-  CheckCircle2,
-  AlertTriangle
+  History
 } from 'lucide-react';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { 
-  Select, 
-  SelectContent, 
-  SelectItem, 
-  SelectTrigger, 
-  SelectValue 
-} from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { AuditLog } from '@/lib/types';
 
 interface AuditLogsClientProps {
@@ -42,14 +26,14 @@ export function AuditLogsClient({ logs }: AuditLogsClientProps) {
   const actionTypes = Array.from(new Set(logs.map(l => l.action))).sort();
 
   const filteredLogs = logs.filter(log => {
-    const userName = log.profiles?.full_name || '';
-    const userEmail = log.profiles?.email || '';
+    const actorName = log.actor_name || '';
+    const loginId = log.actor_login_id || '';
     const entityId = log.entity_id || '';
-    const detailsStr = JSON.stringify(log.details || {});
+    const detailsStr = JSON.stringify(log.after_json || log.before_json || {});
 
     const matchesSearch = 
-      userName.toLowerCase().includes(search.toLowerCase()) ||
-      userEmail.toLowerCase().includes(search.toLowerCase()) ||
+      actorName.toLowerCase().includes(search.toLowerCase()) ||
+      loginId.toLowerCase().includes(search.toLowerCase()) ||
       entityId.toLowerCase().includes(search.toLowerCase()) ||
       detailsStr.toLowerCase().includes(search.toLowerCase());
 
@@ -59,171 +43,166 @@ export function AuditLogsClient({ logs }: AuditLogsClientProps) {
   });
 
   const getActionBadgeColor = (action: string) => {
-    switch (action) {
-      case 'CHECK_IN':
-      case 'CHECKIN_VERIFIED':
-        return 'bg-sky-950 text-sky-300 border-sky-800';
-      case 'OVERRIDE':
-        return 'bg-red-950 text-red-300 border-red-700 font-bold';
-      case 'PRICE_SET':
-      case 'update_row_tier':
-        return 'bg-amber-950 text-amber-300 border-amber-800';
-      case 'RESERVE':
-      case 'allocate_rows':
-        return 'bg-purple-950 text-purple-300 border-purple-800';
-      case 'RELEASE':
-      case 'release_rows':
-        return 'bg-rose-950 text-rose-300 border-rose-800';
-      case 'SPONSOR_TAG':
-      case 'SPONSOR_CREATE':
-        return 'bg-emerald-950 text-emerald-300 border-emerald-800';
-      case 'GROUP_CREATE':
-      case 'GROUP_ASSIGN':
-        return 'bg-indigo-950 text-indigo-300 border-indigo-800';
-      default:
-        return 'bg-slate-800 text-slate-300 border-slate-700';
-    }
+    if (action.includes('CANCEL')) return 'bg-red-500/10 text-red-400 border-red-500/30';
+    if (action.includes('MOVE')) return 'bg-purple-500/10 text-purple-400 border-purple-500/30';
+    if (action.includes('PASS_ISSUE')) return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30';
+    if (action.includes('CHECKIN')) return 'bg-blue-500/10 text-blue-400 border-blue-500/30';
+    if (action.includes('SPONSOR')) return 'bg-amber-500/10 text-amber-400 border-amber-500/30';
+    return 'bg-slate-800 text-slate-300 border-slate-700';
   };
 
   return (
-    <div className="space-y-6">
-      {/* 1. Header & Filters */}
-      <Card className="bg-[#131F2E] border-[#223345] rounded-2xl p-4">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="relative">
-            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-            <Input
-              placeholder="Search user, entity ID, or details..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="pl-9 h-9 text-xs bg-[#1A2839] border-[#2A3F55] text-white"
-            />
-          </div>
+    <div className="space-y-4">
+      {/* Search and Filters */}
+      <Card className="bg-[#0B1724] border-[#1D3249]">
+        <CardContent className="p-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
+              <Input
+                placeholder="Search action, actor, ID, or JSON payload..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-9 bg-[#07111C] border-[#1D3249] text-white text-xs h-10"
+              />
+            </div>
 
-          <div>
-            <Select value={actionFilter} onValueChange={v => v && setActionFilter(v)}>
-              <SelectTrigger className="h-9 text-xs bg-[#1A2839] border-[#2A3F55] text-white">
-                <SelectValue placeholder="Filter by Action" />
+            <Select value={actionFilter} onValueChange={(v) => v && setActionFilter(v)}>
+              <SelectTrigger className="bg-[#07111C] border-[#1D3249] text-white text-xs h-10">
+                <SelectValue placeholder="All Actions" />
               </SelectTrigger>
-              <SelectContent className="bg-[#131F2E] border-[#223345] text-white max-h-64">
-                <SelectItem value="all">All Actions ({logs.length})</SelectItem>
-                {actionTypes.map(action => (
-                  <SelectItem key={action} value={action}>
-                    {action}
+              <SelectContent className="bg-[#0B1724] border-[#1D3249] text-white">
+                <SelectItem value="all">All Action Types</SelectItem>
+                {actionTypes.map((act) => (
+                  <SelectItem key={act} value={act}>
+                    {act}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
-
-          <div className="flex items-center justify-end text-xs text-slate-400">
-            Showing <strong className="text-white mx-1">{filteredLogs.length}</strong> of {logs.length} audit records
-          </div>
-        </div>
-      </Card>
-
-      {/* 2. Audit Logs Table */}
-      <Card className="bg-[#131F2E] border-[#223345] rounded-2xl shadow-xl overflow-hidden">
-        <CardHeader className="bg-[#0E1724] pb-3 border-b border-[#223345]">
-          <CardTitle className="text-base font-bold text-white flex items-center gap-2">
-            <History className="w-5 h-5 text-[#E8913A]" />
-            Immutable Audit Trail & System Events
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader className="bg-[#0E1724]">
-                <TableRow className="border-[#223345] text-xs">
-                  <TableHead className="w-8"></TableHead>
-                  <TableHead className="text-slate-300 font-semibold">Timestamp</TableHead>
-                  <TableHead className="text-slate-300 font-semibold">User / Operator</TableHead>
-                  <TableHead className="text-slate-300 font-semibold">Action</TableHead>
-                  <TableHead className="text-slate-300 font-semibold">Target Entity</TableHead>
-                  <TableHead className="text-slate-300 font-semibold">Entity ID</TableHead>
-                  <TableHead className="text-slate-300 font-semibold">Details Summary</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredLogs.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={7} className="text-center py-12 text-slate-400">
-                      No audit logs match the current filters.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  filteredLogs.map(log => {
-                    const isExpanded = expandedId === log.id;
-                    const dateFormatted = log.created_at 
-                      ? format(new Date(log.created_at), 'dd MMM yyyy, HH:mm:ss')
-                      : '—';
-
-                    return (
-                      <tbody key={log.id}>
-                        <TableRow 
-                          onClick={() => setExpandedId(isExpanded ? null : log.id)}
-                          className="border-[#1E2D3D] hover:bg-[#1A2839]/60 cursor-pointer text-xs transition-colors"
-                        >
-                          <TableCell className="text-slate-500 py-3 pl-3">
-                            {isExpanded ? (
-                              <ChevronDown className="w-4 h-4 text-amber-400" />
-                            ) : (
-                              <ChevronRight className="w-4 h-4 text-slate-500" />
-                            )}
-                          </TableCell>
-
-                          <TableCell className="font-mono text-slate-400 whitespace-nowrap">
-                            {dateFormatted}
-                          </TableCell>
-
-                          <TableCell className="font-medium text-white">
-                            <div>{log.profiles?.full_name || 'System'}</div>
-                            <span className="text-[10px] text-slate-400 block">{log.profiles?.email}</span>
-                          </TableCell>
-
-                          <TableCell>
-                            <span className={`px-2 py-0.5 rounded-md font-mono text-[11px] font-bold border ${getActionBadgeColor(log.action)}`}>
-                              {log.action}
-                            </span>
-                          </TableCell>
-
-                          <TableCell className="text-slate-300 uppercase font-semibold text-[11px]">
-                            {log.entity_type}
-                          </TableCell>
-
-                          <TableCell className="font-mono text-amber-300 text-xs max-w-[140px] truncate" title={log.entity_id || ''}>
-                            {log.entity_id || '—'}
-                          </TableCell>
-
-                          <TableCell className="font-mono text-slate-400 text-[11px] max-w-xs truncate" title={JSON.stringify(log.details)}>
-                            {JSON.stringify(log.details)}
-                          </TableCell>
-                        </TableRow>
-
-                        {/* Expandable JSON details row */}
-                        {isExpanded && (
-                          <TableRow className="bg-[#0A1420] border-[#1E2D3D]">
-                            <TableCell colSpan={7} className="p-4 pl-12 text-xs">
-                              <div className="space-y-2">
-                                <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider block">
-                                  Full Event Payload (JSON):
-                                </span>
-                                <pre className="p-3 bg-[#060D15] rounded-xl border border-[#1E3347] font-mono text-slate-300 text-[11px] overflow-x-auto whitespace-pre-wrap">
-                                  {JSON.stringify(log.details, null, 2)}
-                                </pre>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        )}
-                      </tbody>
-                    );
-                  })
-                )}
-              </TableBody>
-            </Table>
-          </div>
         </CardContent>
       </Card>
+
+      {/* Logs Table */}
+      <div className="bg-[#0B1724] rounded-2xl border border-[#1D3249] overflow-hidden shadow-xl">
+        <div className="p-4 border-b border-[#1D3249] flex items-center justify-between">
+          <h2 className="text-sm font-bold text-white flex items-center gap-2">
+            <History className="w-4 h-4 text-amber-400" />
+            <span>Activity Events</span>
+            <span className="px-2 py-0.5 rounded-full bg-[#07111C] text-slate-300 border border-[#1D3249] text-[11px]">
+              {filteredLogs.length} events
+            </span>
+          </h2>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr className="bg-[#07111C] text-slate-400 border-b border-[#1D3249]">
+                <th className="p-3 pl-4 w-8"></th>
+                <th className="p-3 whitespace-nowrap">Timestamp</th>
+                <th className="p-3">Actor</th>
+                <th className="p-3">Action</th>
+                <th className="p-3">Entity</th>
+                <th className="p-3">Entity ID</th>
+                <th className="p-3 pr-4">Payload Summary</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#1D3249]/60 text-slate-200">
+              {filteredLogs.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="p-12 text-center text-slate-500 text-xs">
+                    No audit records match your filters.
+                  </td>
+                </tr>
+              ) : (
+                filteredLogs.map((log) => {
+                  const isExpanded = expandedId === log.id;
+                  const dateFormatted = log.at 
+                    ? format(new Date(log.at), 'dd MMM yyyy, HH:mm:ss')
+                    : '—';
+                  const payload = log.after_json || log.before_json || {};
+
+                  return (
+                    <tbody key={log.id} className="border-b border-[#1D3249]/40">
+                      <tr 
+                        onClick={() => setExpandedId(isExpanded ? null : log.id)}
+                        className="hover:bg-[#0E2032] cursor-pointer transition-colors"
+                      >
+                        <td className="p-3 pl-4 text-slate-500">
+                          {isExpanded ? (
+                            <ChevronDown className="w-4 h-4 text-amber-400" />
+                          ) : (
+                            <ChevronRight className="w-4 h-4 text-slate-500" />
+                          )}
+                        </td>
+
+                        <td className="p-3 font-mono text-slate-400 whitespace-nowrap text-[11px]">
+                          {dateFormatted}
+                        </td>
+
+                        <td className="p-3">
+                          <div className="font-medium text-white">{log.actor_name || 'System'}</div>
+                          {log.actor_login_id && (
+                            <span className="text-[10px] text-slate-400 font-mono block">
+                              @{log.actor_login_id}
+                            </span>
+                          )}
+                        </td>
+
+                        <td className="p-3">
+                          <span className={`px-2 py-0.5 rounded-md font-mono text-[10px] font-bold border ${getActionBadgeColor(log.action)}`}>
+                            {log.action}
+                          </span>
+                        </td>
+
+                        <td className="p-3 uppercase font-semibold text-[10px] text-slate-300">
+                          {log.entity}
+                        </td>
+
+                        <td className="p-3 font-mono text-amber-400 text-[11px] max-w-[140px] truncate" title={log.entity_id || ''}>
+                          {log.entity_id || '—'}
+                        </td>
+
+                        <td className="p-3 pr-4 font-mono text-slate-400 text-[10px] max-w-xs truncate" title={JSON.stringify(payload)}>
+                          {JSON.stringify(payload)}
+                        </td>
+                      </tr>
+
+                      {isExpanded && (
+                        <tr className="bg-[#07111C]">
+                          <td colSpan={7} className="p-4 pl-12">
+                            <div className="space-y-3">
+                              <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider block">
+                                Full Audit Payload (Before & After State):
+                              </span>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <div className="p-3 bg-[#0B1724] rounded-xl border border-[#1D3249]">
+                                  <span className="text-[10px] font-bold text-slate-400 block mb-1">Before State:</span>
+                                  <pre className="font-mono text-slate-300 text-[10px] overflow-x-auto whitespace-pre-wrap">
+                                    {JSON.stringify(log.before_json || {}, null, 2)}
+                                  </pre>
+                                </div>
+                                <div className="p-3 bg-[#0B1724] rounded-xl border border-[#1D3249]">
+                                  <span className="text-[10px] font-bold text-slate-400 block mb-1">After State:</span>
+                                  <pre className="font-mono text-slate-300 text-[10px] overflow-x-auto whitespace-pre-wrap">
+                                    {JSON.stringify(log.after_json || {}, null, 2)}
+                                  </pre>
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }

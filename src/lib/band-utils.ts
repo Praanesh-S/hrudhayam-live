@@ -1,73 +1,110 @@
 import { SupabaseClient } from '@supabase/supabase-js';
-import { Band, ReservedPool, Sale } from './types';
-import { BANDS_CONFIG } from './constants';
+import { Band } from './types';
+import crypto from 'crypto';
 
 /**
- * Fetch all bands with live aggregated sales metrics.
+ * Fetch all bands with live aggregated metrics derived from passes, payments, and soft holds.
+ * Rule R5: Oversell block accounts for both sold passes and active soft holds.
  */
 export async function fetchBandsWithMetrics(supabase: SupabaseClient): Promise<Band[]> {
-  // 1. Fetch all bands
+  // 1. Fetch bands
   const { data: bandsData, error: bandsError } = await supabase
     .from('bands')
     .select('*')
-    .order('display_order', { ascending: true });
+    .order('sort_order', { ascending: true });
 
   if (bandsError || !bandsData) {
     console.error('Error fetching bands:', bandsError);
     return [];
   }
 
-  // 2. Fetch all active (non-cancelled) sales
-  const { data: salesData, error: salesError } = await supabase
-    .from('sales')
-    .select('id, band_id, payment_status, standard_price, collected_amount, discount_amount, cancelled')
-    .eq('cancelled', false);
+  // 2. Fetch active passes
+  const { data: passesData, error: passesError } = await supabase
+    .from('passes')
+    .select(`
+      id,
+      band_id,
+      status,
+      payments (
+        amount,
+        status
+      )
+    `)
+    .neq('status', 'cancelled');
 
-  if (salesError) {
-    console.error('Error fetching sales for band metrics:', salesError);
+  if (passesError) {
+    console.error('Error fetching passes for metrics:', passesError);
   }
 
-  const activeSales = salesData || [];
+  // 3. Fetch active soft holds
+  const nowIso = new Date().toISOString();
+  const { data: holdsData, error: holdsError } = await supabase
+    .from('soft_holds')
+    .select('band_id, count')
+    .eq('status', 'active')
+    .gt('expires_at', nowIso);
 
-  // Group sales by band_id
-  const salesByBand = new Map<string, typeof activeSales>();
-  for (const sale of activeSales) {
-    const list = salesByBand.get(sale.band_id) || [];
-    list.push(sale);
-    salesByBand.set(sale.band_id, list);
+  if (holdsError) {
+    console.error('Error fetching soft holds for metrics:', holdsError);
+  }
+
+  const activePasses = passesData || [];
+  const activeHolds = holdsData || [];
+
+  // Group passes by band_id
+  const passesByBand = new Map<string, typeof activePasses>();
+  for (const p of activePasses) {
+    const list = passesByBand.get(p.band_id) || [];
+    list.push(p);
+    passesByBand.set(p.band_id, list);
+  }
+
+  // Group holds by band_id
+  const holdsByBand = new Map<string, number>();
+  for (const h of activeHolds) {
+    const current = holdsByBand.get(h.band_id) || 0;
+    holdsByBand.set(h.band_id, current + (h.count || 0));
   }
 
   return bandsData.map((b) => {
-    const bandSales = salesByBand.get(b.id) || [];
-    const soldCount = bandSales.length;
-    const remainingCount = Math.max(0, b.total_capacity - soldCount);
+    const bandPasses = passesByBand.get(b.id) || [];
+    const soldCount = bandPasses.length;
+    const holdsCount = holdsByBand.get(b.id) || 0;
+    const totalAllocated = b.total_allocated ?? 0;
+    const remainingCount = Math.max(0, totalAllocated - soldCount - holdsCount);
 
     let collectedAmount = 0;
     let pendingAmount = 0;
-    let discountAmount = 0;
 
-    for (const s of bandSales) {
-      discountAmount += s.discount_amount || 0;
-      if (s.payment_status === 'paid') {
-        collectedAmount += s.collected_amount || (s.standard_price - (s.discount_amount || 0));
+    for (const p of bandPasses) {
+      const paymentList = (p as any).payments;
+      if (Array.isArray(paymentList) && paymentList.length > 0) {
+        for (const pay of paymentList) {
+          if (pay.status === 'received') {
+            collectedAmount += pay.amount || 0;
+          } else {
+            pendingAmount += pay.amount || 0;
+          }
+        }
       } else {
-        pendingAmount += (s.standard_price - (s.discount_amount || 0));
+        // Fallback to band price if payment record not joined
+        collectedAmount += b.price;
       }
     }
 
     return {
       ...b,
       sold_count: soldCount,
+      active_holds_count: holdsCount,
       remaining_count: remainingCount,
       collected_amount: collectedAmount,
       pending_amount: pendingAmount,
-      discount_amount: discountAmount,
     };
   });
 }
 
 /**
- * Generate a guaranteed unique pass code.
+ * Generate a cryptographically unguessable pass code (e.g. HL-7K3X9A).
  */
 export async function generateUniquePassCode(supabase: SupabaseClient): Promise<string> {
   let isUnique = false;
@@ -76,12 +113,12 @@ export async function generateUniquePassCode(supabase: SupabaseClient): Promise<
 
   while (!isUnique && attempts < 20) {
     attempts++;
-    // Generate random 4-digit number between 1000 and 9999
-    const num = Math.floor(1000 + Math.random() * 9000);
-    code = `HL-${num}`;
+    // 6-character random alphanumeric string
+    const randomHex = crypto.randomBytes(3).toString('hex').toUpperCase();
+    code = `HL-${randomHex}`;
 
     const { data } = await supabase
-      .from('sales')
+      .from('passes')
       .select('id')
       .eq('pass_code', code)
       .maybeSingle();
@@ -92,61 +129,95 @@ export async function generateUniquePassCode(supabase: SupabaseClient): Promise<
   }
 
   if (!isUnique) {
-    code = `HL-${Date.now().toString().slice(-4)}`;
+    code = `HL-${Date.now().toString().slice(-6)}`;
   }
 
   return code;
 }
 
 /**
- * Fetch high-level event summary statistics.
+ * Fetch high-level event summary metrics for the Fill/Goal Dashboard.
+ * Rule R7: Participating clubs are ring-fenced and excluded from competition/revenue calculations.
  */
 export async function fetchEventSummaryMetrics(supabase: SupabaseClient) {
-  const [bands, salesRes, poolsRes] = await Promise.all([
+  const [bands, passesRes, sponsorsRes, protectedRes, settingsRes] = await Promise.all([
     fetchBandsWithMetrics(supabase),
     supabase
-      .from('sales')
-      .select('id, payment_status, collected_amount, standard_price, discount_amount, checked_in, cancelled')
-      .eq('cancelled', false),
+      .from('passes')
+      .select('id, status, source, payments(amount, status)')
+      .neq('status', 'cancelled'),
     supabase
-      .from('reserved_pools')
-      .select('id, total_count'),
+      .from('sponsors')
+      .select('id, amount, status'),
+    supabase
+      .from('protected_blocks')
+      .select('id, seat_count'),
+    supabase
+      .from('app_settings_v2')
+      .select('key, value')
+      .in('key', ['aed_station_cost', 'aed_target_stations']),
   ]);
 
-  const activeSales = salesRes.data || [];
-  const pools = poolsRes.data || [];
+  const allPasses = passesRes.data || [];
+  // Exclude participating club passes from normal sales metrics per §11
+  const normalPasses = allPasses.filter(p => p.source !== 'participating_club');
 
-  const totalCapacity = bands.reduce((sum, b) => sum + b.total_capacity, 0);
-  const totalSold = activeSales.length;
-  const totalRemaining = Math.max(0, totalCapacity - totalSold);
-  const totalCheckedIn = activeSales.filter(s => s.checked_in).length;
+  const totalCapacity = bands.reduce((sum, b) => sum + (b.total_allocated || 0), 0);
+  const totalSold = normalPasses.length;
+  const totalRemaining = bands.reduce((sum, b) => sum + (b.remaining_count || 0), 0);
+  const totalCheckedIn = allPasses.filter(p => p.status === 'used').length;
 
-  let totalCollected = 0;
-  let totalPending = 0;
-  let totalDiscounts = 0;
+  let totalPassesCollected = 0;
+  let totalPassesPending = 0;
 
-  for (const s of activeSales) {
-    totalDiscounts += s.discount_amount || 0;
-    if (s.payment_status === 'paid') {
-      totalCollected += s.collected_amount || (s.standard_price - (s.discount_amount || 0));
-    } else {
-      totalPending += (s.standard_price - (s.discount_amount || 0));
+  for (const p of normalPasses) {
+    const payList = (p as any).payments;
+    if (Array.isArray(payList)) {
+      for (const pay of payList) {
+        if (pay.status === 'received') {
+          totalPassesCollected += pay.amount || 0;
+        } else {
+          totalPassesPending += pay.amount || 0;
+        }
+      }
     }
   }
 
-  const potentialRevenue = totalCollected + totalPending;
-  const totalReservedSeats = pools.reduce((sum, p) => sum + (p.total_count || 0), 0);
+  // Sponsor amounts
+  const sponsors = sponsorsRes.data || [];
+  const sponsorsReceived = sponsors.filter(s => s.status === 'received').reduce((sum, s) => sum + s.amount, 0);
+  const sponsorsCommitted = sponsors.filter(s => s.status === 'committed').reduce((sum, s) => sum + s.amount, 0);
+
+  const totalCollected = totalPassesCollected + sponsorsReceived;
+  const totalPending = totalPassesPending + sponsorsCommitted;
+  const totalRaised = totalCollected;
+
+  const totalProtectedSeats = (protectedRes.data || []).reduce((sum, pb) => sum + (pb.seat_count || 0), 0);
+
+  // Settings for AED stations
+  const settingsMap = new Map((settingsRes.data || []).map(s => [s.key, s.value]));
+  const stationCost = Number(settingsMap.get('aed_station_cost')) || 150000;
+  const targetStations = Number(settingsMap.get('aed_target_stations')) || 25;
+  const fundedStations = Math.floor(totalRaised / stationCost);
+  const partialStationPercent = Math.min(100, Math.round(((totalRaised % stationCost) / stationCost) * 100));
 
   return {
+    bands,
     totalCapacity,
     totalSold,
     totalRemaining,
     totalCheckedIn,
+    totalPassesCollected,
+    totalPassesPending,
+    sponsorsReceived,
+    sponsorsCommitted,
     totalCollected,
     totalPending,
-    totalDiscounts,
-    potentialRevenue,
-    totalReservedSeats,
-    bands,
+    totalRaised,
+    totalProtectedSeats,
+    stationCost,
+    targetStations,
+    fundedStations,
+    partialStationPercent,
   };
 }

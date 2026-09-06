@@ -431,22 +431,22 @@ export function EmailClient({ isSuperAdmin, teamMembers, userId, initialGuests }
   return (
     <div className="space-y-6">
       {/* Top Channel Tabs */}
-      <div className="flex items-center gap-3 bg-[#131F2E] p-3 rounded-2xl border border-[#223345]">
+      <div className="flex flex-wrap items-center gap-2.5 bg-[#131F2E] p-2 sm:p-3 rounded-2xl border border-[#223345]">
         <Button
           variant={activeTab === 'email' ? 'default' : 'outline'}
-          className={activeTab === 'email' ? 'bg-[#1A2839] text-white border-[#2A3F55] font-bold text-xs gap-1.5' : 'bg-transparent text-slate-400 border-transparent text-xs gap-1.5'}
+          className={activeTab === 'email' ? 'bg-[#E8913A] text-slate-950 font-black text-xs gap-1.5 shadow-md h-10 px-4 rounded-xl' : 'bg-transparent hover:bg-slate-800/60 text-slate-400 hover:text-white border-transparent text-xs gap-1.5 h-10 px-4 rounded-xl'}
           onClick={() => setActiveTab('email')}
         >
-          <Mail className="w-4 h-4 text-amber-400" />
+          <Mail className="w-4 h-4" />
           <span>Email Broadcast</span>
         </Button>
 
         <Button
           variant={activeTab === 'whatsapp' ? 'default' : 'outline'}
-          className={activeTab === 'whatsapp' ? 'bg-[#1A2839] text-white border-[#2A3F55] font-bold text-xs gap-1.5' : 'bg-transparent text-slate-400 border-transparent text-xs gap-1.5'}
+          className={activeTab === 'whatsapp' ? 'bg-[#E8913A] text-slate-950 font-black text-xs gap-1.5 shadow-md h-10 px-4 rounded-xl' : 'bg-transparent hover:bg-slate-800/60 text-slate-400 hover:text-white border-transparent text-xs gap-1.5 h-10 px-4 rounded-xl'}
           onClick={() => setActiveTab('whatsapp')}
         >
-          <MessageSquare className="w-4 h-4 text-emerald-400" />
+          <MessageSquare className="w-4 h-4" />
           <span>WhatsApp Hub ({filteredWhatsAppGuests.length} Contacts)</span>
         </Button>
       </div>

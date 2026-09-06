@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { createClient } from '@/lib/supabase/server';
+import { getSessionUser } from '@/lib/auth/session';
 import { ReactNode } from 'react';
 import { AppRole } from '@/lib/types';
 import { Lock } from 'lucide-react';
@@ -11,25 +11,14 @@ interface RoleGateProps {
 }
 
 export async function RoleGate({ allowedRoles, children, fallback }: RoleGateProps) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
 
   if (!user) {
     redirect('/login');
   }
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', user.id)
-    .single();
-
-  if (!profile) {
-    redirect('/onboard');
-  }
-
   // If the user's role is not in the list of allowed roles
-  if (!allowedRoles.includes(profile.role)) {
+  if (!allowedRoles.includes(user.role)) {
     if (fallback) {
       return <>{fallback}</>;
     }

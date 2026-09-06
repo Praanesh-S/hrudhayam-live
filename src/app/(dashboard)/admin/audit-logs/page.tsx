@@ -1,46 +1,70 @@
 export const dynamic = 'force-dynamic';
 
 import { redirect } from 'next/navigation';
-import { createClient } from '@/lib/supabase/server';
+import { getSessionUser } from '@/lib/auth/session';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { RoleGate } from '@/components/layout/RoleGate';
 import { AuditLogsClient } from './audit-logs-client';
+import { AuditLog } from '@/lib/types';
 
 export const metadata = {
   title: 'Audit Logs | Hrudhayam LIVE',
 };
 
 export default async function AuditLogsPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
 
-  if (!user) redirect('/login');
+  if (!user || (user.role !== 'super_admin' && user.role !== 'system_admin')) {
+    redirect('/dashboard');
+  }
 
   const adminClient = createAdminClient();
 
-  const { data: logs } = await adminClient
-    .from('audit_logs')
+  // Query audit_log with actor details
+  const { data: logsData } = await adminClient
+    .from('audit_log')
     .select(`
-      *,
-      profiles:user_id ( full_name, email, role )
+      id,
+      actor_user_id,
+      action,
+      entity,
+      entity_id,
+      before_json,
+      after_json,
+      at,
+      actor:users(
+        login_id,
+        role,
+        members(full_name)
+      )
     `)
-    .order('created_at', { ascending: false })
+    .order('at', { ascending: false })
     .limit(500);
 
-  return (
-    <RoleGate allowedRoles={['super_admin', 'system_admin']}>
-      <div className="space-y-6 max-w-7xl mx-auto pb-12">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white mb-1">
-            System & Operational Audit Logs
-          </h1>
-          <p className="text-slate-500 dark:text-slate-400 text-xs">
-            Immutable system audit trail tracking band capacities, sales, cancellations, and gate admissions.
-          </p>
-        </div>
+  const formattedLogs: AuditLog[] = (logsData || []).map((l: any) => ({
+    id: l.id,
+    actor_user_id: l.actor_user_id,
+    action: l.action,
+    entity: l.entity,
+    entity_id: l.entity_id,
+    before_json: l.before_json,
+    after_json: l.after_json,
+    at: l.at,
+    actor_name: l.actor?.members?.full_name || l.actor?.login_id || 'System',
+    actor_login_id: l.actor?.login_id,
+  }));
 
-        <AuditLogsClient logs={(logs as any) || []} />
+  return (
+    <div className="space-y-6 max-w-7xl mx-auto pb-16">
+      <div>
+        <h1 className="text-3xl sm:text-4xl font-black tracking-tight text-white mb-1">
+          System Audit Trail (§15)
+        </h1>
+        <p className="text-slate-400 text-sm">
+          Immutable event log recording all pass sales, group moves, band capacity adjustments, cancellations, and gate admissions.
+        </p>
       </div>
-    </RoleGate>
+
+      <AuditLogsClient logs={formattedLogs} />
+    </div>
   );
 }

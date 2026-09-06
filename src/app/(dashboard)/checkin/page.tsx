@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic';
-import { createClient } from '@/lib/supabase/server';
-import { RoleGate } from '@/components/layout/RoleGate';
+
+import { getSessionUser } from '@/lib/auth/session';
+import { redirect } from 'next/navigation';
 import { CheckinClient } from './checkin-client';
 
 export const metadata = {
@@ -8,33 +9,24 @@ export const metadata = {
 };
 
 export default async function CheckinPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) return null;
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, door_duty')
-    .eq('id', user.id)
-    .single();
+  const user = await getSessionUser();
+  if (!user) redirect('/login');
 
   return (
-    <RoleGate allowedRoles={['super_admin', 'sub_admin', 'system_admin']}>
-      <div className="flex flex-col gap-6">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">Gate Scanner & Check-in</h1>
-          <p className="text-slate-500 dark:text-slate-400 text-sm">
-            Scan donor WhatsApp QR codes or enter pass codes for gate admission.
-          </p>
-        </div>
-        
-        <CheckinClient 
-          isSuperAdmin={profile?.role === 'super_admin'} 
-          isSystemAdmin={profile?.role === 'system_admin'}
-          hasDoorDuty={!!profile?.door_duty} 
-        />
+    <div className="flex flex-col gap-6 max-w-xl mx-auto pb-16">
+      <div>
+        <h1 className="text-3xl sm:text-4xl font-black tracking-tight text-white">
+          Gate Scanner & Check-in
+        </h1>
+        <p className="text-slate-400 text-sm sm:text-base mt-1">
+          Scan donor WhatsApp QR codes or enter pass codes / physical ticket serials for admission.
+        </p>
       </div>
-    </RoleGate>
+
+      <CheckinClient
+        currentUser={user}
+        isSuperOrSystemAdmin={user.role === 'super_admin' || user.role === 'system_admin'}
+      />
+    </div>
   );
 }

@@ -1,120 +1,140 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Sale, Band, Profile } from '@/lib/types';
-import { formatINR, BANDS_CONFIG } from '@/lib/constants';
-import { updateSaleDetails, recordIssuance, cancelSale, reassignSale } from './actions';
-import { formatWhatsAppMessage, getWhatsAppShareUrl } from '@/lib/whatsapp';
+import { Band, Group, Pass } from '@/lib/types';
+import { AuthUser } from '@/lib/auth/session';
+import { formatINR } from '@/lib/constants';
+import { updatePassDonorDetails } from './actions';
+import { formatDonorPassMessage, getWhatsAppUrl } from '@/lib/whatsapp';
 import { toast } from 'sonner';
 import { 
   Search, 
-  Filter, 
   Share2, 
-  Printer, 
   Edit3, 
-  XCircle, 
-  UserCheck, 
-  ShieldAlert, 
   CheckCircle2, 
   Clock, 
-  UserCog, 
   Download, 
   Phone,
-  Sparkles,
-  RotateCcw
+  ExternalLink,
+  QrCode,
+  Tag,
+  XCircle,
+  RotateCcw,
+  Users
 } from 'lucide-react';
 
 interface GuestsClientProps {
-  initialSales: Sale[];
+  initialPasses: any[];
   bands: Band[];
-  teamMembers: Profile[];
-  currentUser: Profile;
+  groups: Group[];
+  currentUser: AuthUser;
 }
 
-export function GuestsClient({ initialSales, bands, teamMembers, currentUser }: GuestsClientProps) {
-  const [sales, setSales] = useState<Sale[]>(initialSales);
+export function GuestsClient({ initialPasses, bands, groups, currentUser }: GuestsClientProps) {
+  const [passes, setPasses] = useState<any[]>(initialPasses);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedBandFilter, setSelectedBandFilter] = useState<string>('all');
-  const [selectedPaymentFilter, setSelectedPaymentFilter] = useState<string>('all');
-  const [selectedIssuanceFilter, setSelectedIssuanceFilter] = useState<string>('all');
-  const [selectedSellerFilter, setSelectedSellerFilter] = useState<string>('all');
+  const [bandFilter, setBandFilter] = useState('all');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [paymentFilter, setPaymentFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [groupFilter, setGroupFilter] = useState('all');
 
-  // Inline Edit Dialog state
-  const [editingSale, setEditingSale] = useState<Sale | null>(null);
+  // Edit Modal State
+  const [editingPass, setEditingPass] = useState<any | null>(null);
   const [editName, setEditName] = useState('');
   const [editPhone, setEditPhone] = useState('');
   const [editEmail, setEditEmail] = useState('');
-  const [editPaymentStatus, setEditPaymentStatus] = useState<'paid' | 'pending'>('paid');
-  const [editComment, setEditComment] = useState('');
   const [isSavingEdit, setIsSavingEdit] = useState(false);
 
-  // Protected Cancel Dialog state (System Admin only)
-  const [cancellingSale, setCancellingSale] = useState<Sale | null>(null);
-  const [cancelReason, setCancelReason] = useState('');
-  const [isCancelling, setIsCancelling] = useState(false);
-
-  // Protected Reassign Dialog state (System Admin only)
-  const [reassigningSale, setReassigningSale] = useState<Sale | null>(null);
-  const [reassignName, setReassignName] = useState('');
-  const [reassignPhone, setReassignPhone] = useState('');
-  const [reassignNotes, setReassignNotes] = useState('');
-  const [isReassigning, setIsReassigning] = useState(false);
-
-  const isSystemAdmin = currentUser?.role === 'system_admin';
-
-  // Filtered sales
-  const filteredSales = useMemo(() => {
-    return sales.filter((s) => {
-      if (s.cancelled) return false;
-
+  // Filtered Passes
+  const filteredPasses = useMemo(() => {
+    return passes.filter((p) => {
       // Band filter
-      if (selectedBandFilter !== 'all' && s.band_id !== selectedBandFilter) return false;
+      if (bandFilter !== 'all' && p.band_id !== bandFilter) return false;
 
-      // Payment filter
-      if (selectedPaymentFilter !== 'all' && s.payment_status !== selectedPaymentFilter) return false;
+      // Ticket Type filter
+      if (typeFilter !== 'all' && p.ticket_type !== typeFilter) return false;
 
-      // Issuance filter
-      if (selectedIssuanceFilter === 'whatsapp' && s.issuance_type !== 'whatsapp') return false;
-      if (selectedIssuanceFilter === 'printed' && s.issuance_type !== 'printed') return false;
-      if (selectedIssuanceFilter === 'unissued' && s.issuance_type != null) return false;
+      // Payment Status filter
+      if (paymentFilter !== 'all') {
+        const paymentStatus = p.payment?.status || 'received';
+        if (paymentStatus !== paymentFilter) return false;
+      }
 
-      // Seller filter
-      if (selectedSellerFilter !== 'all' && s.sold_by !== selectedSellerFilter) return false;
+      // Gate Status filter
+      if (statusFilter !== 'all' && p.status !== statusFilter) return false;
 
-      // Search query (name, phone, pass code)
+      // Group filter
+      if (groupFilter !== 'all') {
+        const sellerGroupId = p.seller?.group_id?.toString();
+        if (sellerGroupId !== groupFilter) return false;
+      }
+
+      // Search query (donor name, phone, pass code, physical serial)
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
-        const matchName = (s.donor_name || '').toLowerCase().includes(q);
-        const matchPhone = (s.donor_phone || '').includes(q);
-        const matchCode = (s.pass_code || '').toLowerCase().includes(q);
-        const matchComment = (s.comment || '').toLowerCase().includes(q);
-        if (!matchName && !matchPhone && !matchCode && !matchComment) return false;
+        const matchName = (p.donor_name || '').toLowerCase().includes(q);
+        const matchPhone = (p.donor_phone || '').includes(q);
+        const matchCode = (p.pass_code || '').toLowerCase().includes(q);
+        const matchSerial = (p.physical_serial || '').toLowerCase().includes(q);
+        const matchSeller = (p.seller?.full_name || '').toLowerCase().includes(q);
+        if (!matchName && !matchPhone && !matchCode && !matchSerial && !matchSeller) return false;
       }
 
       return true;
     });
-  }, [sales, selectedBandFilter, selectedPaymentFilter, selectedIssuanceFilter, selectedSellerFilter, searchQuery]);
+  }, [passes, bandFilter, typeFilter, paymentFilter, statusFilter, groupFilter, searchQuery]);
 
-  // Open edit modal
-  const handleOpenEdit = (sale: Sale) => {
-    setEditingSale(sale);
-    setEditName(sale.donor_name || '');
-    setEditPhone(sale.donor_phone || '');
-    setEditEmail(sale.donor_email || '');
-    setEditPaymentStatus(sale.payment_status || 'paid');
-    setEditComment(sale.comment || '');
+  // Overall statistics
+  const stats = useMemo(() => {
+    const total = passes.length;
+    const digital = passes.filter(p => p.ticket_type === 'digital').length;
+    const physical = passes.filter(p => p.ticket_type === 'physical').length;
+    const checkedIn = passes.filter(p => p.status === 'used').length;
+    const received = passes.filter(p => (p.payment?.status || 'received') === 'received').length;
+    const pending = passes.filter(p => p.payment?.status === 'pending').length;
+
+    return { total, digital, physical, checkedIn, received, pending };
+  }, [passes]);
+
+  // Handle WhatsApp Resend
+  const handleResendWhatsApp = (pass: any) => {
+    const bandLabel = pass.band?.label || pass.band?.name || 'Seating Band';
+    const paymentStatus = pass.payment?.status || 'received';
+    const message = formatDonorPassMessage({
+      donorName: pass.donor_name,
+      donorPhone: pass.donor_phone,
+      bandLabel,
+      passCode: pass.pass_code,
+      ticketType: pass.ticket_type,
+      physicalSerial: pass.physical_serial,
+      paymentStatus,
+      language: 'en',
+    });
+
+    const url = getWhatsAppUrl(pass.donor_phone, message);
+    window.open(url, '_blank');
+    toast.success(`WhatsApp opened for ${pass.donor_name}`);
   };
 
-  // Save edit
+  // Open Edit Modal
+  const handleOpenEdit = (pass: any) => {
+    setEditingPass(pass);
+    setEditName(pass.donor_name || '');
+    setEditPhone(pass.donor_phone || '');
+    setEditEmail(pass.donor_email || '');
+  };
+
+  // Save Edit
   const handleSaveEdit = async () => {
-    if (!editingSale) return;
+    if (!editingPass) return;
     if (!editName.trim()) {
       toast.error('Donor name is required');
       return;
@@ -127,12 +147,10 @@ export function GuestsClient({ initialSales, bands, teamMembers, currentUser }: 
 
     setIsSavingEdit(true);
     try {
-      const res = await updateSaleDetails(editingSale.id, {
-        donor_name: editName,
+      const res = await updatePassDonorDetails(editingPass.id, {
+        donor_name: editName.trim(),
         donor_phone: cleanPhone,
-        donor_email: editEmail,
-        payment_status: editPaymentStatus,
-        comment: editComment,
+        donor_email: editEmail.trim() || null,
       });
 
       if (!res.success) {
@@ -140,477 +158,434 @@ export function GuestsClient({ initialSales, bands, teamMembers, currentUser }: 
         return;
       }
 
-      setSales(prev => prev.map(s => {
-        if (s.id === editingSale.id) {
+      setPasses(prev => prev.map(p => {
+        if (p.id === editingPass.id) {
           return {
-            ...s,
+            ...p,
             donor_name: editName.trim(),
             donor_phone: cleanPhone,
             donor_email: editEmail.trim() || null,
-            payment_status: editPaymentStatus,
-            comment: editComment.trim() || null,
           };
         }
-        return s;
+        return p;
       }));
 
-      toast.success('Sale details updated successfully');
-      setEditingSale(null);
+      toast.success('Donor details updated successfully');
+      setEditingPass(null);
     } catch (err: any) {
-      toast.error('Error saving sale details');
+      toast.error('Error saving details');
     } finally {
       setIsSavingEdit(false);
     }
   };
 
-  // Send WhatsApp
-  const handleSendWhatsApp = async (sale: Sale) => {
-    if (sale.issuance_type === 'printed') {
-      toast.error('GOLDEN RULE: Pass was already issued as a printed ticket. Cannot switch to WhatsApp.');
-      return;
-    }
-
-    try {
-      if (!sale.issuance_type) {
-        await recordIssuance(sale.id, 'whatsapp');
-        setSales(prev => prev.map(s => s.id === sale.id ? { ...s, issuance_type: 'whatsapp', issued_at: new Date().toISOString() } : s));
-      }
-
-      const bandName = sale.band?.name || 'Seating Band';
-      const message = formatWhatsAppMessage({
-        donorName: sale.donor_name,
-        donorPhone: sale.donor_phone,
-        passCode: sale.pass_code,
-        bandName,
-        paymentStatus: sale.payment_status,
-      });
-
-      const url = getWhatsAppShareUrl(sale.donor_phone, message);
-      window.open(url, '_blank');
-      toast.success(`WhatsApp pass link opened for ${sale.donor_name}`);
-    } catch (err: any) {
-      toast.error('Error sending WhatsApp pass');
-    }
-  };
-
-  // Print PDF
-  const handlePrintPDF = async (sale: Sale) => {
-    if (sale.issuance_type === 'whatsapp') {
-      toast.error('GOLDEN RULE: Pass was already issued via WhatsApp. Cannot switch to Printed Ticket.');
-      return;
-    }
-
-    try {
-      if (!sale.issuance_type) {
-        await recordIssuance(sale.id, 'printed');
-        setSales(prev => prev.map(s => s.id === sale.id ? { ...s, issuance_type: 'printed', issued_at: new Date().toISOString() } : s));
-      }
-
-      const res = await fetch('/api/tickets/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ passCode: sale.pass_code }),
-      });
-
-      if (!res.ok) throw new Error('Download failed');
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `Hrudhayam-Pass-${sale.pass_code}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-
-      toast.success(`Printable ticket downloaded for ${sale.pass_code}`);
-    } catch (err: any) {
-      toast.error('Error downloading printable pass');
-    }
-  };
-
-  // Cancel Sale (System Admin only)
-  const handleConfirmCancel = async () => {
-    if (!cancellingSale) return;
-    setIsCancelling(true);
-    try {
-      const res = await cancelSale(cancellingSale.id, cancelReason);
-      if (!res.success) {
-        toast.error(res.error || 'Failed to cancel sale');
-        return;
-      }
-
-      setSales(prev => prev.filter(s => s.id !== cancellingSale.id));
-      toast.success(`Pass ${cancellingSale.pass_code} cancelled and released back to band`);
-      setCancellingSale(null);
-      setCancelReason('');
-    } catch (err: any) {
-      toast.error('Error cancelling sale');
-    } finally {
-      setIsCancelling(false);
-    }
-  };
-
-  // Reassign Sale (System Admin only)
-  const handleConfirmReassign = async () => {
-    if (!reassigningSale) return;
-    if (!reassignName.trim() || !reassignPhone.trim()) {
-      toast.error('New donor name and phone number required');
-      return;
-    }
-
-    setIsReassigning(true);
-    try {
-      const res = await reassignSale(reassigningSale.id, reassignName, reassignPhone, reassignNotes);
-      if (!res.success) {
-        toast.error(res.error || 'Failed to reassign sale');
-        return;
-      }
-
-      setSales(prev => prev.map(s => {
-        if (s.id === reassigningSale.id) {
-          return {
-            ...s,
-            donor_name: reassignName.trim(),
-            donor_phone: reassignPhone.replace(/\D/g, '').slice(-10),
-            reassigned_to: `${reassignName.trim()} (${reassignPhone})`,
-          };
-        }
-        return s;
-      }));
-
-      toast.success(`Pass ${reassigningSale.pass_code} reassigned to ${reassignName}`);
-      setReassigningSale(null);
-    } catch (err: any) {
-      toast.error('Error reassigning sale');
-    } finally {
-      setIsReassigning(false);
-    }
+  const handleResetFilters = () => {
+    setSearchQuery('');
+    setBandFilter('all');
+    setTypeFilter('all');
+    setPaymentFilter('all');
+    setStatusFilter('all');
+    setGroupFilter('all');
   };
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto pb-16">
-      {/* 1. Filter and Search Bar */}
-      <Card className="bg-[#131F2E] border-[#223345] rounded-2xl shadow-xl p-4 sm:p-5 space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-          {/* Search Box */}
-          <div className="relative sm:col-span-2 lg:col-span-1">
-            <Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
-            <Input
-              placeholder="Search name, phone, pass code..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 bg-[#1A2839] border-[#2A3F55] text-white text-xs h-10"
-            />
-          </div>
+    <div className="space-y-6">
+      {/* 1. Statistics Bar */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <Card className="bg-[#0B1724] border-[#1D3249]">
+          <CardContent className="p-4 text-center">
+            <p className="text-xs text-slate-400 font-medium">Total Passes</p>
+            <p className="text-2xl font-black text-white mt-1">{stats.total}</p>
+          </CardContent>
+        </Card>
 
-          {/* Band Filter */}
-          <div>
-            <Select value={selectedBandFilter} onValueChange={(val) => val && setSelectedBandFilter(val)}>
-              <SelectTrigger className="bg-[#1A2839] border-[#2A3F55] text-white text-xs h-10">
+        <Card className="bg-[#0B1724] border-[#1D3249]">
+          <CardContent className="p-4 text-center">
+            <p className="text-xs text-blue-400 font-medium">Digital Passes</p>
+            <p className="text-2xl font-black text-blue-300 mt-1">{stats.digital}</p>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-[#0B1724] border-[#1D3249]">
+          <CardContent className="p-4 text-center">
+            <p className="text-xs text-amber-400 font-medium">Physical Serials</p>
+            <p className="text-2xl font-black text-amber-300 mt-1">{stats.physical}</p>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-[#0B1724] border-[#1D3249]">
+          <CardContent className="p-4 text-center">
+            <p className="text-xs text-emerald-400 font-medium">Gate Checked-In</p>
+            <p className="text-2xl font-black text-emerald-400 mt-1">{stats.checkedIn}</p>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-[#0B1724] border-[#1D3249]">
+          <CardContent className="p-4 text-center">
+            <p className="text-xs text-green-400 font-medium">Payment Received</p>
+            <p className="text-2xl font-black text-green-400 mt-1">{stats.received}</p>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-[#0B1724] border-[#1D3249]">
+          <CardContent className="p-4 text-center">
+            <p className="text-xs text-yellow-400 font-medium">Payment Pending</p>
+            <p className="text-2xl font-black text-yellow-400 mt-1">{stats.pending}</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* 2. Search & Filter Bar */}
+      <Card className="bg-[#0B1724] border-[#1D3249]">
+        <CardContent className="p-4 space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+            {/* Search Box */}
+            <div className="lg:col-span-2 relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
+              <Input
+                placeholder="Search donor, phone, pass code, serial..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9 bg-[#07111C] border-[#1D3249] text-white text-xs h-10"
+              />
+            </div>
+
+            {/* Band Filter */}
+            <Select value={bandFilter} onValueChange={(v) => v && setBandFilter(v)}>
+              <SelectTrigger className="bg-[#07111C] border-[#1D3249] text-white text-xs h-10">
                 <SelectValue placeholder="All Bands" />
               </SelectTrigger>
-              <SelectContent className="bg-[#131F2E] border-[#223345] text-white">
+              <SelectContent className="bg-[#0B1724] border-[#1D3249] text-white">
                 <SelectItem value="all">All Bands</SelectItem>
-                {bands.map(b => (
-                  <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                {bands.map((b) => (
+                  <SelectItem key={b.id} value={b.id}>
+                    {b.label} (₹{(b.price || 0).toLocaleString('en-IN')})
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-          </div>
 
-          {/* Payment Status Filter */}
-          <div>
-            <Select value={selectedPaymentFilter} onValueChange={(val) => val && setSelectedPaymentFilter(val)}>
-              <SelectTrigger className="bg-[#1A2839] border-[#2A3F55] text-white text-xs h-10">
-                <SelectValue placeholder="Payment Status" />
+            {/* Ticket Type Filter */}
+            <Select value={typeFilter} onValueChange={(v) => v && setTypeFilter(v)}>
+              <SelectTrigger className="bg-[#07111C] border-[#1D3249] text-white text-xs h-10">
+                <SelectValue placeholder="All Pass Types" />
               </SelectTrigger>
-              <SelectContent className="bg-[#131F2E] border-[#223345] text-white">
+              <SelectContent className="bg-[#0B1724] border-[#1D3249] text-white">
+                <SelectItem value="all">All Pass Types</SelectItem>
+                <SelectItem value="digital">Digital (QR Pass)</SelectItem>
+                <SelectItem value="physical">Physical (Serial Number)</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {/* Payment Filter */}
+            <Select value={paymentFilter} onValueChange={(v) => v && setPaymentFilter(v)}>
+              <SelectTrigger className="bg-[#07111C] border-[#1D3249] text-white text-xs h-10">
+                <SelectValue placeholder="All Payments" />
+              </SelectTrigger>
+              <SelectContent className="bg-[#0B1724] border-[#1D3249] text-white">
                 <SelectItem value="all">All Payments</SelectItem>
-                <SelectItem value="paid">✓ Paid / Received</SelectItem>
-                <SelectItem value="pending">⏳ Pending Payment</SelectItem>
+                <SelectItem value="received">Payment Received</SelectItem>
+                <SelectItem value="pending">Payment Pending</SelectItem>
               </SelectContent>
             </Select>
-          </div>
 
-          {/* Issuance Filter */}
-          <div>
-            <Select value={selectedIssuanceFilter} onValueChange={(val) => val && setSelectedIssuanceFilter(val)}>
-              <SelectTrigger className="bg-[#1A2839] border-[#2A3F55] text-white text-xs h-10">
-                <SelectValue placeholder="Pass Issuance" />
+            {/* Group Filter */}
+            <Select value={groupFilter} onValueChange={(v) => v && setGroupFilter(v)}>
+              <SelectTrigger className="bg-[#07111C] border-[#1D3249] text-white text-xs h-10">
+                <SelectValue placeholder="All Teams" />
               </SelectTrigger>
-              <SelectContent className="bg-[#131F2E] border-[#223345] text-white">
-                <SelectItem value="all">All Issuance Types</SelectItem>
-                <SelectItem value="whatsapp">📱 WhatsApp Pass</SelectItem>
-                <SelectItem value="printed">🖨️ Printed Ticket</SelectItem>
-                <SelectItem value="unissued">⚪ Unissued Passes</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Team Member Filter */}
-          <div>
-            <Select value={selectedSellerFilter} onValueChange={(val) => val && setSelectedSellerFilter(val)}>
-              <SelectTrigger className="bg-[#1A2839] border-[#2A3F55] text-white text-xs h-10">
-                <SelectValue placeholder="Sold By Member" />
-              </SelectTrigger>
-              <SelectContent className="bg-[#131F2E] border-[#223345] text-white">
-                <SelectItem value="all">All Team Members</SelectItem>
-                {teamMembers.map(m => (
-                  <SelectItem key={m.id} value={m.id}>{m.full_name || m.email}</SelectItem>
+              <SelectContent className="bg-[#0B1724] border-[#1D3249] text-white">
+                <SelectItem value="all">All Teams</SelectItem>
+                {groups.map((g) => (
+                  <SelectItem key={g.id} value={g.id.toString()}>
+                    Team {g.id}: {g.name}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
-        </div>
 
-        <div className="flex items-center justify-between text-xs text-slate-400 pt-2 border-t border-[#223345]">
-          <span>Showing <strong className="text-white">{filteredSales.length}</strong> sales</span>
-          <span className="text-[11px] text-amber-400">
-            * All sales are visible to the entire team. Any member can fix small details.
-          </span>
-        </div>
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pt-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-slate-400 shrink-0">Gate Status:</span>
+              <div className="flex flex-wrap gap-1">
+                {['all', 'issued', 'used', 'cancelled'].map((st) => (
+                  <button
+                    key={st}
+                    onClick={() => setStatusFilter(st)}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
+                      statusFilter === st
+                        ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
+                        : 'bg-[#07111C] text-slate-400 hover:text-white border border-[#1D3249]'
+                    }`}
+                  >
+                    {st === 'all' ? 'All' : st === 'issued' ? 'Issued' : st === 'used' ? 'Gate Checked-In' : 'Cancelled'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleResetFilters}
+              className="text-xs text-slate-400 hover:text-white h-7 gap-1 shrink-0 self-end sm:self-auto"
+            >
+              <RotateCcw className="w-3 h-3" />
+              Reset Filters
+            </Button>
+          </div>
+        </CardContent>
       </Card>
 
-      {/* 2. Unified Sales Table */}
-      <Card className="bg-[#131F2E] border-[#223345] rounded-2xl shadow-xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="bg-[#0E1724] border-b border-[#223345] text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-                <th className="p-3.5">Pass Code</th>
-                <th className="p-3.5">Donor Name</th>
-                <th className="p-3.5">Mobile (WhatsApp)</th>
-                <th className="p-3.5">Price Band</th>
-                <th className="p-3.5">Amount</th>
-                <th className="p-3.5">Payment</th>
-                <th className="p-3.5">Issuance</th>
-                <th className="p-3.5">Sold By</th>
-                <th className="p-3.5">Check-in</th>
-                <th className="p-3.5 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#1E2D3D] text-slate-300">
-              {filteredSales.length === 0 ? (
-                <tr>
-                  <td colSpan={10} className="p-8 text-center text-slate-500">
-                    No sales matching the active filters.
-                  </td>
+      {/* 3. Passes Table */}
+      <div className="bg-[#0B1724] rounded-2xl border border-[#1D3249] overflow-hidden shadow-xl">
+        <div className="p-4 border-b border-[#1D3249] flex items-center justify-between">
+          <h2 className="text-base font-bold text-white flex items-center gap-2">
+            <span>Passes</span>
+            <Badge variant="outline" className="bg-[#07111C] text-amber-400 border-amber-500/30 text-xs">
+              {filteredPasses.length} records
+            </Badge>
+          </h2>
+        </div>
+
+        {filteredPasses.length === 0 ? (
+          <div className="py-16 text-center text-slate-500 text-sm">
+            No passes found matching your filters.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-[#07111C] text-slate-400 border-b border-[#1D3249] font-medium">
+                  <th className="p-3 pl-4">Pass Code / Serial</th>
+                  <th className="p-3">Donor</th>
+                  <th className="p-3">Band</th>
+                  <th className="p-3">Type</th>
+                  <th className="p-3">Payment</th>
+                  <th className="p-3">Gate Status</th>
+                  <th className="p-3">Seller & Team</th>
+                  <th className="p-3 pr-4 text-right">Actions</th>
                 </tr>
-              ) : (
-                filteredSales.map((sale) => {
-                  const bandConfig = BANDS_CONFIG.find(c => c.id === sale.band_id);
-                  const isPaid = sale.payment_status === 'paid';
-                  const isWhatsAppIssued = sale.issuance_type === 'whatsapp';
-                  const isPrintedIssued = sale.issuance_type === 'printed';
+              </thead>
+              <tbody className="divide-y divide-[#1D3249]/60 text-slate-200">
+                {filteredPasses.map((p) => {
+                  const isPhysical = p.ticket_type === 'physical';
+                  const isUsed = p.status === 'used';
+                  const isCancelled = p.status === 'cancelled';
+                  const paymentStatus = p.payment?.status || 'received';
+                  const isPaid = paymentStatus === 'received';
+                  const bandLabel = p.band?.label || p.band?.name || 'Band';
+                  const bandPrice = p.band?.price || p.band?.standard_price || 0;
 
                   return (
-                    <tr key={sale.id} className="hover:bg-[#16273A] transition-colors">
-                      <td className="p-3.5 font-mono font-bold text-amber-400">
-                        {sale.pass_code}
+                    <tr key={p.id} className="hover:bg-[#0E2032] transition-colors">
+                      {/* Pass Code / Serial */}
+                      <td className="p-3 pl-4 font-mono font-bold text-white">
+                        <div className="flex flex-col">
+                          <span className="text-amber-400">{p.pass_code}</span>
+                          {isPhysical && p.physical_serial && (
+                            <span className="text-[11px] text-slate-400 font-mono">
+                              Serial: {p.physical_serial}
+                            </span>
+                          )}
+                        </div>
                       </td>
 
-                      <td className="p-3.5 font-bold text-white">
-                        {sale.donor_name}
-                        {sale.comment && (
-                          <span className="block text-[10px] text-slate-500 font-normal italic">
-                            {sale.comment}
+                      {/* Donor */}
+                      <td className="p-3">
+                        <div className="flex flex-col">
+                          <span className="font-bold text-white flex items-center gap-1.5">
+                            {p.donor_name}
+                            {p.donor_is_seller_fallback && (
+                              <Badge className="bg-slate-800 text-slate-400 border-slate-700 text-[10px] px-1 py-0">
+                                Seller Fallback
+                              </Badge>
+                            )}
                           </span>
-                        )}
-                        {sale.legacy_seat_id && (
-                          <span className="block text-[9px] text-slate-500 font-mono">
-                            Legacy seat: {sale.legacy_seat_id}
-                          </span>
-                        )}
+                          <a 
+                            href={`tel:${p.donor_phone}`}
+                            className="text-slate-400 hover:text-amber-400 flex items-center gap-1 text-[11px] mt-0.5"
+                          >
+                            <Phone className="w-2.5 h-2.5" />
+                            {p.donor_phone}
+                          </a>
+                          {p.donor_email && (
+                            <span className="text-slate-500 text-[10px]">{p.donor_email}</span>
+                          )}
+                        </div>
                       </td>
 
-                      <td className="p-3.5 font-mono text-slate-400">
-                        {sale.donor_phone}
-                      </td>
-
-                      <td className="p-3.5">
-                        <Badge className={`${bandConfig?.bgColor || 'bg-amber-500/10'} ${bandConfig?.textColor || 'text-amber-400'} border ${bandConfig?.borderColor || 'border-amber-500/30'} text-[10px] font-bold`}>
-                          {sale.band?.name || bandConfig?.name || 'Band'}
+                      {/* Band */}
+                      <td className="p-3">
+                        <Badge className="bg-[#07111C] border-[#2A4668] text-white text-[11px] font-bold">
+                          {bandLabel} • ₹{bandPrice.toLocaleString('en-IN')}
                         </Badge>
                       </td>
 
-                      <td className="p-3.5 font-mono font-bold text-white">
-                        {formatINR(sale.collected_amount || sale.standard_price)}
-                        {sale.discount_amount > 0 && (
-                          <span className="block text-[9px] text-purple-400">
-                            (-{formatINR(sale.discount_amount)})
-                          </span>
-                        )}
-                      </td>
-
-                      <td className="p-3.5">
-                        <Badge className={`text-[10px] font-semibold ${
-                          isPaid 
-                            ? 'bg-emerald-950/80 text-emerald-300 border-emerald-800' 
-                            : 'bg-amber-950/80 text-amber-300 border-amber-800'
-                        }`}>
-                          {isPaid ? '✓ Paid' : '⏳ Pending'}
-                        </Badge>
-                      </td>
-
-                      <td className="p-3.5">
-                        {isWhatsAppIssued ? (
-                          <Badge className="bg-emerald-950 text-emerald-300 border-emerald-800 text-[10px] gap-1">
-                            <Share2 className="w-3 h-3" />
-                            WhatsApp
-                          </Badge>
-                        ) : isPrintedIssued ? (
-                          <Badge className="bg-sky-950 text-sky-300 border-sky-800 text-[10px] gap-1">
-                            <Printer className="w-3 h-3" />
-                            Printed
+                      {/* Type */}
+                      <td className="p-3">
+                        {isPhysical ? (
+                          <Badge className="bg-amber-500/10 text-amber-400 border-amber-500/30 gap-1 text-[11px]">
+                            <Tag className="w-3 h-3" />
+                            Physical
                           </Badge>
                         ) : (
-                          <Badge variant="outline" className="text-slate-500 border-slate-700 text-[10px]">
-                            Unissued
+                          <Badge className="bg-blue-500/10 text-blue-400 border-blue-500/30 gap-1 text-[11px]">
+                            <QrCode className="w-3 h-3" />
+                            Digital
                           </Badge>
                         )}
                       </td>
 
-                      <td className="p-3.5 text-slate-400 text-[11px]">
-                        {sale.seller?.full_name || 'Team Member'}
+                      {/* Payment */}
+                      <td className="p-3">
+                        <div className="flex flex-col gap-0.5">
+                          <Badge className={`text-[10px] w-fit font-bold ${
+                            isPaid
+                              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                              : 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30'
+                          }`}>
+                            {isPaid ? '✓ Paid' : 'Pending'}
+                          </Badge>
+                          {p.payment?.mode && (
+                            <span className="text-[10px] text-slate-500 uppercase font-medium">
+                              {p.payment.mode}
+                            </span>
+                          )}
+                        </div>
                       </td>
 
-                      <td className="p-3.5">
-                        {sale.checked_in ? (
-                          <span className="text-emerald-400 font-bold text-[11px] flex items-center gap-1">
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            Admitted
-                          </span>
+                      {/* Gate Status */}
+                      <td className="p-3">
+                        {isCancelled ? (
+                          <Badge className="bg-red-500/10 text-red-400 border-red-500/30 text-[10px]">
+                            Cancelled
+                          </Badge>
+                        ) : isUsed ? (
+                          <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/40 text-[10px] gap-1">
+                            <CheckCircle2 className="w-3 h-3" />
+                            Gate Checked In
+                          </Badge>
                         ) : (
-                          <span className="text-slate-500 text-[11px]">Not yet</span>
+                          <Badge className="bg-slate-800 text-slate-300 border-slate-700 text-[10px] gap-1">
+                            <Clock className="w-3 h-3 text-slate-400" />
+                            Issued
+                          </Badge>
                         )}
                       </td>
 
-                      <td className="p-3.5 text-right space-x-1.5 whitespace-nowrap">
-                        {/* WhatsApp Send Button */}
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          title={isPrintedIssued ? 'Already issued as Printed ticket' : 'Send via WhatsApp'}
-                          disabled={isPrintedIssued}
-                          onClick={() => handleSendWhatsApp(sale)}
-                          className={`h-7 w-7 rounded-lg ${isPrintedIssued ? 'opacity-30 cursor-not-allowed' : 'text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/50'}`}
-                        >
-                          <Share2 className="w-3.5 h-3.5" />
-                        </Button>
+                      {/* Seller & Team */}
+                      <td className="p-3">
+                        <div className="flex flex-col">
+                          <span className="font-medium text-white">{p.seller?.full_name || 'Direct / System'}</span>
+                          <span className="text-[11px] text-slate-400">
+                            {p.seller?.group?.name ? `Team ${p.seller.group_id}: ${p.seller.group.name}` : '—'}
+                          </span>
+                        </div>
+                      </td>
 
-                        {/* Print PDF Button */}
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          title={isWhatsAppIssued ? 'Already issued as WhatsApp pass' : 'Download Printable PDF'}
-                          disabled={isWhatsAppIssued}
-                          onClick={() => handlePrintPDF(sale)}
-                          className={`h-7 w-7 rounded-lg ${isWhatsAppIssued ? 'opacity-30 cursor-not-allowed' : 'text-sky-400 hover:text-sky-300 hover:bg-sky-950/50'}`}
-                        >
-                          <Printer className="w-3.5 h-3.5" />
-                        </Button>
+                      {/* Actions */}
+                      <td className="p-3 pr-4 text-right whitespace-nowrap">
+                        <div className="inline-flex items-center justify-end gap-1.5">
+                          {/* Resend WhatsApp */}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleResendWhatsApp(p)}
+                            className="h-8 px-2.5 bg-emerald-950/40 border-emerald-700/50 hover:bg-emerald-900/60 text-emerald-300 gap-1 text-xs"
+                            title="Resend WhatsApp confirmation"
+                          >
+                            <Share2 className="w-3.5 h-3.5" />
+                            <span className="hidden sm:inline">WhatsApp</span>
+                          </Button>
 
-                        {/* Inline Edit Button (Open to all) */}
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          title="Edit Donor Details"
-                          onClick={() => handleOpenEdit(sale)}
-                          className="h-7 w-7 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                        </Button>
+                          {/* View Digital Pass */}
+                          <a
+                            href={`/pass/${p.pass_code}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="h-8 px-2.5 rounded-md border border-[#1D3249] bg-[#07111C] hover:bg-[#15283C] text-slate-300 flex items-center gap-1 text-xs transition-colors"
+                            title="View Public Mobile Pass"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                            <span className="hidden sm:inline">Pass</span>
+                          </a>
 
-                        {/* Cancel / Reassign (Protected: System Admin only) */}
-                        {isSystemAdmin ? (
-                          <>
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              title="Reassign Seat (System Admin)"
-                              onClick={() => {
-                                setReassigningSale(sale);
-                                setReassignName(sale.donor_name);
-                                setReassignPhone(sale.donor_phone);
-                              }}
-                              className="h-7 w-7 rounded-lg text-purple-400 hover:text-purple-300 hover:bg-purple-950/50"
+                          {/* Download PDF (Digital Only) */}
+                          {!isPhysical && (
+                            <a
+                              href={`/api/tickets/generate?passCode=${p.pass_code}`}
+                              target="_blank"
+                              download={`Hrudhayam-Pass-${p.pass_code}.pdf`}
+                              className="h-8 px-2 rounded-md border border-[#1D3249] bg-[#07111C] hover:bg-[#15283C] text-slate-300 flex items-center justify-center text-xs transition-colors"
+                              title="Download Printable PDF Ticket"
                             >
-                              <UserCog className="w-3.5 h-3.5" />
-                            </Button>
+                              <Download className="w-3.5 h-3.5" />
+                            </a>
+                          )}
 
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              title="Cancel Seat (System Admin)"
-                              onClick={() => setCancellingSale(sale)}
-                              className="h-7 w-7 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-950/50"
-                            >
-                              <XCircle className="w-3.5 h-3.5" />
-                            </Button>
-                          </>
-                        ) : null}
+                          {/* Edit Donor Details */}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => handleOpenEdit(p)}
+                            className="h-8 w-8 p-0 text-slate-400 hover:text-white"
+                            title="Edit Donor Details"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
-      {/* 3. INLINE EDIT DETAILS DIALOG (Open to all) */}
-      <Dialog open={!!editingSale} onOpenChange={(open) => !open && setEditingSale(null)}>
-        <DialogContent className="bg-[#131F2E] border-[#223345] text-white max-w-md">
+      {/* Edit Donor Details Dialog */}
+      <Dialog open={!!editingPass} onOpenChange={(open) => !open && setEditingPass(null)}>
+        <DialogContent className="bg-[#0B1724] border-[#1D3249] text-white sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-lg font-bold text-white">Edit Sale Details</DialogTitle>
+            <DialogTitle className="text-lg font-bold">Edit Donor Details</DialogTitle>
             <DialogDescription className="text-xs text-slate-400">
-              Update donor contact information and payment status for pass {editingSale?.pass_code}.
+              Update name, phone number, or email for pass{' '}
+              <span className="font-mono text-amber-400 font-bold">{editingPass?.pass_code}</span>.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-3.5 py-2">
-            <div className="space-y-1">
+          <div className="space-y-4 py-3">
+            <div className="space-y-1.5">
               <Label className="text-xs text-slate-300">Donor Name *</Label>
               <Input
                 value={editName}
                 onChange={(e) => setEditName(e.target.value)}
-                className="bg-[#1A2839] border-[#2A3F55] text-white text-xs h-9"
+                placeholder="Full Name"
+                className="bg-[#07111C] border-[#1D3249] text-white text-sm"
               />
             </div>
 
-            <div className="space-y-1">
-              <Label className="text-xs text-slate-300">Mobile Number *</Label>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-slate-300">Phone Number (10 digits) *</Label>
               <Input
                 value={editPhone}
                 onChange={(e) => setEditPhone(e.target.value)}
-                className="bg-[#1A2839] border-[#2A3F55] text-white text-xs h-9 font-mono"
+                placeholder="10-digit mobile number"
+                className="bg-[#07111C] border-[#1D3249] text-white text-sm font-mono"
               />
             </div>
 
-            <div className="space-y-1">
-              <Label className="text-xs text-slate-300">Payment Status *</Label>
-              <Select 
-                value={editPaymentStatus} 
-                onValueChange={(v) => v && setEditPaymentStatus(v as 'paid' | 'pending')}
-              >
-                <SelectTrigger className="bg-[#1A2839] border-[#2A3F55] text-white text-xs h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-[#131F2E] border-[#223345] text-white">
-                  <SelectItem value="paid">✓ Received / Paid</SelectItem>
-                  <SelectItem value="pending">⏳ Pending Collection</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-1">
-              <Label className="text-xs text-slate-300">Comment / Note</Label>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-slate-300">Email Address (optional)</Label>
               <Input
-                value={editComment}
-                onChange={(e) => setEditComment(e.target.value)}
-                className="bg-[#1A2839] border-[#2A3F55] text-white text-xs h-9"
+                type="email"
+                value={editEmail}
+                onChange={(e) => setEditEmail(e.target.value)}
+                placeholder="donor@example.com"
+                className="bg-[#07111C] border-[#1D3249] text-white text-sm"
               />
             </div>
           </div>
@@ -618,135 +593,17 @@ export function GuestsClient({ initialSales, bands, teamMembers, currentUser }: 
           <DialogFooter className="gap-2">
             <Button
               variant="outline"
-              size="sm"
-              onClick={() => setEditingSale(null)}
-              className="bg-[#1A2839] border-[#2A3F55] text-slate-300 text-xs"
+              onClick={() => setEditingPass(null)}
+              className="bg-transparent border-[#1D3249] text-slate-300"
             >
               Cancel
             </Button>
             <Button
-              size="sm"
-              disabled={isSavingEdit}
               onClick={handleSaveEdit}
-              className="bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-bold text-xs"
+              disabled={isSavingEdit}
+              className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold"
             >
               {isSavingEdit ? 'Saving...' : 'Save Changes'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* 4. PROTECTED CANCEL DIALOG (System Admin only) */}
-      <Dialog open={!!cancellingSale} onOpenChange={(open) => !open && setCancellingSale(null)}>
-        <DialogContent className="bg-[#131F2E] border-2 border-red-500/40 text-white max-w-md">
-          <DialogHeader>
-            <div className="flex items-center gap-2 text-red-400 font-bold">
-              <ShieldAlert className="w-5 h-5" />
-              <span>Cancel Seat Sale (System Admin Action)</span>
-            </div>
-            <DialogDescription className="text-xs text-slate-400 pt-1">
-              This will mark pass <strong>{cancellingSale?.pass_code}</strong> as cancelled and release 1 seat back to the {cancellingSale?.band?.name} inventory.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-3 py-2">
-            <div className="p-3 bg-red-950/30 rounded-xl border border-red-800/40 text-xs text-red-200">
-              <strong className="block text-red-300">Protected Integrity Action:</strong>
-              This cancellation will be permanently logged in the audit trail with your name.
-            </div>
-
-            <div className="space-y-1">
-              <Label className="text-xs text-slate-300">Cancellation Reason *</Label>
-              <Input
-                placeholder="e.g. Donor requested refund, duplicate booking"
-                value={cancelReason}
-                onChange={(e) => setCancelReason(e.target.value)}
-                className="bg-[#1A2839] border-[#2A3F55] text-white text-xs h-9"
-              />
-            </div>
-          </div>
-
-          <DialogFooter className="gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setCancellingSale(null)}
-              className="bg-[#1A2839] border-[#2A3F55] text-slate-300 text-xs"
-            >
-              Back
-            </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              disabled={isCancelling}
-              onClick={handleConfirmCancel}
-              className="bg-red-600 hover:bg-red-700 text-white font-bold text-xs"
-            >
-              {isCancelling ? 'Cancelling...' : 'Confirm Cancellation'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* 5. PROTECTED REASSIGN DIALOG (System Admin only) */}
-      <Dialog open={!!reassigningSale} onOpenChange={(open) => !open && setReassigningSale(null)}>
-        <DialogContent className="bg-[#131F2E] border-2 border-purple-500/40 text-white max-w-md">
-          <DialogHeader>
-            <div className="flex items-center gap-2 text-purple-400 font-bold">
-              <UserCog className="w-5 h-5" />
-              <span>Reassign Pass (System Admin Action)</span>
-            </div>
-            <DialogDescription className="text-xs text-slate-400 pt-1">
-              Reassign pass <strong>{reassigningSale?.pass_code}</strong> to a new donor.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-3 py-2">
-            <div className="space-y-1">
-              <Label className="text-xs text-slate-300">New Donor Name *</Label>
-              <Input
-                value={reassignName}
-                onChange={(e) => setReassignName(e.target.value)}
-                className="bg-[#1A2839] border-[#2A3F55] text-white text-xs h-9"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <Label className="text-xs text-slate-300">New Mobile Number *</Label>
-              <Input
-                value={reassignPhone}
-                onChange={(e) => setReassignPhone(e.target.value)}
-                className="bg-[#1A2839] border-[#2A3F55] text-white text-xs h-9 font-mono"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <Label className="text-xs text-slate-300">Reassignment Reason / Note</Label>
-              <Input
-                placeholder="e.g. Transferred upon request of original donor"
-                value={reassignNotes}
-                onChange={(e) => setReassignNotes(e.target.value)}
-                className="bg-[#1A2839] border-[#2A3F55] text-white text-xs h-9"
-              />
-            </div>
-          </div>
-
-          <DialogFooter className="gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setReassigningSale(null)}
-              className="bg-[#1A2839] border-[#2A3F55] text-slate-300 text-xs"
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              disabled={isReassigning}
-              onClick={handleConfirmReassign}
-              className="bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs"
-            >
-              {isReassigning ? 'Reassigning...' : 'Confirm Reassignment'}
             </Button>
           </DialogFooter>
         </DialogContent>

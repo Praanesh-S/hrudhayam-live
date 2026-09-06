@@ -1,25 +1,35 @@
 import { createAdminClient } from '@/lib/supabase/admin';
-import type { AuditAction } from '@/lib/types';
+
+export interface AuditParams {
+  actorUserId?: string | null;
+  action: string;
+  entity: string;
+  entityId?: string | null;
+  beforeJson?: Record<string, unknown> | null;
+  afterJson?: Record<string, unknown> | null;
+}
 
 /**
  * Centralized audit logging utility.
- * Writes immutable audit log entries to public.audit_logs via admin client.
+ * Writes immutable audit log entries to public.audit_log per §4 & §15.
  */
 export async function logAudit(
-  userId: string | null,
-  action: AuditAction,
-  entityType: string,
+  actorUserId: string | null,
+  action: string,
+  entity: string,
   entityId: string | null = null,
-  details: Record<string, unknown> | null = null
+  afterJsonOrDetails: Record<string, unknown> | null = null,
+  beforeJson: Record<string, unknown> | null = null
 ) {
   try {
     const adminClient = createAdminClient();
-    const { error } = await adminClient.from('audit_logs').insert({
-      user_id: userId,
+    const { error } = await adminClient.from('audit_log').insert({
+      actor_user_id: actorUserId,
       action,
-      entity_type: entityType,
+      entity,
       entity_id: entityId,
-      details: details ?? {},
+      before_json: beforeJson ?? null,
+      after_json: afterJsonOrDetails ?? null,
     });
 
     if (error) {

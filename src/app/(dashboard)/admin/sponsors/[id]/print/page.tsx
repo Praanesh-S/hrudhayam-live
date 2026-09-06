@@ -16,7 +16,7 @@ export default async function SponsorPrintPage({ params }: PrintPageProps) {
 
   const { data: sponsor } = await adminClient
     .from('sponsors')
-    .select('*')
+    .select('*, brought_by_member:members(full_name, group_id, group:groups(name)), payment:payments(*)')
     .eq('id', id)
     .maybeSingle();
 
@@ -24,15 +24,8 @@ export default async function SponsorPrintPage({ params }: PrintPageProps) {
     notFound();
   }
 
-  // Fetch tagged sales
-  const { data: sales } = await adminClient
-    .from('sales')
-    .select('*, band:bands(name, standard_price)')
-    .eq('sponsor_id', id)
-    .eq('cancelled', false)
-    .order('created_at');
-
-  const taggedSales = sales || [];
+  const sponsorTier = sponsor.tier || sponsor.sponsor_tier || 'gold_sponsor';
+  const sponsorName = sponsor.sponsor_name || sponsor.name || 'Sponsor';
 
   return (
     <div className="bg-white text-black min-h-screen p-8 print:p-0 font-sans">
@@ -40,12 +33,12 @@ export default async function SponsorPrintPage({ params }: PrintPageProps) {
       <div className="border-b-2 border-black pb-4 mb-6 flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-black uppercase tracking-wider">{EVENT_NAME}</h1>
-          <p className="text-sm font-semibold text-gray-700">Official Sponsor Pass Allocation Voucher</p>
+          <p className="text-sm font-semibold text-gray-700">Official Sponsor Voucher & Entitlement</p>
           <p className="text-xs text-gray-500 mt-1">{EVENT_VENUE} • {EVENT_DATE}</p>
         </div>
         <div className="text-right">
           <span className="inline-block bg-black text-white px-3 py-1 text-xs font-bold uppercase tracking-wider rounded">
-            {formatSponsorTier(sponsor.sponsor_tier as SponsorTierValue)}
+            {formatSponsorTier(sponsorTier as SponsorTierValue)}
           </span>
           <p className="text-xs text-gray-600 mt-1 font-mono">Issued: {new Date().toLocaleDateString()}</p>
         </div>
@@ -55,82 +48,59 @@ export default async function SponsorPrintPage({ params }: PrintPageProps) {
       <div className="border border-gray-300 rounded p-4 mb-6 grid grid-cols-2 gap-4 text-sm">
         <div>
           <span className="text-xs font-bold uppercase text-gray-500 block">Sponsor / Organization</span>
-          <span className="text-lg font-black block">{sponsor.name}</span>
+          <span className="text-xl font-black block mt-0.5">{sponsorName}</span>
+          <span className="text-base font-bold text-amber-900 font-mono mt-1 block">
+            {formatINR(sponsor.amount || 0)} ({sponsor.status === 'received' ? '✓ Paid' : 'Committed'})
+          </span>
           {sponsor.notes && <p className="text-xs text-gray-600 mt-1">{sponsor.notes}</p>}
         </div>
 
-        <div className="space-y-1">
+        <div className="space-y-1.5 text-xs">
           <div>
-            <span className="text-xs font-bold uppercase text-gray-500">Contact Person: </span>
-            <span className="font-semibold">{sponsor.contact_name || 'N/A'}</span>
+            <span className="font-bold uppercase text-gray-500">Contact Person: </span>
+            <span className="font-semibold text-gray-900">{sponsor.contact_name || 'N/A'}</span>
           </div>
           <div>
-            <span className="text-xs font-bold uppercase text-gray-500">Phone / Email: </span>
-            <span className="font-mono text-xs">{sponsor.contact_phone || 'N/A'} {sponsor.contact_email && `• ${sponsor.contact_email}`}</span>
+            <span className="font-bold uppercase text-gray-500">Phone / Email: </span>
+            <span className="font-mono">{sponsor.contact_phone || 'N/A'} {sponsor.contact_email && `• ${sponsor.contact_email}`}</span>
           </div>
           <div>
-            <span className="text-xs font-bold uppercase text-gray-500">Complimentary Entitlement: </span>
-            <span className="font-bold">{sponsor.complimentary_pass_count} Passes</span>
+            <span className="font-bold uppercase text-gray-500">Complimentary Passes: </span>
+            <span className="font-bold text-gray-900">{sponsor.complimentary_pass_count || 0} Passes</span>
           </div>
+          <div>
+            <span className="font-bold uppercase text-gray-500">Brought By: </span>
+            <span className="font-medium text-gray-900">
+              {sponsor.brought_by_member?.full_name 
+                ? `${sponsor.brought_by_member.full_name} (${sponsor.brought_by_member.group?.name || ''})`
+                : 'Direct / General'}
+            </span>
+          </div>
+          {sponsor.payment?.reference_no && (
+            <div>
+              <span className="font-bold uppercase text-gray-500">Payment Reference: </span>
+              <span className="font-mono font-bold text-gray-900">{sponsor.payment.reference_no} ({sponsor.payment.mode})</span>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Allocated Passes Table */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold uppercase tracking-wider">
-            Allocated Admission Passes ({taggedSales.length} Passes)
-          </h3>
-          <span className="text-xs text-gray-500">Admit One Guest Per Pass</span>
-        </div>
-
-        <table className="w-full border-collapse border border-gray-400 text-xs">
-          <thead>
-            <tr className="bg-gray-100 border-b border-gray-400">
-              <th className="border border-gray-400 p-2 text-left">#</th>
-              <th className="border border-gray-400 p-2 text-left">Pass Code</th>
-              <th className="border border-gray-400 p-2 text-left">Admission Band</th>
-              <th className="border border-gray-400 p-2 text-left">Passholder Name</th>
-              <th className="border border-gray-400 p-2 text-left">Phone</th>
-              <th className="border border-gray-400 p-2 text-left">Issuance Channel</th>
-              <th className="border border-gray-400 p-2 text-left">Gate Admission</th>
-            </tr>
-          </thead>
-          <tbody>
-            {taggedSales.length === 0 ? (
-              <tr>
-                <td colSpan={7} className="p-4 text-center text-gray-500 italic">
-                  No passes have been tagged to this sponsor yet.
-                </td>
-              </tr>
-            ) : (
-              taggedSales.map((sale, index) => (
-                <tr key={sale.id} className="border-b border-gray-300">
-                  <td className="border border-gray-400 p-2 font-mono">{index + 1}</td>
-                  <td className="border border-gray-400 p-2 font-bold font-mono text-amber-900">{sale.pass_code}</td>
-                  <td className="border border-gray-400 p-2 font-semibold">{sale.band?.name || 'Seating Band'}</td>
-                  <td className="border border-gray-400 p-2 font-bold">{sale.donor_name}</td>
-                  <td className="border border-gray-400 p-2 font-mono">{sale.donor_phone}</td>
-                  <td className="border border-gray-400 p-2 uppercase font-mono text-[10px]">
-                    {sale.issuance_type || 'Unissued'}
-                  </td>
-                  <td className="border border-gray-400 p-2">
-                    {sale.checked_in ? '✓ Checked In' : 'Valid for Entry'}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+      {/* Complimentary Entitlement Notice */}
+      <div className="border border-gray-300 rounded p-4 mb-6 bg-gray-50 text-xs leading-relaxed">
+        <h3 className="font-bold text-gray-900 uppercase tracking-wider mb-1">Pass Issuance Instructions</h3>
+        <p className="text-gray-600">
+          This sponsor is entitled to <strong className="text-gray-900">{sponsor.complimentary_pass_count || 0} complimentary admission passes</strong>.
+          Admission passes can be issued digitally via WhatsApp e-Pass or as physical printed passes by the System Admin or Group Admin.
+        </p>
       </div>
 
       {/* Footer Notes */}
-      <div className="mt-8 pt-4 border-t border-gray-300 flex items-center justify-between text-[10px] text-gray-500">
-        <p>This voucher is strictly non-transferable and subject to gate verification.</p>
-        <p>Rotary Club of Aarch City Madras • Fundraiser for Public-Access AEDs</p>
+      <div className="mt-12 pt-4 border-t border-gray-300 flex items-center justify-between text-[10px] text-gray-500">
+        <p>This voucher serves as proof of sponsorship contribution to the Public-Access AED project.</p>
+        <p>Rotary Club of Aarch City Madras • All Rights Reserved</p>
       </div>
 
-      {/* Print Trigger script */}
+      {/* Print Trigger */}
       <div className="mt-6 text-center print:hidden">
         <PrintButton />
       </div>

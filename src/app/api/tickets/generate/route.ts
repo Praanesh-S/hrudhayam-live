@@ -31,14 +31,49 @@ async function handleGenerate({ passCode, saleId, seatId }: { passCode?: string 
 
     const adminClient = createAdminClient();
 
-    // 1. Try finding in sales table
+    // 1. Try finding in v2 passes table
+    const { data: pass } = await adminClient
+      .from('passes')
+      .select('*, band:bands(label, price, name, standard_price)')
+      .or(`id.eq.${targetCode},pass_code.eq.${targetCode}`)
+      .maybeSingle();
+
+    if (pass) {
+      if (pass.status === 'cancelled') {
+        return NextResponse.json({ error: 'Pass is cancelled' }, { status: 400 });
+      }
+
+      const bandName = pass.band?.label || pass.band?.name || `₹${pass.band?.price?.toLocaleString('en-IN') || '5,000'} Band`;
+      const qrToken = pass.qr_token || pass.pass_code;
+      const qrCodeBuffer = await generateQrPngBuffer(qrToken);
+
+      const pdfBuffer = await renderToBuffer(
+        React.createElement(TicketPdf, {
+          donorName: pass.donor_name,
+          bandName,
+          passCode: pass.pass_code,
+          qrCodeBuffer,
+          admitCount: 1,
+        }) as any
+      );
+
+      return new NextResponse(new Uint8Array(pdfBuffer), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': `inline; filename="Hrudhayam-Pass-${pass.pass_code}.pdf"`,
+        },
+      });
+    }
+
+    // 2. Fallback to legacy sales table
     let { data: sale } = await adminClient
       .from('sales')
       .select('*, band:bands(name, standard_price)')
       .or(`id.eq.${targetCode},pass_code.eq.${targetCode}`)
       .maybeSingle();
 
-    // 2. If not found, check legacy seats table
+    // 3. If not found, check legacy seats table
     if (!sale) {
       const { data: seat } = await adminClient
         .from('seats')

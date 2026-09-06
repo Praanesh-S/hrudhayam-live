@@ -1,84 +1,66 @@
 export const dynamic = 'force-dynamic';
 
-import { createClient } from '@/lib/supabase/server';
+import { requireUser } from '@/lib/auth/guards';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { RoleGate } from '@/components/layout/RoleGate';
 import { ReportsClient } from './reports-client';
 import { fetchBandsWithMetrics } from '@/lib/band-utils';
-import { redirect } from 'next/navigation';
 
 export const metadata = {
   title: 'Reports & Reconciliation | Hrudhayam LIVE',
 };
 
 export default async function ReportsPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect('/login');
-  }
-
+  const user = await requireUser();
   const adminClient = createAdminClient();
 
-  const { data: profile } = await adminClient
-    .from('profiles')
-    .select('*')
-    .eq('id', user.id)
-    .single();
-
-  if (!profile || !profile.is_active) {
-    redirect('/onboard');
-  }
-
   // Fetch all reports data in parallel
-  const [bands, salesRes, teamRes, sponsorsRes, poolsRes] = await Promise.all([
+  const [bands, passesRes, groupsRes, membersRes, sponsorsRes, clubsRes] = await Promise.all([
     fetchBandsWithMetrics(adminClient),
     adminClient
-      .from('sales')
-      .select('*, band:bands(name, standard_price), seller:profiles!sales_sold_by_fkey(full_name, email)')
+      .from('passes')
+      .select(`
+        *,
+        band:bands(*),
+        seller:members(id, full_name, group_id, group:groups(name)),
+        payment:payments(*)
+      `)
       .order('created_at', { ascending: false }),
     adminClient
-      .from('profiles')
+      .from('groups')
       .select('*')
+      .order('id'),
+    adminClient
+      .from('members')
+      .select('*, group:groups(name)')
       .eq('is_active', true)
       .order('full_name'),
     adminClient
       .from('sponsors')
-      .select('*')
-      .order('name'),
+      .select('*, brought_by_member:members(id, full_name, group_id)')
+      .order('amount', { ascending: false }),
     adminClient
-      .from('reserved_pools')
-      .select('*, entries:reserved_entries(*)')
-      .order('display_order', { ascending: true }),
+      .from('participating_clubs')
+      .select('*, brought_by_member:members(id, full_name, group_id)')
+      .order('created_at', { ascending: false }),
   ]);
 
-  const sales = salesRes.data || [];
-  const teamMembers = teamRes.data || [];
+  const passes = passesRes.data || [];
+  const groups = groupsRes.data || [];
+  const members = membersRes.data || [];
   const sponsors = sponsorsRes.data || [];
-  const pools = poolsRes.data || [];
+  const clubs = clubsRes.data || [];
 
   return (
-    <RoleGate allowedRoles={['super_admin', 'sub_admin', 'system_admin']}>
-      <div className="flex flex-col gap-6">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">
-            Fundraising & Pass Reconciliation Reports
-          </h1>
-          <p className="text-slate-500 dark:text-slate-400 text-sm">
-            Comprehensive audit reports across bands, team members, sponsors, and reserved pools.
-          </p>
-        </div>
-
-        <ReportsClient 
-          bands={bands} 
-          sales={sales}
-          teamMembers={teamMembers}
-          sponsors={sponsors}
-          pools={pools}
-          userRole={profile.role || 'sub_admin'}
-        />
-      </div>
-    </RoleGate>
+    <div className="flex flex-col gap-6 max-w-7xl mx-auto pb-16">
+      <ReportsClient 
+        bands={bands} 
+        passes={passes}
+        groups={groups}
+        members={members}
+        sponsors={sponsors}
+        clubs={clubs}
+        currentUser={user}
+      />
+    </div>
   );
 }

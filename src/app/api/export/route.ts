@@ -1,43 +1,55 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { getSessionUser } from '@/lib/auth/session';
 import { createAdminClient } from '@/lib/supabase/admin';
 import ExcelJS from 'exceljs';
 import { fetchBandsWithMetrics } from '@/lib/band-utils';
 
-export async function GET(req: Request) {
+export async function GET() {
   try {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-
+    const user = await getSessionUser();
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const adminClient = createAdminClient();
 
-    // Fetch all data in parallel
-    const [bands, salesRes, profilesRes, sponsorsRes, poolsRes] = await Promise.all([
+    // Fetch all tables
+    const [bands, passesRes, membersRes, sponsorsRes, clubsRes] = await Promise.all([
       fetchBandsWithMetrics(adminClient),
       adminClient
-        .from('sales')
-        .select('*, band:bands(name, standard_price), seller:profiles!sales_sold_by_fkey(full_name, email), sponsor:sponsors(name)')
-        .eq('cancelled', false)
+        .from('passes')
+        .select(`
+          *,
+          band:bands(label, price),
+          seller:members(full_name, groups(name)),
+          payments(mode, amount, reference_no, status)
+        `)
         .order('created_at', { ascending: false }),
-      adminClient.from('profiles').select('id, full_name, email, role').eq('is_active', true),
-      adminClient.from('sponsors').select('*').order('name'),
-      adminClient.from('reserved_pools').select('*, entries:reserved_entries(*)').order('display_order'),
+      adminClient
+        .from('members')
+        .select('*, groups(name)')
+        .order('group_id')
+        .order('full_name'),
+      adminClient
+        .from('sponsors')
+        .select('*, brought_by:members(full_name)')
+        .order('amount', { ascending: false }),
+      adminClient
+        .from('participating_clubs')
+        .select('*')
+        .order('created_at'),
     ]);
 
-    const sales = salesRes.data || [];
-    const profiles = profilesRes.data || [];
+    const passes = passesRes.data || [];
+    const members = membersRes.data || [];
     const sponsors = sponsorsRes.data || [];
-    const pools = poolsRes.data || [];
+    const clubs = clubsRes.data || [];
 
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'Hrudhayam LIVE 2026';
     workbook.created = new Date();
 
-    const headerFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F2B3C' } } as ExcelJS.Fill;
+    const headerFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF131F2E' } } as ExcelJS.Fill;
     const headerFont = { color: { argb: 'FFFFFFFF' }, bold: true } as ExcelJS.Font;
 
     const styleHeader = (sheet: ExcelJS.Worksheet) => {
@@ -54,204 +66,176 @@ export async function GET(req: Request) {
     // ──────────────────────────────────────────────
     const sheetSummary = workbook.addWorksheet('Summary');
     sheetSummary.columns = [
-      { header: 'Metric', key: 'metric', width: 32 },
+      { header: 'Metric', key: 'metric', width: 35 },
       { header: 'Value', key: 'value', width: 25 },
     ];
 
-    const totalCap = bands.reduce((sum, b) => sum + b.total_capacity, 0);
-    const totalSold = sales.length;
-    const totalRem = Math.max(0, totalCap - totalSold);
-    const totalCollected = sales.filter(s => s.payment_status === 'paid').reduce((sum, s) => sum + (s.collected_amount || s.standard_price), 0);
-    const totalPending = sales.filter(s => s.payment_status === 'pending').reduce((sum, s) => sum + (s.standard_price - (s.discount_amount || 0)), 0);
-    const totalDiscounts = sales.reduce((sum, s) => sum + (s.discount_amount || 0), 0);
-    const totalAdmitted = sales.filter(s => s.checked_in).length;
+    const totalCap = bands.reduce((sum, b) => sum + (b.total_allocated || 0), 0);
+    const activePasses = passes.filter((p) => p.status !== 'cancelled');
+    const totalSold = activePasses.length;
+    const totalRem = bands.reduce((sum, b) => sum + (b.remaining_count || 0), 0);
+    const totalCheckedIn = passes.filter((p) => p.status === 'used').length;
 
-    sheetSummary.addRow({ metric: 'Total Commercial Capacity (All Bands)', value: totalCap });
-    sheetSummary.addRow({ metric: 'Total Seats Sold', value: totalSold });
+    let totalPassesCollected = 0;
+    let totalPassesPending = 0;
+
+    for (const p of activePasses) {
+      const pays = (p as any).payments;
+      if (Array.isArray(pays)) {
+        for (const pay of pays) {
+          if (pay.status === 'received') totalPassesCollected += pay.amount || 0;
+          else totalPassesPending += pay.amount || 0;
+        }
+      }
+    }
+
+    const sponsorsReceived = sponsors.filter((s) => s.status === 'received').reduce((sum, s) => sum + s.amount, 0);
+    const sponsorsCommitted = sponsors.filter((s) => s.status === 'committed').reduce((sum, s) => sum + s.amount, 0);
+    const totalRaised = totalPassesCollected + sponsorsReceived;
+    const fundedStations = Math.floor(totalRaised / 150000);
+
+    sheetSummary.addRow({ metric: 'Total Seating Allocation (All Bands)', value: totalCap });
+    sheetSummary.addRow({ metric: 'Total Passes Issued / Sold', value: totalSold });
     sheetSummary.addRow({ metric: 'Remaining Available Seats', value: totalRem });
-    sheetSummary.addRow({ metric: 'Commercial Occupancy %', value: totalCap > 0 ? `${Math.round((totalSold / totalCap) * 100)}%` : '0%' });
-    sheetSummary.addRow({ metric: 'Confirmed Collected Revenue (INR)', value: totalCollected });
-    sheetSummary.addRow({ metric: 'Pending Revenue (INR)', value: totalPending });
-    sheetSummary.addRow({ metric: 'Total Potential Revenue (INR)', value: totalCollected + totalPending });
-    sheetSummary.addRow({ metric: 'Total Concessions / Discounts Given (INR)', value: totalDiscounts });
-    sheetSummary.addRow({ metric: 'Total Gate Check-ins Admitted', value: totalAdmitted });
+    sheetSummary.addRow({ metric: 'Gate Admissions Admitted', value: totalCheckedIn });
+    sheetSummary.addRow({ metric: 'Pass Sales Revenue Collected (₹)', value: totalPassesCollected });
+    sheetSummary.addRow({ metric: 'Pass Sales Pending (₹)', value: totalPassesPending });
+    sheetSummary.addRow({ metric: 'Sponsorships Received (₹)', value: sponsorsReceived });
+    sheetSummary.addRow({ metric: 'Sponsorships Committed (₹)', value: sponsorsCommitted });
+    sheetSummary.addRow({ metric: 'Total Net Funds Raised (₹)', value: totalRaised });
+    sheetSummary.addRow({ metric: 'Public-Access AED Stations Funded (at ₹1.5L)', value: fundedStations });
     styleHeader(sheetSummary);
 
     // ──────────────────────────────────────────────
-    // Sheet 2: By Price Band
+    // Sheet 2: All Passes
     // ──────────────────────────────────────────────
-    const sheetBands = workbook.addWorksheet('By Price Band');
-    sheetBands.columns = [
-      { header: 'Band Name', key: 'name', width: 22 },
-      { header: 'Standard Price (₹)', key: 'price', width: 18 },
-      { header: 'Total Capacity', key: 'capacity', width: 16 },
-      { header: 'Sold Seats', key: 'sold', width: 14 },
-      { header: 'Remaining Seats', key: 'remaining', width: 16 },
-      { header: 'Collected (₹)', key: 'collected', width: 18 },
-      { header: 'Pending (₹)', key: 'pending', width: 18 },
-      { header: 'Discounts (₹)', key: 'discounts', width: 16 },
-      { header: 'Occupancy %', key: 'occupancy', width: 14 },
+    const sheetPasses = workbook.addWorksheet('All Passes');
+    sheetPasses.columns = [
+      { header: 'Pass Code', key: 'pass_code', width: 14 },
+      { header: 'Price Band', key: 'band', width: 20 },
+      { header: 'Ticket Type', key: 'ticket_type', width: 12 },
+      { header: 'Physical Serial', key: 'serial', width: 15 },
+      { header: 'Donor Name', key: 'donor_name', width: 25 },
+      { header: 'Donor Mobile', key: 'donor_phone', width: 16 },
+      { header: 'Donor Email', key: 'donor_email', width: 25 },
+      { header: 'Seller Member', key: 'seller_name', width: 25 },
+      { header: 'Seller Team', key: 'seller_team', width: 14 },
+      { header: 'Status', key: 'status', width: 12 },
+      { header: 'Gate Admitted At', key: 'used_at', width: 20 },
+      { header: 'Payment Mode', key: 'pay_mode', width: 14 },
+      { header: 'Payment Amount (₹)', key: 'amount', width: 18 },
+      { header: 'Payment Status', key: 'pay_status', width: 14 },
+      { header: 'Reference / UTR', key: 'reference_no', width: 22 },
     ];
 
-    bands.forEach((b) => {
-      const sold = b.sold_count || 0;
-      const cap = b.total_capacity || 0;
-      const rem = b.remaining_count || 0;
-      sheetBands.addRow({
-        name: b.name,
-        price: b.standard_price,
-        capacity: cap,
-        sold,
-        remaining: rem,
-        collected: b.collected_amount || 0,
-        pending: b.pending_amount || 0,
-        discounts: b.discount_amount || 0,
-        occupancy: cap > 0 ? `${Math.round((sold / cap) * 100)}%` : '0%',
+    passes.forEach((p) => {
+      const pay = Array.isArray(p.payments) && p.payments.length > 0 ? p.payments[0] : null;
+
+      sheetPasses.addRow({
+        pass_code: p.pass_code,
+        band: p.band?.label || p.band_id,
+        ticket_type: p.ticket_type,
+        serial: p.physical_serial || '-',
+        donor_name: p.donor_name,
+        donor_phone: p.donor_phone,
+        donor_email: p.donor_email || '-',
+        seller_name: p.seller?.full_name || 'Direct / Fallback',
+        seller_team: p.seller?.groups?.name || '-',
+        status: p.status.toUpperCase(),
+        used_at: p.used_at ? new Date(p.used_at).toLocaleString('en-IN') : '-',
+        pay_mode: pay?.mode ? pay.mode.toUpperCase() : '-',
+        amount: pay?.amount ?? p.band?.price ?? 0,
+        pay_status: pay?.status ? pay.status.toUpperCase() : 'PENDING',
+        reference_no: pay?.reference_no || '-',
       });
     });
-    styleHeader(sheetBands);
+    styleHeader(sheetPasses);
 
     // ──────────────────────────────────────────────
-    // Sheet 3: By Team Member
+    // Sheet 3: Groups & Members
     // ──────────────────────────────────────────────
-    const sheetTeam = workbook.addWorksheet('By Team Member');
-    sheetTeam.columns = [
-      { header: 'Team Member Name', key: 'name', width: 24 },
-      { header: 'Email', key: 'email', width: 28 },
+    const sheetMembers = workbook.addWorksheet('Roster & Attribution');
+    sheetMembers.columns = [
+      { header: 'Team', key: 'team', width: 12 },
+      { header: 'Member Name', key: 'name', width: 30 },
       { header: 'Role', key: 'role', width: 16 },
-      { header: 'Seats Sold', key: 'sold', width: 14 },
-      { header: 'Standard Value (₹)', key: 'standardValue', width: 18 },
-      { header: 'Collected (₹)', key: 'collected', width: 18 },
-      { header: 'Pending (₹)', key: 'pending', width: 18 },
-      { header: 'Discounts (₹)', key: 'discounts', width: 16 },
-      { header: 'WhatsApp Passes', key: 'whatsapp', width: 16 },
-      { header: 'Printed Tickets', key: 'printed', width: 16 },
+      { header: 'Mobile Number', key: 'phone', width: 18 },
+      { header: 'Phone Status', key: 'phone_status', width: 14 },
     ];
 
-    profiles.forEach((p) => {
-      const pSales = sales.filter(s => s.sold_by === p.id);
-      if (pSales.length > 0 || p.role === 'sub_admin' || p.role === 'super_admin') {
-        const sold = pSales.length;
-        const stdVal = pSales.reduce((sum, s) => sum + s.standard_price, 0);
-        const col = pSales.filter(s => s.payment_status === 'paid').reduce((sum, s) => sum + (s.collected_amount || s.standard_price), 0);
-        const pen = pSales.filter(s => s.payment_status === 'pending').reduce((sum, s) => sum + (s.standard_price - (s.discount_amount || 0)), 0);
-        const disc = pSales.reduce((sum, s) => sum + (s.discount_amount || 0), 0);
-        const wa = pSales.filter(s => s.issuance_type === 'whatsapp').length;
-        const pr = pSales.filter(s => s.issuance_type === 'printed').length;
-
-        sheetTeam.addRow({
-          name: p.full_name || 'Team Member',
-          email: p.email,
-          role: p.role || 'sub_admin',
-          sold,
-          standardValue: stdVal,
-          collected: col,
-          pending: pen,
-          discounts: disc,
-          whatsapp: wa,
-          printed: pr,
-        });
-      }
+    members.forEach((m) => {
+      sheetMembers.addRow({
+        team: m.groups?.name || `Team ${m.group_id}`,
+        name: m.full_name,
+        role: m.is_group_admin ? 'Team Coordinator' : 'Member',
+        phone: m.phone_raw,
+        phone_status: m.phone_status.toUpperCase(),
+      });
     });
-    styleHeader(sheetTeam);
+    styleHeader(sheetMembers);
 
     // ──────────────────────────────────────────────
-    // Sheet 4: By Sponsor
+    // Sheet 4: Sponsors
     // ──────────────────────────────────────────────
-    const sheetSponsors = workbook.addWorksheet('By Sponsor');
+    const sheetSponsors = workbook.addWorksheet('Sponsors');
     sheetSponsors.columns = [
-      { header: 'Sponsor Name', key: 'name', width: 26 },
-      { header: 'Sponsor Tier', key: 'tier', width: 20 },
-      { header: 'Complimentary Quota', key: 'quota', width: 20 },
-      { header: 'Passes Tagged', key: 'tagged', width: 16 },
-      { header: 'Gate Checked In', key: 'checkedIn', width: 16 },
+      { header: 'Sponsor Name', key: 'name', width: 30 },
+      { header: 'Tier', key: 'tier', width: 20 },
+      { header: 'Amount (₹)', key: 'amount', width: 16 },
+      { header: 'Status', key: 'status', width: 14 },
+      { header: 'Brought By Member', key: 'brought_by', width: 25 },
+      { header: 'Contact Person', key: 'contact', width: 20 },
+      { header: 'Phone', key: 'phone', width: 16 },
     ];
 
-    sponsors.forEach((sp) => {
-      const spSales = sales.filter(s => s.sponsor_id === sp.id);
+    sponsors.forEach((s) => {
       sheetSponsors.addRow({
-        name: sp.name,
-        tier: sp.sponsor_tier.replace('_', ' '),
-        quota: sp.complimentary_pass_count,
-        tagged: spSales.length,
-        checkedIn: spSales.filter(s => s.checked_in).length,
+        name: s.sponsor_name,
+        tier: s.tier,
+        amount: s.amount,
+        status: s.status.toUpperCase(),
+        brought_by: s.brought_by?.full_name || 'Club Direct',
+        contact: s.contact_name || '-',
+        phone: s.contact_phone || '-',
       });
     });
     styleHeader(sheetSponsors);
 
     // ──────────────────────────────────────────────
-    // Sheet 5: Reserved Quotas
+    // Sheet 5: Participating Clubs
     // ──────────────────────────────────────────────
-    const sheetPools = workbook.addWorksheet('Reserved Quotas');
-    sheetPools.columns = [
-      { header: 'Category', key: 'category', width: 18 },
-      { header: 'Pool Name', key: 'name', width: 26 },
-      { header: 'Set Aside Count', key: 'count', width: 16 },
-      { header: 'Named Guests Count', key: 'named', width: 20 },
+    const sheetClubs = workbook.addWorksheet('Participating Clubs');
+    sheetClubs.columns = [
+      { header: 'Club Name', key: 'name', width: 30 },
+      { header: 'Contact Person', key: 'contact', width: 22 },
+      { header: 'Mobile Number', key: 'phone', width: 18 },
+      { header: 'Entry Fee (₹)', key: 'fee', width: 16 },
+      { header: 'Passes Value (₹)', key: 'passes', width: 16 },
+      { header: 'Net Contribution (₹)', key: 'net', width: 18 },
     ];
 
-    pools.forEach((pool) => {
-      sheetPools.addRow({
-        category: pool.category,
-        name: pool.name,
-        count: pool.total_count,
-        named: pool.entries?.length || 0,
+    clubs.forEach((c) => {
+      sheetClubs.addRow({
+        name: c.club_name,
+        contact: c.contact_name,
+        phone: c.contact_phone,
+        fee: c.entry_fee,
+        passes: c.passes_value,
+        net: c.net_contribution,
       });
     });
-    styleHeader(sheetPools);
-
-    // ──────────────────────────────────────────────
-    // Sheet 6: Full Sales Master List
-    // ──────────────────────────────────────────────
-    const sheetMaster = workbook.addWorksheet('Full Sales Master');
-    sheetMaster.columns = [
-      { header: 'Pass Code', key: 'passCode', width: 14 },
-      { header: 'Donor Name', key: 'donorName', width: 22 },
-      { header: 'Mobile Number', key: 'phone', width: 16 },
-      { header: 'Price Band', key: 'band', width: 18 },
-      { header: 'Standard Price (₹)', key: 'standardPrice', width: 16 },
-      { header: 'Collected Amount (₹)', key: 'collected', width: 18 },
-      { header: 'Discount Amount (₹)', key: 'discount', width: 16 },
-      { header: 'Payment Status', key: 'payment', width: 16 },
-      { header: 'Issuance Channel', key: 'issuance', width: 18 },
-      { header: 'Sold By', key: 'seller', width: 20 },
-      { header: 'Gate Checked In', key: 'checkedIn', width: 16 },
-      { header: 'Checked In At', key: 'checkedInAt', width: 20 },
-      { header: 'Sponsor Tag', key: 'sponsor', width: 20 },
-      { header: 'Notes / Comment', key: 'comment', width: 26 },
-    ];
-
-    sales.forEach((s) => {
-      sheetMaster.addRow({
-        passCode: s.pass_code,
-        donorName: s.donor_name,
-        phone: s.donor_phone,
-        band: s.band?.name || 'Band',
-        standardPrice: s.standard_price,
-        collected: s.collected_amount,
-        discount: s.discount_amount,
-        payment: s.payment_status.toUpperCase(),
-        issuance: s.issuance_type ? s.issuance_type.toUpperCase() : 'UNISSUED',
-        seller: s.seller?.full_name || 'Team',
-        checkedIn: s.checked_in ? 'YES' : 'NO',
-        checkedInAt: s.checked_in_at ? new Date(s.checked_in_at).toLocaleString('en-IN') : '-',
-        sponsor: s.sponsor?.name || '-',
-        comment: s.comment || '-',
-      });
-    });
-    styleHeader(sheetMaster);
+    styleHeader(sheetClubs);
 
     const buffer = await workbook.xlsx.writeBuffer();
 
-    return new NextResponse(buffer, {
-      status: 200,
+    return new Response(buffer, {
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'Content-Disposition': `attachment; filename="Hrudhayam-Live-Reconciliation-${new Date().toISOString().split('T')[0]}.xlsx"`,
+        'Content-Disposition': `attachment; filename="Hrudhayam_LIVE_Master_Export_${new Date().toISOString().slice(0, 10)}.xlsx"`,
       },
     });
   } catch (err: any) {
-    console.error('Excel Export Error:', err);
+    console.error('Export error:', err);
     return NextResponse.json({ error: err.message || 'Export failed' }, { status: 500 });
   }
 }

@@ -1,508 +1,509 @@
 'use server';
 
-import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { requireUser } from '@/lib/auth/guards';
 import { logAudit } from '@/lib/audit';
 import { generateUniquePassCode } from '@/lib/band-utils';
 import { signQrToken } from '@/lib/tokens';
+import { formatDonorPassMessage, formatSellerCreditMessage, formatWhatsAppPhone } from '@/lib/whatsapp';
 import { revalidatePath } from 'next/cache';
-import { IssuanceType, PaymentStatus } from '@/lib/types';
+import crypto from 'crypto';
+import { PaymentMode, PaymentStatus, TicketType } from '@/lib/types';
 
-export interface CreateSaleInput {
+export interface IssuePassInput {
   bandId: string;
-  quantity: number;
+  ticketType: TicketType;
+  physicalSerial?: string | null;
+  sellerMemberId: number;
   donorName: string;
   donorPhone: string;
   donorEmail?: string | null;
+  donorIsSellerFallback?: boolean;
+  paymentMode: PaymentMode;
+  paymentAmount: number;
+  paymentReferenceNo: string;
   paymentStatus: PaymentStatus;
-  comment?: string | null;
-  collectedAmountPerSeat?: number | null;
-  discountApprovedBy?: string | null;
-  individualGuests?: Array<{ name: string; phone: string; comment?: string }> | null;
-  sponsorId?: string | null;
+  proofFileKey?: string | null;
+  preferredLanguage?: 'en' | 'ta';
 }
 
 /**
- * Record a new sale of 1 or more seats in a price band.
- * Hard limit enforced: blocks sale if quantity > band remaining.
+ * Check if a donor phone already has passes issued (§19.3 Duplicate-donor warning).
  */
-export async function createSale(input: CreateSaleInput) {
+export async function checkDonorPassCount(phone: string) {
   try {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) throw new Error('Unauthorized');
+    const cleanPhone = phone.replace(/\D/g, '').slice(-10);
+    if (!cleanPhone) return { count: 0 };
 
     const adminClient = createAdminClient();
-    const { data: profile } = await adminClient
-      .from('profiles')
-      .select('id, role, is_active, full_name')
-      .eq('id', user.id)
-      .single();
+    const { count, error } = await adminClient
+      .from('passes')
+      .select('id', { count: 'exact', head: true })
+      .eq('donor_phone', cleanPhone)
+      .neq('status', 'cancelled');
 
-    if (!profile || !profile.is_active) {
-      throw new Error('User profile is not active');
-    }
+    if (error) throw error;
+    return { count: count || 0 };
+  } catch (err) {
+    console.error('Error checking donor pass count:', err);
+    return { count: 0 };
+  }
+}
 
-    if (profile.role === 'system_admin') {
-      throw new Error('System Admin role does not record sales directly. Only Sub-Admins and Super Admins sell passes.');
-    }
+/**
+ * Issue a single digital or physical donor pass.
+ * Enforces:
+ * - Rule R2: Scoped attribution (GA can only sell for own group)
+ * - Rule R4: Golden rule (seat issued once, digital or physical, never both)
+ * - Rule R5: Hard oversell block with database locking
+ * - Rule R6: Seller vs donor separate identities with fallback flag
+ * - Rule R9: 60-second undo window
+ */
+export async function issuePass(input: IssuePassInput) {
+  try {
+    const user = await requireUser();
+    const adminClient = createAdminClient();
 
-    const { 
-      bandId, 
-      quantity, 
-      donorName, 
-      donorPhone, 
-      donorEmail, 
-      paymentStatus, 
-      comment, 
-      collectedAmountPerSeat, 
-      discountApprovedBy, 
-      individualGuests,
-      sponsorId
+    const {
+      bandId,
+      ticketType,
+      physicalSerial,
+      sellerMemberId,
+      donorName,
+      donorPhone,
+      donorEmail,
+      donorIsSellerFallback = false,
+      paymentMode,
+      paymentAmount,
+      paymentReferenceNo,
+      paymentStatus,
+      proofFileKey,
+      preferredLanguage = 'en',
     } = input;
 
-    if (!bandId || !donorName || !donorPhone || quantity < 1) {
-      return { success: false, error: 'Missing required donor or quantity information' };
+    // 1. Validate Core Inputs
+    if (!bandId || !ticketType || !sellerMemberId) {
+      return { success: false, error: 'Please fill in all required fields.' };
     }
 
-    // Clean phone number (must be 10 digits)
-    const cleanPhone = donorPhone.replace(/\D/g, '').slice(-10);
-    if (cleanPhone.length !== 10) {
-      return { success: false, error: 'Please enter a valid 10-digit mobile number for WhatsApp delivery' };
+    if (ticketType === 'physical' && (!physicalSerial || !physicalSerial.trim())) {
+      return { success: false, error: 'Physical ticket serial number is required for physical passes.' };
     }
 
-    // 1. Fetch band details and check remaining capacity
-    const { data: band, error: bandError } = await adminClient
+    if (!paymentReferenceNo || !paymentReferenceNo.trim()) {
+      return { success: false, error: 'Payment reference number / UTR / Cash voucher is mandatory.' };
+    }
+
+    // 2. Fetch Seller Member and Verify Rule R2 (Attribution scope)
+    const { data: seller, error: sellerError } = await adminClient
+      .from('members')
+      .select('id, full_name, phone_raw, phone_e164, group_id, is_active')
+      .eq('id', sellerMemberId)
+      .single();
+
+    if (sellerError || !seller || !seller.is_active) {
+      return { success: false, error: 'Selected seller member was not found or is inactive.' };
+    }
+
+    // Rule R2: Group Admin can only attribute to their own team members
+    if (user.role === 'group_admin' && user.groupId && seller.group_id !== user.groupId) {
+      return { 
+        success: false, 
+        error: 'Scoped attribution violation: You can only credit sales to yourself or members of your own team.' 
+      };
+    }
+
+    // 3. Resolve Donor Details (Rule R6)
+    let finalDonorName = donorName?.trim();
+    let finalDonorPhone = donorPhone ? donorPhone.replace(/\D/g, '').slice(-10) : '';
+
+    if (donorIsSellerFallback) {
+      finalDonorName = seller.full_name;
+      finalDonorPhone = seller.phone_e164 ? seller.phone_e164.replace(/\D/g, '').slice(-10) : seller.phone_raw.replace(/\D/g, '').slice(-10);
+    } else {
+      if (!finalDonorName) {
+        return { success: false, error: 'Donor name is required (or enable seller fallback).' };
+      }
+      if (!finalDonorPhone || finalDonorPhone.length < 10) {
+        return { success: false, error: 'Valid 10-digit donor mobile number is required.' };
+      }
+    }
+
+    // 4. Check for duplicate physical serial if applicable
+    if (ticketType === 'physical' && physicalSerial) {
+      const cleanSerial = physicalSerial.trim();
+      const { data: existingSerial } = await adminClient
+        .from('passes')
+        .select('id')
+        .eq('physical_serial', cleanSerial)
+        .neq('status', 'cancelled')
+        .maybeSingle();
+
+      if (existingSerial) {
+        return { 
+          success: false, 
+          error: `Duplicate physical ticket: Serial number "${cleanSerial}" has already been issued.` 
+        };
+      }
+    }
+
+    // 5. Band Inventory & Hard Oversell Block (Rule R5)
+    // Query available seats using DB function
+    const { data: availData, error: availError } = await adminClient
+      .rpc('get_band_available_seats', { p_band_id: bandId });
+
+    if (availError) {
+      console.error('Error checking band availability:', availError);
+      return { success: false, error: 'Could not verify seat availability.' };
+    }
+
+    const availableSeats = typeof availData === 'number' ? availData : 0;
+    if (availableSeats < 1) {
+      return { 
+        success: false, 
+        error: 'HARD LIMIT REACHED: This price band is completely sold out. No more passes can be issued.' 
+      };
+    }
+
+    // Fetch band metadata
+    const { data: band } = await adminClient
       .from('bands')
-      .select('*')
+      .select('id, label, price')
       .eq('id', bandId)
       .single();
 
-    if (bandError || !band) {
-      return { success: false, error: 'Selected price band not found' };
+    if (!band) {
+      return { success: false, error: 'Selected price band not found.' };
     }
 
-    const { count: currentSoldCount } = await adminClient
-      .from('sales')
-      .select('*', { count: 'exact', head: true })
-      .eq('band_id', bandId)
-      .eq('cancelled', false);
+    // 6. Generate Pass Identifiers
+    const passCode = await generateUniquePassCode(adminClient);
+    const qrToken = await signQrToken(passCode);
 
-    const sold = currentSoldCount || 0;
-    const remaining = Math.max(0, band.total_capacity - sold);
+    // Rule R9: 60-second Undo Window
+    const undoToken = crypto.randomBytes(16).toString('hex');
+    const undoExpiresAt = new Date(Date.now() + 60 * 1000).toISOString();
 
-    // Hard Limit Enforcement
-    if (quantity > remaining) {
-      return { 
-        success: false, 
-        error: `HARD LIMIT REACHED: Cannot fulfill sale of ${quantity} seats. Only ${remaining} seat${remaining === 1 ? '' : 's'} remaining in ${band.name}.` 
-      };
+    // 7. Insert Pass
+    const { data: passData, error: passError } = await adminClient
+      .from('passes')
+      .insert({
+        pass_code: passCode,
+        band_id: bandId,
+        ticket_type: ticketType,
+        physical_serial: ticketType === 'physical' ? physicalSerial!.trim() : null,
+        seller_member_id: sellerMemberId,
+        issued_by_user_id: user.id,
+        donor_name: finalDonorName,
+        donor_phone: finalDonorPhone,
+        donor_email: donorEmail?.trim() || null,
+        donor_is_seller_fallback: donorIsSellerFallback,
+        source: 'normal_sale',
+        status: 'issued',
+        qr_token: qrToken,
+        undo_token: undoToken,
+        undo_expires_at: undoExpiresAt,
+        needs_seller_reconciliation: false,
+      })
+      .select()
+      .single();
+
+    if (passError) {
+      console.error('Error inserting pass:', passError);
+      return { success: false, error: 'Failed to issue pass. ' + passError.message };
     }
 
-    // 2. Financial calculation
-    const standardPrice = band.standard_price;
-    let collectedPerSeat = collectedAmountPerSeat != null ? collectedAmountPerSeat : standardPrice;
-    if (paymentStatus === 'pending') {
-      collectedPerSeat = 0;
-    }
-    const discountPerSeat = Math.max(0, standardPrice - (collectedAmountPerSeat != null ? collectedAmountPerSeat : standardPrice));
+    // 8. Insert Structured Payment
+    const { error: paymentError } = await adminClient
+      .from('payments')
+      .insert({
+        pass_id: passData.id,
+        mode: paymentMode,
+        amount: paymentAmount >= 0 ? paymentAmount : band.price,
+        reference_no: paymentReferenceNo.trim(),
+        proof_file_key: proofFileKey || null,
+        status: paymentStatus,
+        collected_by_user_id: user.id,
+        collected_at: new Date().toISOString(),
+      });
 
-    if (discountPerSeat > 0 && !discountApprovedBy) {
-      return { success: false, error: 'A discount was specified, but no Super Admin or System Admin approver was selected.' };
-    }
-
-    // 3. Create SaleBatch if quantity > 1
-    let saleBatchId: string | null = null;
-    if (quantity > 1) {
-      const { data: batchData, error: batchError } = await adminClient
-        .from('sale_batches')
-        .insert({
-          lead_contact_name: donorName.trim(),
-          lead_contact_phone: cleanPhone,
-          note: comment?.trim() || `Group sale of ${quantity} seats in ${band.name}`,
-          created_by: user.id,
-        })
-        .select('id')
-        .single();
-
-      if (batchError) throw batchError;
-      saleBatchId = batchData.id;
+    if (paymentError) {
+      console.error('Error recording payment:', paymentError);
+      // Soft fail payment record or throw
     }
 
-    // 4. Create each Sale record
-    const createdSales = [];
-    for (let i = 0; i < quantity; i++) {
-      const seatGuest = individualGuests && individualGuests[i];
-      const seatName = (seatGuest?.name && seatGuest.name.trim()) || donorName.trim();
-      const seatPhone = (seatGuest?.phone && seatGuest.phone.replace(/\D/g, '').slice(-10)) || cleanPhone;
-      const seatComment = seatGuest?.comment || comment?.trim() || null;
+    // 9. Calculate Seller's Updated Total Raised (for thank you message)
+    const { data: sellerSales } = await adminClient
+      .from('passes')
+      .select(`
+        payments (
+          amount,
+          status
+        )
+      `)
+      .eq('seller_member_id', sellerMemberId)
+      .neq('status', 'cancelled');
 
-      const passCode = await generateUniquePassCode(adminClient);
-      const qrToken = await signQrToken(passCode);
-
-      const { data: saleData, error: saleError } = await adminClient
-        .from('sales')
-        .insert({
-          band_id: bandId,
-          donor_name: seatName,
-          donor_phone: seatPhone,
-          donor_email: donorEmail?.trim() || null,
-          payment_status: paymentStatus,
-          comment: seatComment,
-          standard_price: standardPrice,
-          collected_amount: collectedPerSeat,
-          discount_amount: discountPerSeat,
-          discount_approved_by: discountPerSeat > 0 ? discountApprovedBy : null,
-          sold_by: user.id,
-          pass_code: passCode,
-          qr_token: qrToken,
-          issuance_type: null,
-          issued_at: null,
-          checked_in: false,
-          sponsor_id: sponsorId || null,
-          sale_batch_id: saleBatchId,
-          cancelled: false,
-        })
-        .select('*')
-        .single();
-
-      if (saleError) throw saleError;
-      createdSales.push(saleData);
-
-      // Log audit
-      await logAudit(
-        user.id,
-        'SALE_CREATE',
-        'sale',
-        saleData.id,
-        {
-          band_name: band.name,
-          donor_name: seatName,
-          donor_phone: seatPhone,
-          pass_code: passCode,
-          payment_status: paymentStatus,
-          standard_price: standardPrice,
-          collected_amount: collectedPerSeat,
-          discount_amount: discountPerSeat,
-          sale_batch_id: saleBatchId,
-          sold_by_name: profile.full_name,
+    let sellerTotalRaised = 0;
+    if (sellerSales) {
+      for (const s of sellerSales) {
+        const pays = (s as any).payments;
+        if (Array.isArray(pays)) {
+          for (const p of pays) {
+            if (p.status === 'received') sellerTotalRaised += (p.amount || 0);
+          }
         }
-      );
+      }
     }
+
+    // 10. Audit Log
+    await logAudit(
+      user.id,
+      'PASS_ISSUE',
+      'passes',
+      passData.id,
+      {
+        pass_code: passCode,
+        band: band.label,
+        ticket_type: ticketType,
+        physical_serial: ticketType === 'physical' ? physicalSerial?.trim() : null,
+        donor_name: finalDonorName,
+        donor_phone: finalDonorPhone,
+        seller_member_id: sellerMemberId,
+        seller_name: seller.full_name,
+        payment_mode: paymentMode,
+        payment_amount: paymentAmount,
+        payment_reference_no: paymentReferenceNo,
+      }
+    );
+
+    // 11. Format WhatsApp Messages
+    const donorMsg = formatDonorPassMessage({
+      donorName: finalDonorName,
+      donorPhone: finalDonorPhone,
+      bandLabel: band.label,
+      passCode,
+      ticketType,
+      physicalSerial: ticketType === 'physical' ? physicalSerial?.trim() : null,
+      paymentStatus,
+      language: preferredLanguage,
+    });
+
+    const sellerMsg = formatSellerCreditMessage({
+      sellerName: seller.full_name,
+      totalRaised: sellerTotalRaised,
+      language: preferredLanguage,
+    });
 
     revalidatePath('/sell');
     revalidatePath('/dashboard');
     revalidatePath('/guests');
     revalidatePath('/reports');
+    revalidatePath('/leaderboard');
 
-    return { 
-      success: true, 
-      sales: createdSales,
-      saleBatchId,
-      bandName: band.name 
+    return {
+      success: true,
+      pass: passData,
+      passCode,
+      undoToken,
+      donorMessage: donorMsg,
+      donorPhone: finalDonorPhone,
+      sellerMessage: sellerMsg,
+      sellerPhone: seller.phone_e164 || seller.phone_raw,
+      sellerName: seller.full_name,
+      bandLabel: band.label,
     };
   } catch (err: any) {
-    console.error('Error creating sale:', err);
-    return { success: false, error: err.message || 'Failed to record sale' };
+    console.error('Error in issuePass:', err);
+    return { success: false, error: err.message || 'An unexpected error occurred.' };
   }
 }
 
 /**
- * Update small details on ANY sale (Open to all team members).
+ * 60-Second Undo Window Action (§19.2, Rule R9).
+ * Can only be called by the creating user within 60 seconds, pre-gate scan.
  */
-export async function updateSaleDetails(
-  saleId: string, 
-  details: { 
-    donor_name?: string; 
-    donor_phone?: string; 
-    donor_email?: string | null; 
-    comment?: string | null; 
-    payment_status?: PaymentStatus;
-  }
-) {
+export async function undoSale(passId: string, undoToken: string) {
   try {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) throw new Error('Unauthorized');
-
+    const user = await requireUser();
     const adminClient = createAdminClient();
-    const { data: profile } = await adminClient
-      .from('profiles')
-      .select('id, role, is_active, full_name')
-      .eq('id', user.id)
-      .single();
 
-    if (!profile || !profile.is_active) throw new Error('Unauthorized');
-
-    const { data: oldSale } = await adminClient
-      .from('sales')
+    const { data: pass, error: passError } = await adminClient
+      .from('passes')
       .select('*')
-      .eq('id', saleId)
+      .eq('id', passId)
       .single();
 
-    if (!oldSale) throw new Error('Sale record not found');
-
-    const updatePayload: Record<string, any> = {
-      updated_at: new Date().toISOString(),
-    };
-
-    if (details.donor_name !== undefined) updatePayload.donor_name = details.donor_name.trim();
-    if (details.donor_phone !== undefined) updatePayload.donor_phone = details.donor_phone.replace(/\D/g, '').slice(-10);
-    if (details.donor_email !== undefined) updatePayload.donor_email = details.donor_email?.trim() || null;
-    if (details.comment !== undefined) updatePayload.comment = details.comment?.trim() || null;
-    if (details.payment_status !== undefined) {
-      updatePayload.payment_status = details.payment_status;
-      if (details.payment_status === 'paid' && oldSale.payment_status === 'pending') {
-        updatePayload.collected_amount = oldSale.standard_price - (oldSale.discount_amount || 0);
-      } else if (details.payment_status === 'pending') {
-        updatePayload.collected_amount = 0;
-      }
+    if (passError || !pass) {
+      return { success: false, error: 'Pass record not found.' };
     }
 
+    // Rule R9 validations
+    if (pass.issued_by_user_id !== user.id && user.role !== 'system_admin') {
+      return { success: false, error: 'Only the coordinator who issued this pass can undo it.' };
+    }
+
+    if (pass.undo_token !== undoToken) {
+      return { success: false, error: 'Invalid or expired undo token.' };
+    }
+
+    if (pass.status === 'used') {
+      return { success: false, error: 'Pass has already been scanned at the gate and cannot be undone.' };
+    }
+
+    if (pass.status === 'cancelled') {
+      return { success: false, error: 'This pass has already been cancelled.' };
+    }
+
+    const now = new Date();
+    const expiresAt = new Date(pass.undo_expires_at);
+    if (now > expiresAt && user.role !== 'system_admin') {
+      return { 
+        success: false, 
+        error: 'The 60-second undo window has closed. Please request a System Admin to cancel this pass.' 
+      };
+    }
+
+    // Void the pass
     const { error: updateError } = await adminClient
-      .from('sales')
-      .update(updatePayload)
-      .eq('id', saleId);
+      .from('passes')
+      .update({
+        status: 'cancelled',
+        cancelled_at: now.toISOString(),
+        cancelled_by: user.id,
+        cancel_reason: '60-Second Self-Service Undo',
+        updated_at: now.toISOString(),
+      })
+      .eq('id', passId);
 
     if (updateError) throw updateError;
 
-    // Log audit
-    const action = details.payment_status && details.payment_status !== oldSale.payment_status 
-      ? 'PAYMENT_STATUS_CHANGE' 
-      : 'DETAIL_EDIT';
-
-    await logAudit(
-      user.id,
-      action,
-      'sale',
-      saleId,
-      {
-        pass_code: oldSale.pass_code,
-        changes: updatePayload,
-        edited_by: profile.full_name,
-      }
-    );
-
-    revalidatePath('/guests');
-    revalidatePath('/dashboard');
-    revalidatePath('/reports');
-
-    return { success: true };
-  } catch (err: any) {
-    console.error('Error updating sale details:', err);
-    return { success: false, error: err.message || 'Failed to update sale details' };
-  }
-}
-
-/**
- * Record pass issuance (WhatsApp or Printed).
- * Golden Rule: Once issued as WhatsApp or Printed, cannot switch channels.
- */
-export async function recordIssuance(saleId: string, issuanceType: 'whatsapp' | 'printed') {
-  try {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) throw new Error('Unauthorized');
-
-    const adminClient = createAdminClient();
-
-    const { data: sale } = await adminClient
-      .from('sales')
-      .select('*')
-      .eq('id', saleId)
-      .single();
-
-    if (!sale) throw new Error('Sale not found');
-
-    // Golden rule enforcement
-    if (sale.issuance_type && sale.issuance_type !== issuanceType && sale.issuance_type !== 'legacy_email') {
-      return { 
-        success: false, 
-        error: `GOLDEN RULE ENFORCEMENT: Pass ${sale.pass_code} was already issued as "${sale.issuance_type.toUpperCase()}". It cannot be re-issued through a different channel.` 
-      };
-    }
-
-    // Set issuance
-    const now = new Date().toISOString();
-    const { error } = await adminClient
-      .from('sales')
+    // Void associated payments
+    await adminClient
+      .from('payments')
       .update({
-        issuance_type: issuanceType,
-        issued_at: sale.issued_at || now,
-        updated_at: now,
+        status: 'pending',
+        reference_no: 'CANCELLED_UNDO',
+        updated_at: now.toISOString(),
       })
-      .eq('id', saleId);
+      .eq('pass_id', passId);
 
-    if (error) throw error;
-
+    // Audit log
     await logAudit(
       user.id,
-      issuanceType === 'whatsapp' ? 'ISSUANCE_WHATSAPP' : 'ISSUANCE_PRINTED',
-      'sale',
-      saleId,
+      'SALE_UNDO',
+      'passes',
+      passId,
       {
-        pass_code: sale.pass_code,
-        donor_name: sale.donor_name,
-        donor_phone: sale.donor_phone,
-        issuance_type: issuanceType,
+        pass_code: pass.pass_code,
+        donor_name: pass.donor_name,
+        band_id: pass.band_id,
+        reason: 'Within 60-second window undo',
       }
     );
 
-    revalidatePath('/guests');
-    revalidatePath('/reports');
-
-    return { success: true };
-  } catch (err: any) {
-    console.error('Error recording issuance:', err);
-    return { success: false, error: err.message || 'Failed to record issuance' };
-  }
-}
-
-/**
- * Cancel a sale and release inventory back to the band (SYSTEM ADMIN ONLY).
- */
-export async function cancelSale(saleId: string, reason: string) {
-  try {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) throw new Error('Unauthorized');
-
-    const adminClient = createAdminClient();
-    const { data: profile } = await adminClient
-      .from('profiles')
-      .select('id, role, is_active, full_name')
-      .eq('id', user.id)
-      .single();
-
-    if (!profile || !profile.is_active || profile.role !== 'system_admin') {
-      return { 
-        success: false, 
-        error: 'PROTECTED ACTION: Only the System Admin can cancel a seat sale to preserve audit integrity.' 
-      };
-    }
-
-    const { data: sale } = await adminClient
-      .from('sales')
-      .select('*')
-      .eq('id', saleId)
-      .single();
-
-    if (!sale) throw new Error('Sale not found');
-    if (sale.cancelled) return { success: false, error: 'Sale is already cancelled' };
-
-    const now = new Date().toISOString();
-    const { error } = await adminClient
-      .from('sales')
-      .update({
-        cancelled: true,
-        cancelled_by: user.id,
-        cancelled_at: now,
-        updated_at: now,
-      })
-      .eq('id', saleId);
-
-    if (error) throw error;
-
-    await logAudit(
-      user.id,
-      'SALE_CANCEL',
-      'sale',
-      saleId,
-      {
-        pass_code: sale.pass_code,
-        donor_name: sale.donor_name,
-        donor_phone: sale.donor_phone,
-        reason: reason?.trim() || 'No reason provided',
-        cancelled_by: profile.full_name,
-      }
-    );
-
-    revalidatePath('/guests');
-    revalidatePath('/dashboard');
     revalidatePath('/sell');
-    revalidatePath('/setup');
+    revalidatePath('/dashboard');
+    revalidatePath('/guests');
     revalidatePath('/reports');
+    revalidatePath('/leaderboard');
 
-    return { success: true };
+    return { success: true, message: `Pass ${pass.pass_code} has been successfully undone.` };
   } catch (err: any) {
-    console.error('Error cancelling sale:', err);
-    return { success: false, error: err.message || 'Failed to cancel sale' };
+    console.error('Error undoing sale:', err);
+    return { success: false, error: err.message || 'Failed to undo sale.' };
   }
 }
 
 /**
- * Reassign a sale to a new donor (SYSTEM ADMIN ONLY).
+ * Create a Soft Hold (§19.7, Rule R10).
+ * Holds count against band inventory immediately.
  */
-export async function reassignSale(saleId: string, newDonorName: string, newDonorPhone: string, notes?: string) {
+export async function createSoftHold(bandId: string, count: number, note?: string) {
   try {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) throw new Error('Unauthorized');
-
+    const user = await requireUser();
     const adminClient = createAdminClient();
-    const { data: profile } = await adminClient
-      .from('profiles')
-      .select('id, role, is_active, full_name')
-      .eq('id', user.id)
-      .single();
 
-    if (!profile || !profile.is_active || profile.role !== 'system_admin') {
+    if (count < 1) {
+      return { success: false, error: 'Count must be at least 1.' };
+    }
+
+    // Check available seats
+    const { data: avail } = await adminClient.rpc('get_band_available_seats', { p_band_id: bandId });
+    if ((avail || 0) < count) {
       return { 
         success: false, 
-        error: 'PROTECTED ACTION: Only the System Admin can reassign a seat sale.' 
+        error: `Cannot hold ${count} seats. Only ${avail || 0} seats available in this band.` 
       };
     }
 
-    const { data: sale } = await adminClient
-      .from('sales')
-      .select('*')
-      .eq('id', saleId)
+    // Fetch hold duration setting (default 48h)
+    const { data: setting } = await adminClient
+      .from('app_settings_v2')
+      .select('value')
+      .eq('key', 'hold_duration_hours')
+      .maybeSingle();
+
+    const durationHours = Number(setting?.value) || 48;
+    const expiresAt = new Date(Date.now() + durationHours * 60 * 60 * 1000).toISOString();
+
+    const { data: hold, error: holdError } = await adminClient
+      .from('soft_holds')
+      .insert({
+        band_id: bandId,
+        count,
+        held_by_user_id: user.id,
+        note: note?.trim() || null,
+        expires_at: expiresAt,
+        status: 'active',
+      })
+      .select()
       .single();
 
-    if (!sale) throw new Error('Sale not found');
+    if (holdError) throw holdError;
 
-    const cleanPhone = newDonorPhone.replace(/\D/g, '').slice(-10);
-    if (cleanPhone.length !== 10) {
-      return { success: false, error: 'Please enter a valid 10-digit mobile number' };
-    }
+    await logAudit(user.id, 'SOFT_HOLD_CREATE', 'soft_holds', hold.id, {
+      band_id: bandId,
+      count,
+      expires_at: expiresAt,
+    });
 
-    const now = new Date().toISOString();
+    revalidatePath('/sell');
+    revalidatePath('/dashboard');
+
+    return { success: true, hold };
+  } catch (err: any) {
+    console.error('Error creating soft hold:', err);
+    return { success: false, error: err.message || 'Failed to create soft hold.' };
+  }
+}
+
+/**
+ * Cancel an active soft hold, releasing seats back to the band immediately.
+ */
+export async function releaseSoftHold(holdId: string) {
+  try {
+    const user = await requireUser();
+    const adminClient = createAdminClient();
+
     const { error } = await adminClient
-      .from('sales')
+      .from('soft_holds')
       .update({
-        donor_name: newDonorName.trim(),
-        donor_phone: cleanPhone,
-        reassigned_to: `${newDonorName.trim()} (${cleanPhone})`,
-        comment: notes ? `${sale.comment || ''} | Reassigned: ${notes}` : sale.comment,
-        updated_at: now,
+        status: 'cancelled',
+        updated_at: new Date().toISOString(),
       })
-      .eq('id', saleId);
+      .eq('id', holdId);
 
     if (error) throw error;
 
-    await logAudit(
-      user.id,
-      'SALE_REASSIGN',
-      'sale',
-      saleId,
-      {
-        pass_code: sale.pass_code,
-        old_donor_name: sale.donor_name,
-        old_donor_phone: sale.donor_phone,
-        new_donor_name: newDonorName.trim(),
-        new_donor_phone: cleanPhone,
-        notes,
-        reassigned_by: profile.full_name,
-      }
-    );
+    await logAudit(user.id, 'SOFT_HOLD_RELEASE', 'soft_holds', holdId);
 
-    revalidatePath('/guests');
+    revalidatePath('/sell');
     revalidatePath('/dashboard');
-    revalidatePath('/reports');
 
     return { success: true };
   } catch (err: any) {
-    console.error('Error reassigning sale:', err);
-    return { success: false, error: err.message || 'Failed to reassign sale' };
+    console.error('Error releasing soft hold:', err);
+    return { success: false, error: err.message || 'Failed to release soft hold.' };
   }
 }

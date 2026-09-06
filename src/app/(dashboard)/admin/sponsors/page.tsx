@@ -1,42 +1,38 @@
 export const dynamic = 'force-dynamic';
 
-import { createClient } from '@/lib/supabase/server';
+import { requireSuperOrSystemAdmin } from '@/lib/auth/guards';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { RoleGate } from '@/components/layout/RoleGate';
 import { SponsorClient } from './sponsor-client';
 
 export const metadata = {
-  title: 'Sponsors | Hrudhayam LIVE',
+  title: 'Corporate Sponsors | Hrudhayam LIVE',
 };
 
 export default async function SponsorsPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
-
+  const user = await requireSuperOrSystemAdmin();
   const adminClient = createAdminClient();
 
-  // Fetch sponsors and sales in parallel
-  const [sponsorsRes, salesRes] = await Promise.all([
+  // Fetch sponsors with member info, and active members for the dropdown
+  const [sponsorsRes, membersRes] = await Promise.all([
     adminClient
       .from('sponsors')
-      .select('*')
+      .select('*, brought_by_member:members(id, full_name, group_id, group:groups(name)), payment:payments(*)')
       .order('created_at', { ascending: false }),
     adminClient
-      .from('sales')
-      .select('*, band:bands(name, standard_price)')
-      .eq('cancelled', false)
+      .from('members')
+      .select('id, full_name, group_id, group:groups(name)')
+      .eq('is_active', true)
+      .order('full_name'),
   ]);
 
-  const sponsorsData = sponsorsRes.data || [];
-  const sales = salesRes.data || [];
+  const sponsors = sponsorsRes.data || [];
+  const members = membersRes.data || [];
 
   return (
-    <RoleGate allowedRoles={['super_admin', 'system_admin']}>
-      <SponsorClient 
-        sponsors={sponsorsData || []} 
-        sales={sales as any} 
-      />
-    </RoleGate>
+    <SponsorClient 
+      sponsors={sponsors} 
+      members={members}
+      currentUser={user}
+    />
   );
 }

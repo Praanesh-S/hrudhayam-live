@@ -1,96 +1,142 @@
 'use client';
 
-import { useState } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useState, useMemo } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { formatINR, BANDS_CONFIG } from '@/lib/constants';
-import { Band, Profile, Sponsor, ReservedPool, ReservedEntry, Sale } from '@/lib/types';
+import { formatINR } from '@/lib/constants';
+import { Band, Group, Member, Sponsor, ParticipatingClub } from '@/lib/types';
+import { AuthUser } from '@/lib/auth/session';
 import { 
   BarChart3, 
   FileSpreadsheet, 
   Users, 
   Layers, 
   Building2, 
-  ShieldCheck, 
   Download, 
-  Share2, 
   Printer, 
   CheckCircle2,
   Clock,
-  Sparkles
+  Heart,
+  ShieldCheck,
+  Award
 } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface ReportsClientProps {
   bands: Band[];
-  sales: Sale[];
-  teamMembers: Profile[];
+  passes: any[];
+  groups: Group[];
+  members: Member[];
   sponsors: Sponsor[];
-  pools: (ReservedPool & { entries: ReservedEntry[] })[];
-  userRole: string;
+  clubs: ParticipatingClub[];
+  currentUser: AuthUser;
 }
 
-export function ReportsClient({ bands, sales, teamMembers, sponsors, pools, userRole }: ReportsClientProps) {
+export function ReportsClient({
+  bands,
+  passes,
+  groups,
+  members,
+  sponsors,
+  clubs,
+  currentUser,
+}: ReportsClientProps) {
   const [activeTab, setActiveTab] = useState('bands');
   const [isExporting, setIsExporting] = useState(false);
 
-  // 1. Calculate overall event totals
-  const totalCapacity = bands.reduce((acc, b) => acc + (b.total_capacity || 0), 0);
-  const totalSold = sales.filter(s => !s.cancelled).length;
-  const totalRemaining = Math.max(0, totalCapacity - totalSold);
-  const totalCollected = sales.filter(s => !s.cancelled && s.payment_status === 'paid').reduce((acc, s) => acc + (s.collected_amount || s.standard_price), 0);
-  const totalPending = sales.filter(s => !s.cancelled && s.payment_status === 'pending').reduce((acc, s) => acc + (s.standard_price - (s.discount_amount || 0)), 0);
-  const totalDiscount = sales.filter(s => !s.cancelled).reduce((acc, s) => acc + (s.discount_amount || 0), 0);
-  const totalPotential = totalCollected + totalPending;
+  // Exclude cancelled passes for reconciliation
+  const activePasses = useMemo(() => passes.filter(p => p.status !== 'cancelled'), [passes]);
 
-  // 2. Aggregate By Team Member
-  const teamMemberStats = teamMembers.map((member) => {
-    const memberSales = sales.filter(s => !s.cancelled && s.sold_by === member.id);
-    const seatsSold = memberSales.length;
-    const standardValue = memberSales.reduce((acc, s) => acc + s.standard_price, 0);
-    const collected = memberSales.filter(s => s.payment_status === 'paid').reduce((acc, s) => acc + (s.collected_amount || s.standard_price), 0);
-    const pending = memberSales.filter(s => s.payment_status === 'pending').reduce((acc, s) => acc + (s.standard_price - (s.discount_amount || 0)), 0);
-    const discounts = memberSales.reduce((acc, s) => acc + (s.discount_amount || 0), 0);
-    const whatsapp = memberSales.filter(s => s.issuance_type === 'whatsapp').length;
-    const printed = memberSales.filter(s => s.issuance_type === 'printed').length;
-    const unissued = memberSales.filter(s => s.issuance_type == null).length;
+  // Overall Financial Aggregates
+  const metrics = useMemo(() => {
+    // 1. Passes revenue
+    const passesSold = activePasses.length;
+    const passesCollected = activePasses
+      .filter(p => (p.payment?.status || 'received') === 'received')
+      .reduce((sum, p) => sum + (p.payment?.amount || p.band?.price || p.band?.standard_price || 0), 0);
+    const passesPending = activePasses
+      .filter(p => p.payment?.status === 'pending')
+      .reduce((sum, p) => sum + (p.payment?.amount || p.band?.price || p.band?.standard_price || 0), 0);
+    const passesTotal = passesCollected + passesPending;
 
-    return {
-      userId: member.id,
-      name: member.full_name || 'Team Member',
-      email: member.email,
-      role: member.role,
-      seatsSold,
-      standardValue,
-      collected,
-      pending,
-      discounts,
-      whatsapp,
-      printed,
-      unissued,
-    };
-  }).filter(m => m.seatsSold > 0 || m.role === 'sub_admin' || m.role === 'super_admin');
+    // 2. Sponsors revenue
+    const sponsorsReceived = sponsors
+      .filter(s => s.status === 'received')
+      .reduce((sum, s) => sum + (s.amount || 0), 0);
+    const sponsorsCommitted = sponsors
+      .filter(s => s.status === 'committed')
+      .reduce((sum, s) => sum + (s.amount || 0), 0);
+    const sponsorsTotal = sponsorsReceived + sponsorsCommitted;
 
-  // 3. Aggregate By Sponsor
-  const sponsorStats = sponsors.map((sp) => {
-    const taggedSales = sales.filter(s => !s.cancelled && s.sponsor_id === sp.id);
-    const taggedCount = taggedSales.length;
-    const checkedInCount = taggedSales.filter(s => s.checked_in).length;
+    // 3. Participating Clubs (Ring-fenced per R7)
+    // ₹25,000 entry fee = ₹15,000 passes value + ₹10,000 net contribution
+    const clubsCount = clubs.length;
+    const clubsNetContribution = clubs.reduce((sum, c) => sum + (c.net_contribution || 10000), 0);
+    const clubsTotalEntryFees = clubs.reduce((sum, c) => sum + (c.entry_fee || 25000), 0);
+
+    // 4. Grand Total
+    const grandTotalRaised = passesTotal + sponsorsTotal + clubsTotalEntryFees;
+    const grandTotalCollected = passesCollected + sponsorsReceived + clubsTotalEntryFees;
+    const grandTotalPending = passesPending + sponsorsCommitted;
+
+    // 5. AED Stations goal formula: ₹1,50,000 per station
+    const aedStationsFunded = Math.floor(grandTotalRaised / 150000);
+
+    // 6. Gate check-in count
+    const gateCheckedIn = activePasses.filter(p => p.status === 'used').length;
 
     return {
-      id: sp.id,
-      name: sp.name,
-      tier: sp.sponsor_tier,
-      quota: sp.complimentary_pass_count,
-      tagged: taggedCount,
-      checkedIn: checkedInCount,
+      passesSold,
+      passesCollected,
+      passesPending,
+      passesTotal,
+      sponsorsReceived,
+      sponsorsCommitted,
+      sponsorsTotal,
+      clubsCount,
+      clubsNetContribution,
+      clubsTotalEntryFees,
+      grandTotalRaised,
+      grandTotalCollected,
+      grandTotalPending,
+      aedStationsFunded,
+      gateCheckedIn,
     };
-  });
+  }, [activePasses, sponsors, clubs]);
 
-  // Export to Excel handler
+  // Team performance breakdown
+  const teamBreakdown = useMemo(() => {
+    return groups.map((g) => {
+      const teamPasses = activePasses.filter(p => p.seller?.group_id === g.id);
+      const passesAmount = teamPasses.reduce(
+        (sum, p) => sum + (p.payment?.amount || p.band?.price || p.band?.standard_price || 0), 
+        0
+      );
+
+      const teamMembersList = members.filter(m => m.group_id === g.id);
+      const memberIds = new Set(teamMembersList.map(m => m.id));
+
+      const teamSponsors = sponsors.filter(s => s.brought_by_member_id && memberIds.has(s.brought_by_member_id));
+      const sponsorsAmount = teamSponsors.reduce((sum, s) => sum + (s.amount || 0), 0);
+
+      const totalRaised = passesAmount + sponsorsAmount;
+
+      return {
+        groupId: g.id,
+        groupName: g.name,
+        memberCount: teamMembersList.length,
+        passesCount: teamPasses.length,
+        passesAmount,
+        sponsorsCount: teamSponsors.length,
+        sponsorsAmount,
+        totalRaised,
+      };
+    }).sort((a, b) => b.totalRaised - a.totalRaised);
+  }, [groups, activePasses, members, sponsors]);
+
+  // Handle Export Excel
   const handleExportExcel = async () => {
     setIsExporting(true);
     try {
@@ -100,13 +146,13 @@ export function ReportsClient({ bands, sales, teamMembers, sponsors, pools, user
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `Hrudhayam-Live-Reconciliation-${new Date().toISOString().split('T')[0]}.xlsx`;
+      a.download = `Hrudhayam-LIVE-Reconciliation-${new Date().toISOString().split('T')[0]}.xlsx`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
 
-      toast.success('Reconciliation spreadsheet exported successfully');
+      toast.success('Master reconciliation workbook downloaded');
     } catch (err: any) {
       toast.error('Error generating spreadsheet export');
     } finally {
@@ -115,268 +161,416 @@ export function ReportsClient({ bands, sales, teamMembers, sponsors, pools, user
   };
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto pb-16">
-      {/* 1. Header & Export Button */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-[#0F2236] p-5 rounded-2xl border border-[#243D56] shadow-xl text-white">
+    <div className="space-y-6">
+      {/* 1. Header with Export Actions */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-[#0B1724] p-5 rounded-2xl border border-[#1D3249] shadow-xl">
         <div>
-          <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <BarChart3 className="w-5 h-5 text-[#E8913A]" />
-            <span>Fundraising & Pass Reconciliation Reports</span>
-          </h2>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Transparent breakdown across bands, team member sales, sponsors, and reserved quotas.
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-bold mb-1">
+            <Heart className="w-3 h-3 fill-amber-400" />
+            <span>Public-Access AED Project</span>
+          </div>
+          <h2 className="text-xl font-black text-white">Event Audit & Reconciliation</h2>
+          <p className="text-xs text-slate-400">
+            Real-time verified revenue across passes, sponsorships, and clubs.
           </p>
         </div>
 
-        <Button
-          onClick={handleExportExcel}
-          disabled={isExporting}
-          className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl h-10 px-4 gap-2 shadow-lg shadow-emerald-950/40 cursor-pointer"
-        >
-          <FileSpreadsheet className="w-4 h-4" />
-          <span>{isExporting ? 'Generating Excel...' : 'Export 5-Sheet Excel'}</span>
-        </Button>
-      </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Export to Excel */}
+          <Button
+            onClick={handleExportExcel}
+            disabled={isExporting}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5 h-10 shadow-lg shadow-emerald-950/40"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>{isExporting ? 'Generating Excel...' : 'Master Excel Export'}</span>
+          </Button>
 
-      {/* 2. Key Metrics Row */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <div className="bg-[#131F2E] p-4 rounded-2xl border border-[#223345] shadow-md">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Band Capacity</span>
-          <span className="text-xl font-extrabold text-white mt-1 block font-mono">{totalCapacity.toLocaleString()}</span>
-        </div>
-
-        <div className="bg-[#131F2E] p-4 rounded-2xl border border-[#223345] shadow-md">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Seats Sold</span>
-          <span className="text-xl font-extrabold text-[#E8913A] mt-1 block font-mono">{totalSold.toLocaleString()}</span>
-        </div>
-
-        <div className="bg-[#131F2E] p-4 rounded-2xl border border-[#223345] shadow-md">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Remaining Available</span>
-          <span className="text-xl font-extrabold text-sky-400 mt-1 block font-mono">{totalRemaining.toLocaleString()}</span>
-        </div>
-
-        <div className="bg-[#131F2E] p-4 rounded-2xl border border-[#223345] shadow-md">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Collected Funds</span>
-          <span className="text-xl font-extrabold text-emerald-400 mt-1 block font-mono">{formatINR(totalCollected)}</span>
-        </div>
-
-        <div className="bg-[#131F2E] p-4 rounded-2xl border border-[#223345] shadow-md">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Pending Payment</span>
-          <span className="text-xl font-extrabold text-amber-400 mt-1 block font-mono">{formatINR(totalPending)}</span>
-        </div>
-
-        <div className="bg-[#131F2E] p-4 rounded-2xl border border-[#223345] shadow-md">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Concessions Given</span>
-          <span className="text-xl font-extrabold text-purple-400 mt-1 block font-mono">{formatINR(totalDiscount)}</span>
+          {/* Printable Gate Manifest */}
+          <a
+            href="/api/manifest"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="h-10 px-3.5 rounded-lg border border-[#1D3249] bg-[#07111C] hover:bg-[#15283C] text-slate-200 font-bold text-xs flex items-center gap-1.5 transition-colors no-underline"
+          >
+            <Printer className="w-4 h-4 text-amber-400" />
+            <span>Gate Manifest</span>
+          </a>
         </div>
       </div>
 
-      {/* 3. TABS: BANDS, TEAM MEMBERS, SPONSORS, RESERVED */}
+      {/* 2. Top Level KPI Summary Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Total Funds Raised */}
+        <Card className="bg-[#0B1724] border-[#1D3249]">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between text-xs text-slate-400 font-medium">
+              <span>Total Funds Raised</span>
+              <Award className="w-4 h-4 text-amber-400" />
+            </div>
+            <p className="text-3xl font-black text-white mt-2">
+              {formatINR(metrics.grandTotalRaised)}
+            </p>
+            <div className="flex items-center justify-between text-[11px] mt-2 pt-2 border-t border-[#1D3249]">
+              <span className="text-emerald-400 font-bold">
+                ✓ {formatINR(metrics.grandTotalCollected)} collected
+              </span>
+              {metrics.grandTotalPending > 0 && (
+                <span className="text-yellow-400 font-medium">
+                  {formatINR(metrics.grandTotalPending)} pending
+                </span>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* AED Stations Goal */}
+        <Card className="bg-gradient-to-br from-[#0B1724] to-[#122A3F] border-[#1E3A52]">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between text-xs text-amber-300 font-medium">
+              <span>AED Stations Funded</span>
+              <Heart className="w-4 h-4 fill-rose-500 text-rose-500" />
+            </div>
+            <p className="text-3xl font-black text-amber-400 mt-2">
+              {metrics.aedStationsFunded} <span className="text-base font-normal text-slate-300">Stations</span>
+            </p>
+            <p className="text-[11px] text-slate-400 mt-2 pt-2 border-t border-[#1E3A52]">
+              Goal: ₹1,50,000 per fully equipped public AED post
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* Passes Sold */}
+        <Card className="bg-[#0B1724] border-[#1D3249]">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between text-xs text-slate-400 font-medium">
+              <span>Passes Issued</span>
+              <Layers className="w-4 h-4 text-blue-400" />
+            </div>
+            <p className="text-3xl font-black text-white mt-2">
+              {metrics.passesSold} <span className="text-base font-normal text-slate-400">Passes</span>
+            </p>
+            <p className="text-[11px] text-slate-400 mt-2 pt-2 border-t border-[#1D3249]">
+              Value: {formatINR(metrics.passesTotal)}
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* Gate Attendance */}
+        <Card className="bg-[#0B1724] border-[#1D3249]">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between text-xs text-slate-400 font-medium">
+              <span>Gate Checked-In</span>
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            </div>
+            <p className="text-3xl font-black text-emerald-400 mt-2">
+              {metrics.gateCheckedIn} <span className="text-base font-normal text-slate-400">Guests</span>
+            </p>
+            <p className="text-[11px] text-slate-400 mt-2 pt-2 border-t border-[#1D3249]">
+              {metrics.passesSold > 0 ? `${Math.round((metrics.gateCheckedIn / metrics.passesSold) * 100)}% turn-out rate` : '0% turn-out'}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* 3. Detailed Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="bg-[#131F2E] border border-[#223345] p-1 rounded-xl">
-          <TabsTrigger value="bands" className="text-xs font-bold gap-1.5 data-[state=active]:bg-[#1A2839] data-[state=active]:text-amber-400">
-            <Layers className="w-3.5 h-3.5" />
-            <span>By Price Band</span>
+        <TabsList className="bg-[#0B1724] border border-[#1D3249] p-1.5 rounded-2xl flex-wrap h-auto min-h-12 w-full sm:w-auto gap-1.5">
+          <TabsTrigger 
+            value="bands" 
+            className="text-xs sm:text-sm data-active:bg-amber-500 data-active:text-slate-950 data-[state=active]:bg-amber-500 data-[state=active]:text-slate-950 font-bold gap-2 px-4 py-2 rounded-xl"
+          >
+            <Layers className="w-4 h-4" />
+            Bands Breakdown
           </TabsTrigger>
-          <TabsTrigger value="team" className="text-xs font-bold gap-1.5 data-[state=active]:bg-[#1A2839] data-[state=active]:text-amber-400">
-            <Users className="w-3.5 h-3.5" />
-            <span>By Team Member</span>
+          <TabsTrigger 
+            value="teams" 
+            className="text-xs sm:text-sm data-active:bg-amber-500 data-active:text-slate-950 data-[state=active]:bg-amber-500 data-[state=active]:text-slate-950 font-bold gap-2 px-4 py-2 rounded-xl"
+          >
+            <Users className="w-4 h-4" />
+            Teams (8 Groups)
           </TabsTrigger>
-          <TabsTrigger value="sponsors" className="text-xs font-bold gap-1.5 data-[state=active]:bg-[#1A2839] data-[state=active]:text-amber-400">
-            <Building2 className="w-3.5 h-3.5" />
-            <span>By Sponsor</span>
+          <TabsTrigger 
+            value="sponsors" 
+            className="text-xs sm:text-sm data-active:bg-amber-500 data-active:text-slate-950 data-[state=active]:bg-amber-500 data-[state=active]:text-slate-950 font-bold gap-2 px-4 py-2 rounded-xl"
+          >
+            <Building2 className="w-4 h-4" />
+            Sponsors ({sponsors.length})
           </TabsTrigger>
-          <TabsTrigger value="reserved" className="text-xs font-bold gap-1.5 data-[state=active]:bg-[#1A2839] data-[state=active]:text-amber-400">
-            <ShieldCheck className="w-3.5 h-3.5" />
-            <span>Reserved Quotas</span>
+          <TabsTrigger 
+            value="clubs" 
+            className="text-xs sm:text-sm data-active:bg-amber-500 data-active:text-slate-950 data-[state=active]:bg-amber-500 data-[state=active]:text-slate-950 font-bold gap-2 px-4 py-2 rounded-xl"
+          >
+            <ShieldCheck className="w-4 h-4" />
+            Participating Clubs ({clubs.length})
           </TabsTrigger>
         </TabsList>
 
-        {/* TAB 1: BY BAND */}
-        <TabsContent value="bands">
-          <Card className="bg-[#131F2E] border-[#223345] rounded-2xl shadow-xl overflow-hidden">
+        {/* TAB 1: Bands Breakdown */}
+        <TabsContent value="bands" className="space-y-4">
+          <div className="bg-[#0B1724] rounded-2xl border border-[#1D3249] overflow-hidden shadow-xl">
+            <div className="p-4 border-b border-[#1D3249]">
+              <h3 className="text-sm font-bold text-white">Seating Bands Allocation & Derived Availability</h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Remaining seats are derived live as (Total Allocated - Sold - Active Holds).
+              </p>
+            </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
+              <table className="w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr className="bg-[#0E1724] border-b border-[#223345] text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-                    <th className="p-3.5">Price Band</th>
-                    <th className="p-3.5">Standard Rate</th>
-                    <th className="p-3.5">Total Capacity</th>
-                    <th className="p-3.5">Sold</th>
-                    <th className="p-3.5">Remaining</th>
-                    <th className="p-3.5">Collected</th>
-                    <th className="p-3.5">Pending</th>
-                    <th className="p-3.5">Discounts</th>
-                    <th className="p-3.5 text-right">Occupancy</th>
+                  <tr className="bg-[#07111C] text-slate-400 border-b border-[#1D3249]">
+                    <th className="p-3 pl-4">Band</th>
+                    <th className="p-3">Price</th>
+                    <th className="p-3 text-right">Allocated</th>
+                    <th className="p-3 text-right">Sold</th>
+                    <th className="p-3 text-right">Active Holds</th>
+                    <th className="p-3 text-right">Remaining</th>
+                    <th className="p-3 text-right">Collected (₹)</th>
+                    <th className="p-3 text-right">Pending (₹)</th>
+                    <th className="p-3 pr-4 text-right font-bold">Total Value (₹)</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-[#1E2D3D] text-slate-300">
-                  {bands.map((band) => {
-                    const sold = band.sold_count || 0;
-                    const cap = band.total_capacity || 0;
-                    const rem = band.remaining_count || 0;
-                    const occ = cap > 0 ? Math.round((sold / cap) * 100) : 0;
-                    const config = BANDS_CONFIG.find(c => c.id === band.id);
+                <tbody className="divide-y divide-[#1D3249]/60 text-slate-200">
+                  {bands.map((b) => {
+                    const price = b.price || 0;
+                    const allocated = b.total_allocated || 0;
+                    const sold = b.sold_count || 0;
+                    const holds = b.active_holds_count || 0;
+                    const remaining = b.remaining_count !== undefined ? b.remaining_count : Math.max(0, allocated - sold - holds);
+                    const collected = b.collected_amount || (sold * price);
+                    const pending = b.pending_amount || 0;
+                    const totalVal = collected + pending;
 
                     return (
-                      <tr key={band.id} className="hover:bg-[#16273A] transition-colors">
-                        <td className="p-3.5">
-                          <Badge className={`${config?.bgColor || 'bg-amber-500/10'} ${config?.textColor || 'text-amber-400'} border ${config?.borderColor || 'border-amber-500/30'} text-xs font-bold font-mono`}>
-                            {band.name}
-                          </Badge>
+                      <tr key={b.id} className="hover:bg-[#0E2032] transition-colors">
+                        <td className="p-3 pl-4 font-bold text-white">
+                          {b.label}
                         </td>
-                        <td className="p-3.5 font-mono font-bold text-white">
-                          {formatINR(band.standard_price)}
+                        <td className="p-3 font-mono text-amber-400 font-bold">
+                          ₹{price.toLocaleString('en-IN')}
                         </td>
-                        <td className="p-3.5 font-mono text-white">{cap}</td>
-                        <td className="p-3.5 font-mono font-bold text-[#E8913A]">{sold}</td>
-                        <td className="p-3.5 font-mono font-bold text-sky-400">{rem}</td>
-                        <td className="p-3.5 font-mono font-bold text-emerald-400">{formatINR(band.collected_amount || 0)}</td>
-                        <td className="p-3.5 font-mono font-bold text-amber-400">{formatINR(band.pending_amount || 0)}</td>
-                        <td className="p-3.5 font-mono text-purple-400">{formatINR(band.discount_amount || 0)}</td>
-                        <td className="p-3.5 text-right font-mono font-bold text-white">{occ}%</td>
+                        <td className="p-3 text-right font-mono font-medium">
+                          {allocated}
+                        </td>
+                        <td className="p-3 text-right font-mono text-emerald-400 font-bold">
+                          {sold}
+                        </td>
+                        <td className="p-3 text-right font-mono text-yellow-400">
+                          {holds}
+                        </td>
+                        <td className="p-3 text-right font-mono text-white font-bold">
+                          {remaining}
+                        </td>
+                        <td className="p-3 text-right font-mono text-emerald-400">
+                          {formatINR(collected)}
+                        </td>
+                        <td className="p-3 text-right font-mono text-yellow-400">
+                          {formatINR(pending)}
+                        </td>
+                        <td className="p-3 pr-4 text-right font-mono font-bold text-white">
+                          {formatINR(totalVal)}
+                        </td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
             </div>
-          </Card>
+          </div>
         </TabsContent>
 
-        {/* TAB 2: BY TEAM MEMBER */}
-        <TabsContent value="team">
-          <Card className="bg-[#131F2E] border-[#223345] rounded-2xl shadow-xl overflow-hidden">
+        {/* TAB 2: Teams Breakdown */}
+        <TabsContent value="teams" className="space-y-4">
+          <div className="bg-[#0B1724] rounded-2xl border border-[#1D3249] overflow-hidden shadow-xl">
+            <div className="p-4 border-b border-[#1D3249]">
+              <h3 className="text-sm font-bold text-white">Team Performance Summary (8 Teams)</h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Aggregated sales and sponsorships attributed to members of each team.
+              </p>
+            </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
+              <table className="w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr className="bg-[#0E1724] border-b border-[#223345] text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-                    <th className="p-3.5">Team Member</th>
-                    <th className="p-3.5">Role</th>
-                    <th className="p-3.5">Seats Sold</th>
-                    <th className="p-3.5">Standard Value</th>
-                    <th className="p-3.5">Collected</th>
-                    <th className="p-3.5">Pending</th>
-                    <th className="p-3.5">Discounts</th>
-                    <th className="p-3.5">WhatsApp Passes</th>
-                    <th className="p-3.5 text-right">Printed Tickets</th>
+                  <tr className="bg-[#07111C] text-slate-400 border-b border-[#1D3249]">
+                    <th className="p-3 pl-4">Team</th>
+                    <th className="p-3 text-right">Members</th>
+                    <th className="p-3 text-right">Passes Sold</th>
+                    <th className="p-3 text-right">Passes Value (₹)</th>
+                    <th className="p-3 text-right">Sponsors (₹)</th>
+                    <th className="p-3 pr-4 text-right font-bold">Total Raised (₹)</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-[#1E2D3D] text-slate-300">
-                  {teamMemberStats.map((member) => (
-                    <tr key={member.userId} className="hover:bg-[#16273A] transition-colors">
-                      <td className="p-3.5 font-bold text-white">
-                        {member.name}
-                        <span className="block text-[10px] text-slate-500 font-normal">{member.email}</span>
+                <tbody className="divide-y divide-[#1D3249]/60 text-slate-200">
+                  {teamBreakdown.map((t, idx) => (
+                    <tr key={t.groupId} className="hover:bg-[#0E2032] transition-colors">
+                      <td className="p-3 pl-4">
+                        <div className="flex items-center gap-2">
+                          <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-[10px]">
+                            {idx + 1}
+                          </span>
+                          <div>
+                            <p className="font-bold text-white">Team {t.groupId}: {t.groupName}</p>
+                          </div>
+                        </div>
                       </td>
-                      <td className="p-3.5 capitalize text-slate-400">
-                        {member.role === 'system_admin' ? 'System Admin' : member.role === 'super_admin' ? 'Super Admin' : 'Sub-Admin'}
+                      <td className="p-3 text-right font-mono text-slate-300">
+                        {t.memberCount}
                       </td>
-                      <td className="p-3.5 font-mono font-black text-[#E8913A] text-sm">
-                        {member.seatsSold}
+                      <td className="p-3 text-right font-mono text-emerald-400 font-bold">
+                        {t.passesCount}
                       </td>
-                      <td className="p-3.5 font-mono text-white">
-                        {formatINR(member.standardValue)}
+                      <td className="p-3 text-right font-mono text-white">
+                        {formatINR(t.passesAmount)}
                       </td>
-                      <td className="p-3.5 font-mono font-bold text-emerald-400">
-                        {formatINR(member.collected)}
+                      <td className="p-3 text-right font-mono text-amber-400">
+                        {formatINR(t.sponsorsAmount)}
                       </td>
-                      <td className="p-3.5 font-mono font-bold text-amber-400">
-                        {formatINR(member.pending)}
-                      </td>
-                      <td className="p-3.5 font-mono text-purple-400">
-                        {formatINR(member.discounts)}
-                      </td>
-                      <td className="p-3.5">
-                        <Badge className="bg-emerald-950 text-emerald-300 border-emerald-800 text-[10px] gap-1 font-mono">
-                          <Share2 className="w-3 h-3" />
-                          {member.whatsapp}
-                        </Badge>
-                      </td>
-                      <td className="p-3.5 text-right">
-                        <Badge className="bg-sky-950 text-sky-300 border-sky-800 text-[10px] gap-1 font-mono">
-                          <Printer className="w-3 h-3" />
-                          {member.printed}
-                        </Badge>
+                      <td className="p-3 pr-4 text-right font-mono font-black text-amber-400 text-sm">
+                        {formatINR(t.totalRaised)}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          </Card>
+          </div>
         </TabsContent>
 
-        {/* TAB 3: BY SPONSOR */}
-        <TabsContent value="sponsors">
-          <Card className="bg-[#131F2E] border-[#223345] rounded-2xl shadow-xl overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-[#0E1724] border-b border-[#223345] text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-                    <th className="p-3.5">Sponsor Name</th>
-                    <th className="p-3.5">Tier</th>
-                    <th className="p-3.5">Complimentary Quota</th>
-                    <th className="p-3.5">Passes Tagged</th>
-                    <th className="p-3.5 text-right">Gate Checked In</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#1E2D3D] text-slate-300">
-                  {sponsorStats.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="p-8 text-center text-slate-500">
-                        No corporate sponsors registered yet.
-                      </td>
+        {/* TAB 3: Sponsors */}
+        <TabsContent value="sponsors" className="space-y-4">
+          <div className="bg-[#0B1724] rounded-2xl border border-[#1D3249] overflow-hidden shadow-xl">
+            <div className="p-4 border-b border-[#1D3249] flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-white">Corporate Sponsorships</h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Total committed sponsorships: {formatINR(metrics.sponsorsTotal)}
+                </p>
+              </div>
+              <Badge className="bg-amber-500/10 text-amber-400 border-amber-500/30 text-xs">
+                {sponsors.length} Sponsors
+              </Badge>
+            </div>
+            {sponsors.length === 0 ? (
+              <div className="py-12 text-center text-slate-500 text-xs">
+                No corporate sponsors registered yet.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-[#07111C] text-slate-400 border-b border-[#1D3249]">
+                      <th className="p-3 pl-4">Sponsor Name</th>
+                      <th className="p-3">Tier</th>
+                      <th className="p-3 text-right">Amount (₹)</th>
+                      <th className="p-3">Status</th>
+                      <th className="p-3 pr-4">Brought By</th>
                     </tr>
-                  ) : (
-                    sponsorStats.map((sp) => (
-                      <tr key={sp.id} className="hover:bg-[#16273A] transition-colors">
-                        <td className="p-3.5 font-bold text-white">{sp.name}</td>
-                        <td className="p-3.5 capitalize text-slate-400">{sp.tier.replace('_', ' ')}</td>
-                        <td className="p-3.5 font-mono text-white">{sp.quota}</td>
-                        <td className="p-3.5 font-mono font-bold text-amber-400">{sp.tagged}</td>
-                        <td className="p-3.5 text-right font-mono font-bold text-emerald-400">{sp.checkedIn}</td>
+                  </thead>
+                  <tbody className="divide-y divide-[#1D3249]/60 text-slate-200">
+                    {sponsors.map((s) => (
+                      <tr key={s.id} className="hover:bg-[#0E2032] transition-colors">
+                        <td className="p-3 pl-4 font-bold text-white">
+                          {s.sponsor_name}
+                        </td>
+                        <td className="p-3">
+                          <Badge className="bg-[#07111C] border-[#1D3249] text-slate-300 capitalize text-[10px]">
+                            {s.tier?.replace(/_/g, ' ')}
+                          </Badge>
+                        </td>
+                        <td className="p-3 text-right font-mono font-bold text-amber-400 text-sm">
+                          {formatINR(s.amount)}
+                        </td>
+                        <td className="p-3">
+                          <Badge className={`text-[10px] font-bold ${
+                            s.status === 'received'
+                              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                              : 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30'
+                          }`}>
+                            {s.status === 'received' ? '✓ Received' : 'Committed'}
+                          </Badge>
+                        </td>
+                        <td className="p-3 pr-4 text-slate-300">
+                          {s.brought_by_member?.full_name || 'Direct / General'}
+                        </td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </Card>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </TabsContent>
 
-        {/* TAB 4: RESERVED POOLS */}
-        <TabsContent value="reserved">
-          <Card className="bg-[#131F2E] border-[#223345] rounded-2xl shadow-xl overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-[#0E1724] border-b border-[#223345] text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-                    <th className="p-3.5">Pool Category</th>
-                    <th className="p-3.5">Pool Name</th>
-                    <th className="p-3.5">Quota Count</th>
-                    <th className="p-3.5 text-right">Named Guests Recorded</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#1E2D3D] text-slate-300">
-                  {pools.map((pool) => (
-                    <tr key={pool.id} className="hover:bg-[#16273A] transition-colors">
-                      <td className="p-3.5">
-                        <Badge className="bg-purple-950 text-purple-300 border-purple-800 text-xs font-bold">
-                          {pool.category}
-                        </Badge>
-                      </td>
-                      <td className="p-3.5 font-bold text-white">{pool.name}</td>
-                      <td className="p-3.5 font-mono font-bold text-white">{pool.total_count}</td>
-                      <td className="p-3.5 text-right font-mono text-purple-300">
-                        {pool.entries?.length || 0} / {pool.total_count}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+        {/* TAB 4: Participating Clubs */}
+        <TabsContent value="clubs" className="space-y-4">
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 text-xs text-amber-200 leading-relaxed">
+            <div className="flex items-center gap-2 font-bold text-amber-400 text-sm mb-1">
+              <ShieldCheck className="w-4 h-4" />
+              <span>Rule R7: Ring-Fenced Participating Clubs</span>
             </div>
-          </Card>
+            Each participating club pays a ₹25,000 entry fee and receives ₹15,000 worth of passes, yielding a ₹10,000 net contribution to the AED cause. As per business rule R7, this revenue is ring-fenced and excluded from individual sales leaderboard competition.
+          </div>
+
+          <div className="bg-[#0B1724] rounded-2xl border border-[#1D3249] overflow-hidden shadow-xl">
+            <div className="p-4 border-b border-[#1D3249] flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-white">Participating Clubs Register</h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Total Entry Fees: {formatINR(metrics.clubsTotalEntryFees)} • Net Contribution: {formatINR(metrics.clubsNetContribution)}
+                </p>
+              </div>
+              <Badge className="bg-amber-500/10 text-amber-400 border-amber-500/30 text-xs">
+                {clubs.length} Clubs
+              </Badge>
+            </div>
+            {clubs.length === 0 ? (
+              <div className="py-12 text-center text-slate-500 text-xs">
+                No participating clubs registered yet.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-[#07111C] text-slate-400 border-b border-[#1D3249]">
+                      <th className="p-3 pl-4">Club Name</th>
+                      <th className="p-3">Contact</th>
+                      <th className="p-3 text-right">Entry Fee</th>
+                      <th className="p-3 text-right">Passes Value</th>
+                      <th className="p-3 text-right">Net Contribution</th>
+                      <th className="p-3 pr-4">Brought By</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#1D3249]/60 text-slate-200">
+                    {clubs.map((c) => (
+                      <tr key={c.id} className="hover:bg-[#0E2032] transition-colors">
+                        <td className="p-3 pl-4 font-bold text-white">
+                          {c.club_name}
+                        </td>
+                        <td className="p-3 text-slate-300">
+                          <div>
+                            <p className="font-medium text-white">{c.contact_name}</p>
+                            <p className="text-[11px] text-slate-400">{c.contact_phone}</p>
+                          </div>
+                        </td>
+                        <td className="p-3 text-right font-mono font-bold text-white">
+                          {formatINR(c.entry_fee || 25000)}
+                        </td>
+                        <td className="p-3 text-right font-mono text-blue-400">
+                          {formatINR(c.passes_value || 15000)}
+                        </td>
+                        <td className="p-3 text-right font-mono font-bold text-emerald-400">
+                          {formatINR(c.net_contribution || 10000)}
+                        </td>
+                        <td className="p-3 pr-4 text-slate-300">
+                          {c.brought_by_member?.full_name || 'General / Club'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </TabsContent>
       </Tabs>
     </div>

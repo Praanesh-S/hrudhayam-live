@@ -353,8 +353,9 @@ html:not(.dark) {
     border-color: #D8CBBA !important;
   }
 
-  /* 9. Tabs in Light Mode */
-  [data-state="active"] {
+  /* 9. Tabs in Light Mode (only for uncolored default tabs) */
+  [data-slot="tabs-trigger"][data-active]:not([class*="bg-amber"]):not([class*="bg-[#E8913A]"]),
+  [data-slot="tabs-trigger"][data-state="active"]:not([class*="bg-amber"]):not([class*="bg-[#E8913A]"]) {
     background-color: #FFFDF9 !important;
     color: #0F172A !important;
     box-shadow: 0 1px 4px rgba(100, 80, 50, 0.12) !important;
@@ -427,4 +428,14 @@ html:not(.dark) {
 }
 .dark ::-webkit-scrollbar-thumb:hover {
   background: #3B526B;
+}
+
+/* Hide scrollbar for Chrome, Safari and Opera */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+/* Hide scrollbar for IE, Edge and Firefox */
+.no-scrollbar {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
 }

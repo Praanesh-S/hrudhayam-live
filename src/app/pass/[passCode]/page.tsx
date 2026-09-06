@@ -1,7 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateQrDataUrl } from '@/lib/qrcode';
-import { Ticket, MapPin, Calendar, Download, CheckCircle2, Heart, XCircle, Sparkles } from 'lucide-react';
-import { formatINR } from '@/lib/constants';
+import { MapPin, Calendar, Download, CheckCircle2, Heart, XCircle, QrCode, Tag } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,15 +16,26 @@ export default async function PublicPassPage({ params }: { params: Promise<{ pas
   const { passCode } = await params;
   const adminClient = createAdminClient();
 
-  // 1. Look up sale by pass_code
-  let { data: sale } = await adminClient
-    .from('sales')
-    .select('*, band:bands(name, standard_price)')
+  // 1. Try finding in v2 passes table
+  let { data: pass } = await adminClient
+    .from('passes')
+    .select('*, band:bands(label, price, name, standard_price)')
     .eq('pass_code', passCode)
     .maybeSingle();
 
-  // Fallback to legacy seats if not found
-  if (!sale) {
+  // Fallback 1: check sales table
+  let legacySale = null;
+  if (!pass) {
+    const { data: sale } = await adminClient
+      .from('sales')
+      .select('*, band:bands(name, standard_price)')
+      .eq('pass_code', passCode)
+      .maybeSingle();
+    legacySale = sale;
+  }
+
+  // Fallback 2: check seats table
+  if (!pass && !legacySale) {
     const { data: seat } = await adminClient
       .from('seats')
       .select('*')
@@ -33,7 +43,7 @@ export default async function PublicPassPage({ params }: { params: Promise<{ pas
       .maybeSingle();
 
     if (seat && seat.guest_name) {
-      sale = {
+      legacySale = {
         id: seat.id,
         donor_name: seat.guest_name,
         pass_code: seat.pass_code,
@@ -49,7 +59,7 @@ export default async function PublicPassPage({ params }: { params: Promise<{ pas
     }
   }
 
-  const isInvalid = !sale || sale.cancelled;
+  const isInvalid = (!pass && !legacySale) || (pass && pass.status === 'cancelled') || (legacySale && legacySale.cancelled);
 
   if (isInvalid) {
     return (
@@ -77,8 +87,16 @@ export default async function PublicPassPage({ params }: { params: Promise<{ pas
     );
   }
 
-  const bandName = sale.band?.name || `₹${sale.standard_price?.toLocaleString('en-IN') || '5,000'} Band`;
-  const qrToken = sale.qr_token || sale.pass_code;
+  // Determine display values
+  const donorName = pass ? pass.donor_name : legacySale.donor_name;
+  const bandName = pass
+    ? (pass.band?.label || pass.band?.name || `Band ₹${pass.band?.price?.toLocaleString('en-IN') || '5,000'}`)
+    : (legacySale.band?.name || `₹${legacySale.standard_price?.toLocaleString('en-IN') || '5,000'} Band`);
+  const isCheckedIn = pass ? pass.status === 'used' : legacySale.checked_in;
+  const isPhysical = pass ? pass.ticket_type === 'physical' : (legacySale.issuance_type === 'printed');
+  const physicalSerial = pass?.physical_serial || null;
+
+  const qrToken = pass ? (pass.qr_token || pass.pass_code) : (legacySale.qr_token || legacySale.pass_code);
   const qrDataUrl = await generateQrDataUrl(qrToken, { width: 320, margin: 1 });
 
   return (
@@ -102,7 +120,7 @@ export default async function PublicPassPage({ params }: { params: Promise<{ pas
         {/* Golden Ribbon Strip */}
         <div className="bg-gradient-to-r from-[#D97706] via-[#F59E0B] to-[#D97706] py-1.5 px-4 text-center">
           <p className="text-slate-950 font-black text-xs tracking-wider uppercase">
-            Official Donor Admission Pass • Admit 1 Guest
+            {isPhysical ? 'Official Physical Admission Pass • Admit 1' : 'Official Digital Admission Pass • Admit 1'}
           </p>
         </div>
 
@@ -113,8 +131,8 @@ export default async function PublicPassPage({ params }: { params: Promise<{ pas
             <p className="text-[10px] uppercase font-bold tracking-widest text-slate-400">
               Pass Issued To
             </p>
-            <h2 className="text-xl font-bold text-white tracking-tight">
-              {sale.donor_name || 'Valued Donor'}
+            <h2 className="text-2xl font-black text-white tracking-tight">
+              {donorName || 'Valued Donor'}
             </h2>
           </div>
 
@@ -123,7 +141,7 @@ export default async function PublicPassPage({ params }: { params: Promise<{ pas
             <span className="text-[10px] font-bold text-amber-400 uppercase tracking-widest block">
               Admission Category
             </span>
-            <span className="text-lg font-black text-white block">
+            <span className="text-xl font-black text-white block">
               {bandName}
             </span>
             <span className="text-[11px] text-slate-400 block pt-0.5">
@@ -131,28 +149,48 @@ export default async function PublicPassPage({ params }: { params: Promise<{ pas
             </span>
           </div>
 
-          {/* High-Contrast QR Code Card */}
-          <div className="relative p-4 bg-white rounded-2xl shadow-xl flex flex-col items-center">
-            <img 
-              src={qrDataUrl} 
-              alt={`QR Code for pass ${passCode}`} 
-              className="w-56 h-56 object-contain"
-            />
-            <div className="mt-2 text-center">
-              <span className="font-mono text-base font-black text-slate-900 tracking-widest">
-                {passCode}
-              </span>
-              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mt-0.5">
-                Scan at Gate Entrance
+          {/* Verification Code Box (QR or Physical Serial) */}
+          {isPhysical && physicalSerial ? (
+            <div className="w-full bg-amber-500/10 border-2 border-amber-500/40 rounded-2xl p-6 text-center space-y-2">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 text-xs font-bold">
+                <Tag className="w-3.5 h-3.5" />
+                <span>Physical Pass Serial</span>
+              </div>
+              <p className="font-mono text-3xl font-black text-amber-400 tracking-wider">
+                {physicalSerial}
+              </p>
+              <p className="text-[11px] text-slate-300">
+                Please present your physical ticket at the entrance gate.
               </p>
             </div>
-          </div>
+          ) : (
+            <div className="relative p-4 bg-white rounded-2xl shadow-xl flex flex-col items-center">
+              <img 
+                src={qrDataUrl} 
+                alt={`QR Code for pass ${passCode}`} 
+                className="w-56 h-56 object-contain"
+              />
+              <div className="mt-2 text-center">
+                <span className="font-mono text-base font-black text-slate-900 tracking-widest">
+                  {passCode}
+                </span>
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mt-0.5">
+                  Scan at Gate Entrance
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Check-in status badge if checked in */}
-          {sale.checked_in && (
+          {isCheckedIn ? (
             <div className="w-full p-2.5 rounded-xl bg-emerald-950/80 border border-emerald-600 flex items-center justify-center gap-2 text-emerald-300 text-xs font-bold">
               <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              <span>✓ Verified Admission Entry</span>
+              <span>✓ Verified Admission Entry (Gate Checked-In)</span>
+            </div>
+          ) : (
+            <div className="w-full p-2 rounded-xl bg-slate-900/60 border border-slate-700/60 flex items-center justify-center gap-1.5 text-slate-400 text-[11px]">
+              <QrCode className="w-3.5 h-3.5 text-amber-400" />
+              <span>Gate Status: Active & Ready for Entry</span>
             </div>
           )}
 
@@ -175,35 +213,19 @@ export default async function PublicPassPage({ params }: { params: Promise<{ pas
             </div>
           </div>
 
-          {/* Download PDF Action */}
-          <button
-            type="button"
-            onClick={async () => {
-              try {
-                const res = await fetch('/api/tickets/generate', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ passCode: sale.pass_code }),
-                });
-                if (!res.ok) throw new Error('Download failed');
-                const blob = await res.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `Hrudhayam-Pass-${passCode}.pdf`;
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(url);
-                document.body.removeChild(a);
-              } catch (err) {
-                alert('Could not download PDF. Please try again.');
-              }
-            }}
-            className="w-full py-3 px-4 rounded-xl bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-amber-950/40 transition-all cursor-pointer"
-          >
-            <Download className="w-4 h-4" />
-            <span>Download Printable PDF Ticket</span>
-          </button>
+          {/* Download PDF Action Link (for Digital Passes) */}
+          {!isPhysical && (
+            <a
+              href={`/api/tickets/generate?passCode=${encodeURIComponent(passCode)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              download={`Hrudhayam-Pass-${passCode}.pdf`}
+              className="w-full py-3.5 px-4 rounded-xl bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-950/40 transition-all no-underline"
+            >
+              <Download className="w-4 h-4" />
+              <span>Download Printable PDF Ticket</span>
+            </a>
+          )}
         </div>
 
         {/* Footer */}

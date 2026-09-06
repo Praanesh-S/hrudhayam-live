@@ -1,19 +1,17 @@
 export const dynamic = 'force-dynamic';
 
-import { createClient } from '@/lib/supabase/server';
-import { createAdminClient } from '@/lib/supabase/admin';
-import { RoleGate } from '@/components/layout/RoleGate';
-import { SellClient } from './sell-client';
-import { fetchBandsWithMetrics } from '@/lib/band-utils';
+import { getSessionUser } from '@/lib/auth/session';
 import { redirect } from 'next/navigation';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { fetchBandsWithMetrics } from '@/lib/band-utils';
+import { SellClient } from './sell-client';
 
 export const metadata = {
-  title: 'Sell Seats | Hrudhayam LIVE',
+  title: 'Sell a Pass | Hrudhayam LIVE',
 };
 
 export default async function SellPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
 
   if (!user) {
     redirect('/login');
@@ -21,61 +19,66 @@ export default async function SellPage() {
 
   const adminClient = createAdminClient();
 
-  const { data: profile } = await adminClient
-    .from('profiles')
-    .select('*')
-    .eq('id', user.id)
-    .single();
+  // 1. Fetch bands with live remaining counts
+  const bands = await fetchBandsWithMetrics(adminClient);
 
-  if (!profile || !profile.is_active) {
-    redirect('/onboard');
+  // 2. Fetch eligible sellers
+  // Rule R2: Group Admin only sees members of their own team!
+  let membersQuery = adminClient
+    .from('members')
+    .select(`
+      id,
+      full_name,
+      phone_raw,
+      phone_e164,
+      phone_status,
+      group_id,
+      is_group_admin,
+      is_active,
+      groups (
+        id,
+        name
+      )
+    `)
+    .eq('is_active', true)
+    .order('full_name');
+
+  if (user.role === 'group_admin' && user.groupId) {
+    membersQuery = membersQuery.eq('group_id', user.groupId);
+  } else {
+    membersQuery = membersQuery.order('group_id');
   }
 
-  // Fetch bands with remaining counts, approvers (super & system admins), and sponsors in parallel
-  const [bands, approversRes, sponsorsRes] = await Promise.all([
-    fetchBandsWithMetrics(adminClient),
-    adminClient
-      .from('profiles')
-      .select('*')
-      .in('role', ['super_admin', 'system_admin'])
-      .eq('is_active', true),
-    adminClient
-      .from('sponsors')
-      .select('*')
-      .order('name'),
-  ]);
+  const { data: membersData } = await membersQuery;
+  const eligibleSellers = membersData || [];
 
-  const approvers = approversRes.data || [];
-  const sponsors = sponsorsRes.data || [];
+  // 3. Fetch active soft holds
+  const { data: activeHolds } = await adminClient
+    .from('soft_holds')
+    .select('*, bands(label)')
+    .eq('status', 'active')
+    .gt('expires_at', new Date().toISOString())
+    .order('expires_at', { ascending: true });
 
   return (
-    <RoleGate allowedRoles={['super_admin', 'sub_admin', 'system_admin']}>
-      <div className="flex flex-col gap-6">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">
-            Sell Admission Passes
-          </h1>
-          <p className="text-slate-500 dark:text-slate-400 text-sm">
-            Select a price band, enter donor details, and issue passes via WhatsApp or printed ticket.
-          </p>
-        </div>
-
-        {profile.role === 'system_admin' ? (
-          <div className="p-6 bg-[#131F2E] rounded-3xl border border-[#223345] text-center max-w-xl mx-auto space-y-3">
-            <h3 className="text-lg font-bold text-white">System Admin Notice</h3>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              As the System Administrator, you manage technical configurations, band capacities, and cancellations. Commercial sales are conducted by Sub-Admins and Super Admins.
-            </p>
-          </div>
-        ) : (
-          <SellClient 
-            bands={bands} 
-            approvers={approvers}
-            sponsors={sponsors}
-            currentUser={profile}
-          />
-        )}
+    <div className="flex flex-col gap-6 max-w-4xl mx-auto pb-16">
+      <div>
+        <h1 className="text-3xl sm:text-4xl font-black tracking-tight text-white">
+          Sell a Pass
+        </h1>
+        <p className="text-slate-400 text-sm sm:text-base mt-1">
+          {user.role === 'group_admin' 
+            ? `Issuing passes for ${user.groupName || 'Team'} • ${user.fullName}`
+            : `Administrative Sales Console • ${user.fullName} (${user.role.replace('_', ' ').toUpperCase()})`}
+        </p>
       </div>
-    </RoleGate>
+
+      <SellClient
+        bands={bands}
+        sellers={eligibleSellers}
+        currentUser={user}
+        initialHolds={activeHolds || []}
+      />
+    </div>
   );
 }

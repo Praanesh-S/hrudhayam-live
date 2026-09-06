@@ -1,661 +1,840 @@
 'use client';
 
-import { useState } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useState, useEffect } from 'react';
+import { Band, TicketType, PaymentMode, PaymentStatus } from '@/lib/types';
+import { AuthUser } from '@/lib/auth/session';
+import { issuePass, undoSale, checkDonorPassCount } from './actions';
+import { getWhatsAppUrl } from '@/lib/whatsapp';
+import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Band, Profile, Sponsor } from '@/lib/types';
-import { formatINR, BANDS_CONFIG } from '@/lib/constants';
-import { createSale, recordIssuance } from './actions';
-import { formatWhatsAppMessage, getWhatsAppShareUrl } from '@/lib/whatsapp';
-import { toast } from 'sonner';
 import { 
   Ticket, 
-  Users, 
-  Phone, 
-  Mail, 
-  MessageSquare, 
+  Smartphone, 
   CheckCircle2, 
-  AlertTriangle, 
+  AlertCircle, 
+  ArrowLeft, 
   ArrowRight, 
-  Sparkles, 
-  Percent, 
-  Printer, 
-  Share2, 
-  Plus, 
-  Minus,
-  Building2,
-  Lock,
-  Download
+  Loader2, 
+  RotateCcw, 
+  Send, 
+  Upload, 
+  ShieldAlert,
+  UserCheck,
+  CreditCard
 } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 interface SellClientProps {
   bands: Band[];
-  approvers: Profile[];
-  sponsors: Sponsor[];
-  currentUser: Profile;
+  sellers: any[];
+  currentUser: AuthUser;
+  initialHolds?: any[];
 }
 
-export function SellClient({ bands, approvers, sponsors, currentUser }: SellClientProps) {
-  const router = useRouter();
+export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
+  // Step in wizard: 1 (Band) -> 2 (Type) -> 3 (Seller) -> 4 (Donor) -> 5 (Payment) -> 6 (Success)
+  const [step, setStep] = useState<number>(1);
 
-  // Selected state
-  const [selectedBandId, setSelectedBandId] = useState<string>(bands[0]?.id || 'band_5000');
-  const [quantity, setQuantity] = useState<number>(1);
+  // Form states
+  const [selectedBandId, setSelectedBandId] = useState<string>('');
+  const [ticketType, setTicketType] = useState<TicketType>('digital');
+  const [physicalSerial, setPhysicalSerial] = useState<string>('');
   
-  // Donor details
-  const [donorName, setDonorName] = useState('');
-  const [donorPhone, setDonorPhone] = useState('');
-  const [donorEmail, setDonorEmail] = useState('');
-  const [paymentStatus, setPaymentStatus] = useState<'paid' | 'pending'>('paid');
-  const [comment, setComment] = useState('');
-  const [selectedSponsorId, setSelectedSponsorId] = useState<string>('none');
+  // Default seller to logged in user if they are a member, else first in list
+  const defaultSellerId = currentUser.memberId || (sellers.length > 0 ? sellers[0].id : '');
+  const [sellerMemberId, setSellerMemberId] = useState<number | ''>(defaultSellerId);
 
-  // Multi-guest individual details
-  const [hasSeparateGuests, setHasSeparateGuests] = useState(false);
-  const [individualGuests, setIndividualGuests] = useState<Array<{ name: string; phone: string; comment?: string }>>([]);
+  // Donor fields
+  const [donorName, setDonorName] = useState<string>('');
+  const [donorPhone, setDonorPhone] = useState<string>('');
+  const [donorEmail, setDonorEmail] = useState<string>('');
+  const [donorIsFallback, setDonorIsFallback] = useState<boolean>(false);
+  const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
 
-  // Discount state
-  const [hasDiscount, setHasDiscount] = useState(false);
-  const [collectedAmountPerSeat, setCollectedAmountPerSeat] = useState<number>(0);
-  const [discountApprovedBy, setDiscountApprovedBy] = useState<string>('');
+  // Payment fields
+  const [paymentMode, setPaymentMode] = useState<PaymentMode>('upi');
+  const [paymentAmount, setPaymentAmount] = useState<number>(0);
+  const [paymentReferenceNo, setPaymentReferenceNo] = useState<string>('');
+  const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>('received');
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [preferredLanguage, setPreferredLanguage] = useState<'en' | 'ta'>('en');
 
-  // Loading & Success state
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [completedSales, setCompletedSales] = useState<any[] | null>(null);
-  const [completedBandName, setCompletedBandName] = useState<string>('');
+  // Loading & Submission states
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const selectedBand = bands.find(b => b.id === selectedBandId);
-  const remaining = selectedBand?.remaining_count || 0;
-  const isSoldOut = remaining <= 0;
+  // Success state
+  const [successResult, setSuccessResult] = useState<{
+    passCode: string;
+    undoToken: string;
+    donorMessage: string;
+    donorPhone: string;
+    sellerMessage: string;
+    sellerPhone: string;
+    sellerName: string;
+    bandLabel: string;
+    passId: string;
+  } | null>(null);
 
-  // Update quantity handler
-  const handleQuantityChange = (newQty: number) => {
-    const validQty = Math.max(1, Math.min(remaining || 1, newQty));
-    setQuantity(validQty);
+  // 60-Second Undo Timer State (§19.2)
+  const [undoSecondsLeft, setUndoSecondsLeft] = useState<number>(60);
+  const [isUndoing, setIsUndoing] = useState<boolean>(false);
+  const [undoMessage, setUndoMessage] = useState<string | null>(null);
 
-    // Resize individual guests array
-    setIndividualGuests(prev => {
-      const arr = [...prev];
-      while (arr.length < validQty) {
-        arr.push({ name: '', phone: '' });
-      }
-      return arr.slice(0, validQty);
-    });
+  const selectedBand = bands.find((b) => b.id === selectedBandId);
+
+  // Automatically sync amount when band changes
+  useEffect(() => {
+    if (selectedBand) {
+      setPaymentAmount(selectedBand.price);
+    }
+  }, [selectedBand]);
+
+  // Check duplicate donor on phone blur (§19.3)
+  const handleDonorPhoneBlur = async () => {
+    if (donorIsFallback || !donorPhone || donorPhone.length < 10) {
+      setDuplicateWarning(null);
+      return;
+    }
+    const res = await checkDonorPassCount(donorPhone);
+    if (res.count > 0) {
+      setDuplicateWarning(`Notice: This mobile number already has ${res.count} active pass${res.count === 1 ? '' : 'es'}.`);
+    } else {
+      setDuplicateWarning(null);
+    }
   };
 
-  const standardPrice = selectedBand?.standard_price || 5000;
-  const unitPrice = hasDiscount && collectedAmountPerSeat > 0 ? collectedAmountPerSeat : standardPrice;
-  const totalAmount = unitPrice * quantity;
-  const totalDiscount = (standardPrice - unitPrice) * quantity;
+  // 60-Second Countdown timer for Undo window
+  useEffect(() => {
+    if (!successResult || undoSecondsLeft <= 0) return;
+    const timer = setInterval(() => {
+      setUndoSecondsLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [successResult, undoSecondsLeft]);
 
-  // Submit Sale
-  const handleSubmitSale = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!donorName.trim()) {
-      toast.error('Please enter donor name');
-      return;
-    }
-
-    const cleanPhone = donorPhone.replace(/\D/g, '').slice(-10);
-    if (cleanPhone.length !== 10) {
-      toast.error('Please enter a valid 10-digit mobile number for WhatsApp pass delivery');
-      return;
-    }
-
-    if (quantity > remaining) {
-      toast.error(`HARD LIMIT: Only ${remaining} seat(s) remaining in this band`);
-      return;
-    }
-
-    if (hasDiscount && totalDiscount > 0 && !discountApprovedBy) {
-      toast.error('Please select an approving Super Admin or System Admin for the discount');
-      return;
-    }
-
+  // Handle Form Submission
+  const handleSubmit = async () => {
     setIsSubmitting(true);
+    setErrorMessage(null);
+
     try {
-      const res = await createSale({
+      let uploadedFileKey: string | null = null;
+
+      // Upload payment screenshot if attached
+      if (proofFile) {
+        const supabase = createClient();
+        const fileExt = proofFile.name.split('.').pop();
+        const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
+        const filePath = `receipts/${fileName}`;
+
+        const { error: uploadErr } = await supabase.storage
+          .from('payment-proofs')
+          .upload(filePath, proofFile);
+
+        if (!uploadErr) {
+          uploadedFileKey = filePath;
+        } else {
+          console.warn('Screenshot upload failed, continuing without screenshot:', uploadErr);
+        }
+      }
+
+      const res = await issuePass({
         bandId: selectedBandId,
-        quantity,
-        donorName: donorName.trim(),
-        donorPhone: cleanPhone,
-        donorEmail: donorEmail.trim() || null,
+        ticketType,
+        physicalSerial: ticketType === 'physical' ? physicalSerial : null,
+        sellerMemberId: Number(sellerMemberId),
+        donorName,
+        donorPhone,
+        donorEmail: donorEmail || null,
+        donorIsSellerFallback: donorIsFallback,
+        paymentMode,
+        paymentAmount,
+        paymentReferenceNo,
         paymentStatus,
-        comment: comment.trim() || null,
-        collectedAmountPerSeat: hasDiscount ? collectedAmountPerSeat : standardPrice,
-        discountApprovedBy: hasDiscount ? discountApprovedBy : null,
-        individualGuests: hasSeparateGuests ? individualGuests : null,
-        sponsorId: selectedSponsorId !== 'none' ? selectedSponsorId : null,
+        proofFileKey: uploadedFileKey,
+        preferredLanguage,
       });
 
-      if (!res.success || !res.sales) {
-        toast.error(res.error || 'Failed to record sale');
+      if (!res.success) {
+        setErrorMessage(res.error || 'Failed to issue pass.');
+        setIsSubmitting(false);
         return;
       }
 
-      toast.success(`✓ Successfully sold ${quantity} seat(s) in ${res.bandName}!`);
-      setCompletedSales(res.sales);
-      setCompletedBandName(res.bandName || selectedBand?.name || 'Seating Band');
+      // Success
+      setSuccessResult({
+        passCode: res.passCode!,
+        undoToken: res.undoToken!,
+        donorMessage: res.donorMessage!,
+        donorPhone: res.donorPhone!,
+        sellerMessage: res.sellerMessage!,
+        sellerPhone: res.sellerPhone!,
+        sellerName: res.sellerName!,
+        bandLabel: res.bandLabel!,
+        passId: res.pass.id,
+      });
+
+      setUndoSecondsLeft(60);
+      setStep(6);
     } catch (err: any) {
-      toast.error(err.message || 'Error creating sale');
+      setErrorMessage(err.message || 'An unexpected error occurred.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // WhatsApp send action
-  const handleWhatsAppSend = async (sale: any) => {
-    try {
-      // 1. Mark issuance in database
-      await recordIssuance(sale.id, 'whatsapp');
+  // Handle Undo Sale
+  const handleUndo = async () => {
+    if (!successResult) return;
+    setIsUndoing(true);
+    setUndoMessage(null);
 
-      // 2. Open WhatsApp share link
-      const message = formatWhatsAppMessage({
-        donorName: sale.donor_name,
-        donorPhone: sale.donor_phone,
-        passCode: sale.pass_code,
-        bandName: completedBandName,
-        paymentStatus: sale.payment_status,
-      });
+    const res = await undoSale(successResult.passId, successResult.undoToken);
+    setIsUndoing(false);
 
-      const url = getWhatsAppShareUrl(sale.donor_phone, message);
-      window.open(url, '_blank');
-      toast.success(`WhatsApp pass link opened for ${sale.donor_name}`);
-    } catch (err: any) {
-      toast.error('Error recording WhatsApp delivery');
+    if (res.success) {
+      setUndoMessage(res.message || 'Pass cancelled successfully.');
+      setSuccessResult(null);
+    } else {
+      setErrorMessage(res.error || 'Failed to undo pass.');
     }
   };
 
-  // Print ticket action
-  const handlePrintTicket = async (sale: any) => {
-    try {
-      // 1. Mark issuance in database
-      await recordIssuance(sale.id, 'printed');
-
-      // 2. Download PDF
-      const res = await fetch('/api/tickets/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ passCode: sale.pass_code }),
-      });
-
-      if (!res.ok) throw new Error('Download failed');
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `Hrudhayam-Pass-${sale.pass_code}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-
-      toast.success(`Printable ticket downloaded for ${sale.pass_code}`);
-    } catch (err: any) {
-      toast.error('Error generating printable pass');
-    }
+  // Reset form for next sale
+  const handleResetForNext = () => {
+    setStep(1);
+    setSelectedBandId('');
+    setTicketType('digital');
+    setPhysicalSerial('');
+    setDonorName('');
+    setDonorPhone('');
+    setDonorEmail('');
+    setDonorIsFallback(false);
+    setPaymentReferenceNo('');
+    setPaymentStatus('received');
+    setProofFile(null);
+    setSuccessResult(null);
+    setErrorMessage(null);
+    setUndoMessage(null);
   };
-
-  // If sale completed, render success handover screen
-  if (completedSales) {
-    return (
-      <div className="max-w-2xl mx-auto space-y-6 animate-in fade-in zoom-in duration-200 pb-16">
-        <Card className="bg-[#131F2E] border-2 border-emerald-500/40 rounded-3xl shadow-2xl p-6 sm:p-8 text-center space-y-6">
-          <div className="w-16 h-16 rounded-full bg-emerald-500/10 border-2 border-emerald-500/30 flex items-center justify-center mx-auto text-emerald-400">
-            <CheckCircle2 className="w-9 h-9" />
-          </div>
-
-          <div className="space-y-1.5">
-            <Badge className="bg-emerald-950 text-emerald-300 border-emerald-800 text-xs uppercase tracking-wider font-bold">
-              Sale Confirmed & Allocated
-            </Badge>
-            <h2 className="text-2xl font-black text-white">
-              {completedSales.length} Seat{completedSales.length > 1 ? 's' : ''} Sold in {completedBandName}
-            </h2>
-            <p className="text-xs text-slate-400">
-              Lead Donor: <strong className="text-white">{donorName}</strong> ({donorPhone})
-            </p>
-          </div>
-
-          {/* Golden Rule Notice */}
-          <div className="p-3 bg-amber-500/10 rounded-2xl border border-amber-500/30 text-[11px] text-amber-300 text-left flex items-start gap-2.5">
-            <Sparkles className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-            <div>
-              <strong className="block text-amber-200">Golden Delivery Rule:</strong>
-              Choose <strong>either</strong> WhatsApp delivery <strong>or</strong> Printed ticket. Once issued, a pass cannot be switched to another channel.
-            </div>
-          </div>
-
-          {/* List of passes with handover buttons */}
-          <div className="space-y-3 text-left">
-            {completedSales.map((sale, idx) => (
-              <div 
-                key={sale.id} 
-                className="p-4 bg-[#0E1724] rounded-2xl border border-[#24364A] flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-inner"
-              >
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-sm font-black text-amber-400">{sale.pass_code}</span>
-                    <Badge variant="outline" className="text-[10px] bg-[#1A2839] border-slate-700 text-slate-300">
-                      Seat #{idx + 1}
-                    </Badge>
-                  </div>
-                  <p className="text-sm font-bold text-white mt-0.5">{sale.donor_name}</p>
-                  <p className="text-xs text-slate-400">{sale.donor_phone}</p>
-                </div>
-
-                <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
-                  <Button
-                    size="sm"
-                    onClick={() => handleWhatsAppSend(sale)}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl h-9 gap-1.5 shadow-md shadow-emerald-950/40"
-                  >
-                    <Share2 className="w-3.5 h-3.5" />
-                    <span>Send WhatsApp</span>
-                  </Button>
-
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handlePrintTicket(sale)}
-                    className="bg-[#1A2839] hover:bg-[#24364A] text-slate-200 font-bold text-xs rounded-xl h-9 gap-1.5 border-[#2A3F55]"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>Print PDF</span>
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="pt-4 border-t border-[#223345] flex flex-col sm:flex-row gap-3">
-            <Button
-              className="flex-1 bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-bold text-xs rounded-xl h-11"
-              onClick={() => {
-                setCompletedSales(null);
-                setDonorName('');
-                setDonorPhone('');
-                setDonorEmail('');
-                setComment('');
-                setQuantity(1);
-                setHasDiscount(false);
-                router.refresh();
-              }}
-            >
-              Record Another Sale
-            </Button>
-            <Button
-              variant="outline"
-              className="bg-[#1A2839] hover:bg-[#24364A] text-slate-300 font-semibold text-xs rounded-xl h-11 border-[#2A3F55]"
-              onClick={() => router.push('/guests')}
-            >
-              View All Team Sales
-            </Button>
-          </div>
-        </Card>
-      </div>
-    );
-  }
 
   return (
-    <form onSubmit={handleSubmitSale} className="max-w-4xl mx-auto space-y-8 pb-16">
-      {/* 1. BAND PICKER */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <Label className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-            <Ticket className="w-4 h-4 text-[#E8913A]" />
-            <span>1. Select Price Band</span>
-          </Label>
-          <span className="text-xs text-slate-400">
-            General seating within designated band
-          </span>
-        </div>
+    <div className="bg-[#131F2E] border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl">
+      {/* Error / Undo Alert Banner */}
+      {errorMessage && (
+        <Alert variant="destructive" className="mb-6 bg-red-950/70 border-red-800 text-red-100">
+          <AlertCircle className="h-5 w-5 text-red-400" />
+          <AlertTitle className="text-base font-bold">Error</AlertTitle>
+          <AlertDescription className="text-sm">{errorMessage}</AlertDescription>
+        </Alert>
+      )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {bands.map((band) => {
-            const isSelected = selectedBandId === band.id;
-            const rem = band.remaining_count || 0;
-            const soldOut = rem <= 0;
-            const config = BANDS_CONFIG.find(c => c.id === band.id);
+      {undoMessage && (
+        <Alert className="mb-6 bg-emerald-950/70 border-emerald-800 text-emerald-100">
+          <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+          <AlertTitle className="text-base font-bold">Pass Undone</AlertTitle>
+          <AlertDescription className="text-sm">{undoMessage}</AlertDescription>
+        </Alert>
+      )}
 
-            return (
-              <div
-                key={band.id}
-                onClick={() => {
-                  if (!soldOut) {
-                    setSelectedBandId(band.id);
-                    if (quantity > rem) setQuantity(Math.max(1, rem));
-                  }
-                }}
-                className={`p-4 rounded-2xl border-2 transition-all cursor-pointer relative flex flex-col justify-between select-none ${
-                  soldOut 
-                    ? 'opacity-40 cursor-not-allowed bg-[#0B1520] border-[#1E2D3D]' 
-                    : isSelected 
-                      ? 'bg-[#13283E] border-[#E8913A] shadow-lg shadow-amber-950/20' 
-                      : 'bg-[#131F2E] border-[#223345] hover:border-slate-500 hover:bg-[#16273A]'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center justify-between">
-                    <Badge className={`${config?.bgColor || 'bg-amber-500/10'} ${config?.textColor || 'text-amber-400'} border ${config?.borderColor || 'border-amber-500/30'} text-[11px] font-bold`}>
-                      {band.name}
-                    </Badge>
-                    {soldOut && (
-                      <Badge variant="destructive" className="text-[9px] uppercase font-bold">
-                        Sold Out
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="text-2xl font-black font-mono text-white mt-2">
-                    {formatINR(band.standard_price)}
-                  </div>
-                </div>
-
-                <div className="mt-4 pt-3 border-t border-[#223345]/60 flex items-center justify-between text-xs">
-                  <span className="text-slate-400">Available</span>
-                  <span className={`font-mono font-bold ${rem > 10 ? 'text-sky-400' : rem > 0 ? 'text-amber-400' : 'text-red-400'}`}>
-                    {rem} seats
-                  </span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* 2. QUANTITY SELECTOR */}
-      <Card className="bg-[#131F2E] border-[#223345] rounded-2xl shadow-xl p-5 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <Label className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-              <Users className="w-4 h-4 text-sky-400" />
-              <span>2. Quantity of Seats</span>
-            </Label>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Maximum available in {selectedBand?.name}: <strong className="text-white">{remaining} seats</strong>
-            </p>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              disabled={quantity <= 1}
-              onClick={() => handleQuantityChange(quantity - 1)}
-              className="h-10 w-10 rounded-xl bg-[#1A2839] border-[#2A3F55] text-white"
-            >
-              <Minus className="h-4 w-4" />
-            </Button>
-            <div className="w-16 text-center font-mono font-black text-2xl text-amber-400">
-              {quantity}
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              disabled={quantity >= remaining || isSoldOut}
-              onClick={() => handleQuantityChange(quantity + 1)}
-              className="h-10 w-10 rounded-xl bg-[#1A2839] border-[#2A3F55] text-white"
-            >
-              <Plus className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-
-        {quantity > 1 && (
-          <div className="p-3 bg-[#0E1724] rounded-xl border border-[#24364A] flex items-center justify-between">
-            <div className="space-y-0.5">
-              <span className="text-xs font-bold text-white block">Group / Multi-Seat Booking</span>
-              <span className="text-[11px] text-slate-400 block">
-                Do you want to provide separate guest names for each seat now?
-              </span>
-            </div>
-            <Switch
-              checked={hasSeparateGuests}
-              onCheckedChange={setHasSeparateGuests}
-            />
-          </div>
-        )}
-
-        {/* Separate Guest Names Input if enabled */}
-        {hasSeparateGuests && quantity > 1 && (
-          <div className="space-y-3 pt-2">
-            <span className="text-xs font-bold text-slate-300 block">Individual Seat Names & Numbers:</span>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-60 overflow-y-auto pr-1">
-              {individualGuests.map((guest, idx) => (
-                <div key={idx} className="p-3 bg-[#0E1724] rounded-xl border border-[#24364A] space-y-2">
-                  <span className="text-[10px] font-mono font-bold text-amber-400 block">
-                    Seat #{idx + 1}
-                  </span>
-                  <Input
-                    placeholder={`Guest #${idx + 1} Full Name`}
-                    value={guest.name}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setIndividualGuests(prev => {
-                        const copy = [...prev];
-                        copy[idx] = { ...copy[idx], name: val };
-                        return copy;
-                      });
-                    }}
-                    className="bg-[#1A2839] border-[#2A3F55] text-white text-xs h-8"
-                  />
-                  <Input
-                    placeholder={`Guest Mobile (optional)`}
-                    value={guest.phone}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setIndividualGuests(prev => {
-                        const copy = [...prev];
-                        copy[idx] = { ...copy[idx], phone: val };
-                        return copy;
-                      });
-                    }}
-                    className="bg-[#1A2839] border-[#2A3F55] text-white text-xs h-8"
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </Card>
-
-      {/* 3. DONOR DETAILS CARD */}
-      <Card className="bg-[#131F2E] border-[#223345] rounded-2xl shadow-xl p-5 space-y-4">
-        <Label className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-          <Phone className="w-4 h-4 text-emerald-400" />
-          <span>3. Donor & Contact Details</span>
-        </Label>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <Label className="text-xs text-slate-300 font-semibold">Donor / Lead Contact Name *</Label>
-            <Input
-              required
-              placeholder="e.g. Ramesh Kumar"
-              value={donorName}
-              onChange={(e) => setDonorName(e.target.value)}
-              className="bg-[#1A2839] border-[#2A3F55] text-white text-sm h-11"
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label className="text-xs text-slate-300 font-semibold">10-Digit Mobile Number * (WhatsApp)</Label>
-            <Input
-              required
-              placeholder="e.g. 9840012345"
-              value={donorPhone}
-              onChange={(e) => setDonorPhone(e.target.value)}
-              maxLength={14}
-              className="bg-[#1A2839] border-[#2A3F55] text-white font-mono text-sm h-11"
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label className="text-xs text-slate-300 font-semibold">Email Address (Optional)</Label>
-            <Input
-              type="email"
-              placeholder="donor@example.com"
-              value={donorEmail}
-              onChange={(e) => setDonorEmail(e.target.value)}
-              className="bg-[#1A2839] border-[#2A3F55] text-white text-sm h-11"
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label className="text-xs text-slate-300 font-semibold">Payment Status *</Label>
-            <Select 
-              value={paymentStatus} 
-              onValueChange={(val) => val && setPaymentStatus(val as 'paid' | 'pending')}
-            >
-              <SelectTrigger className="bg-[#1A2839] border-[#2A3F55] text-white text-sm h-11">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-[#131F2E] border-[#223345] text-white">
-                <SelectItem value="paid">✓ Received / Paid</SelectItem>
-                <SelectItem value="pending">⏳ Pending Collection</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label className="text-xs text-slate-300 font-semibold">Tag Sponsor (Optional)</Label>
-            <Select 
-              value={selectedSponsorId} 
-              onValueChange={(val) => val && setSelectedSponsorId(val)}
-            >
-              <SelectTrigger className="bg-[#1A2839] border-[#2A3F55] text-white text-sm h-11">
-                <SelectValue placeholder="Select sponsor if complimentary pass" />
-              </SelectTrigger>
-              <SelectContent className="bg-[#131F2E] border-[#223345] text-white">
-                <SelectItem value="none">No Sponsor (Standard Donor Sale)</SelectItem>
-                {sponsors.map((s) => (
-                  <SelectItem key={s.id} value={s.id}>
-                    {s.name} ({s.complimentary_pass_count} comp passes)
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label className="text-xs text-slate-300 font-semibold">Notes / Remarks (Optional)</Label>
-            <Input
-              placeholder="e.g. Cheque collected, special front seating preference"
-              value={comment}
-              onChange={(e) => setComment(e.target.value)}
-              className="bg-[#1A2839] border-[#2A3F55] text-white text-sm h-11"
-            />
-          </div>
-        </div>
-      </Card>
-
-      {/* 4. OPTIONAL DISCOUNT SECTION */}
-      <Card className="bg-[#131F2E] border-[#223345] rounded-2xl shadow-xl p-5 space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="space-y-0.5">
-            <Label className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-              <Percent className="w-4 h-4 text-purple-400" />
-              <span>4. Custom Discount / Concession</span>
-            </Label>
-            <p className="text-xs text-slate-400">
-              Only Super Admin or System Admin can authorize discounted rates.
-            </p>
-          </div>
-          <Switch
-            checked={hasDiscount}
-            onCheckedChange={(val) => {
-              setHasDiscount(val);
-              if (val && collectedAmountPerSeat === 0) {
-                setCollectedAmountPerSeat(standardPrice);
-              }
-            }}
-          />
-        </div>
-
-        {hasDiscount && (
-          <div className="space-y-4 pt-3 border-t border-[#223345] animate-in fade-in duration-150">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label className="text-xs text-slate-300 font-semibold">Collected Price Per Seat (₹)</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  max={standardPrice}
-                  value={collectedAmountPerSeat}
-                  onChange={(e) => setCollectedAmountPerSeat(parseInt(e.target.value) || 0)}
-                  className="bg-[#1A2839] border-[#2A3F55] text-white font-mono text-sm h-11"
-                />
-                <span className="text-[10px] text-purple-300">
-                  Discount per seat: {formatINR(Math.max(0, standardPrice - collectedAmountPerSeat))}
-                </span>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-xs text-slate-300 font-semibold">Authorizing Admin *</Label>
-                <Select value={discountApprovedBy} onValueChange={(val) => val && setDiscountApprovedBy(val)}>
-                  <SelectTrigger className="bg-[#1A2839] border-[#2A3F55] text-white text-sm h-11">
-                    <SelectValue placeholder="Select Authorizing Admin" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-[#131F2E] border-[#223345] text-white">
-                    {approvers.map((admin) => (
-                      <SelectItem key={admin.id} value={admin.id}>
-                        {admin.full_name} ({admin.role === 'system_admin' ? 'System Admin' : 'Super Admin'})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </div>
-        )}
-      </Card>
-
-      {/* 5. SUMMARY & SUBMIT BUTTON */}
-      <div className="bg-[#0E1724] p-6 rounded-3xl border-2 border-[#243D56] shadow-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="space-y-1">
-          <span className="text-xs text-slate-400 font-medium">Order Total for {quantity} Seat{quantity > 1 ? 's' : ''}:</span>
-          <div className="flex items-baseline gap-3">
-            <span className="text-3xl font-black font-mono text-white">
-              {formatINR(totalAmount)}
+      {/* Progress Indicator */}
+      {step < 6 && (
+        <div className="mb-8">
+          <div className="flex items-center justify-between text-xs font-semibold text-slate-400 mb-2">
+            <span>STEP {step} OF 5</span>
+            <span>
+              {step === 1 && 'Select Price Band'}
+              {step === 2 && 'Ticket Type'}
+              {step === 3 && 'Seller Attribution'}
+              {step === 4 && 'Donor Information'}
+              {step === 5 && 'Payment Verification'}
             </span>
-            {totalDiscount > 0 && (
-              <span className="text-xs text-purple-400 font-semibold">
-                (Saved {formatINR(totalDiscount)} discount)
-              </span>
-            )}
           </div>
-          <span className="text-[11px] text-slate-500 block">
-            {selectedBand?.name} • Payment: {paymentStatus === 'paid' ? 'Paid' : 'Pending'}
-          </span>
+          <div className="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden">
+            <div 
+              className="bg-[#E8913A] h-full transition-all duration-300 ease-out" 
+              style={{ width: `${(step / 5) * 100}%` }}
+            />
+          </div>
         </div>
+      )}
 
-        <Button
-          type="submit"
-          disabled={isSubmitting || isSoldOut}
-          className="bg-gradient-to-r from-[#E8913A] to-[#D97706] hover:from-[#D97706] hover:to-[#B45309] text-slate-950 font-black text-sm px-8 h-12 rounded-2xl shadow-xl shadow-amber-950/40 gap-2 cursor-pointer"
-        >
-          {isSubmitting ? (
-            'Recording Sale...'
-          ) : isSoldOut ? (
-            'Band Sold Out'
-          ) : (
-            <>
-              <span>Confirm & Issue Pass</span>
-              <ArrowRight className="w-4 h-4" />
-            </>
+      {/* ────────────────────────────────────────────── */}
+      {/* STEP 1: CHOOSE BAND (§6.1, §17)                */}
+      {/* ────────────────────────────────────────────── */}
+      {step === 1 && (
+        <div className="space-y-6">
+          <div>
+            <h2 className="text-2xl font-black text-white">1. Select Price Band</h2>
+            <p className="text-slate-400 text-sm mt-1">
+              Choose the seating tier. Sold-out bands cannot be selected (Rule R5).
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {bands.map((band) => {
+              const remaining = band.remaining_count ?? 0;
+              const isSoldOut = remaining <= 0;
+              const isSelected = selectedBandId === band.id;
+
+              return (
+                <button
+                  key={band.id}
+                  type="button"
+                  disabled={isSoldOut}
+                  onClick={() => setSelectedBandId(band.id)}
+                  className={`relative text-left p-6 rounded-2xl border-2 transition-all flex flex-col justify-between min-h-[140px] ${
+                    isSoldOut
+                      ? 'bg-slate-900/40 border-slate-800/80 opacity-50 cursor-not-allowed'
+                      : isSelected
+                      ? 'bg-amber-500/15 border-amber-500 shadow-lg shadow-amber-950/30'
+                      : 'bg-[#1A2839] border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex justify-between items-start">
+                    <span className="font-bold text-lg text-white">
+                      {band.label}
+                    </span>
+                    <span className="text-2xl font-black text-[#E8913A]">
+                      ₹{band.price.toLocaleString('en-IN')}
+                    </span>
+                  </div>
+
+                  <div className="mt-4 flex justify-between items-end text-sm">
+                    <span className={`font-semibold ${isSoldOut ? 'text-red-400' : 'text-emerald-400'}`}>
+                      {isSoldOut ? 'Sold Out' : `${remaining} Seats Available`}
+                    </span>
+                    <span className="text-xs text-slate-400">
+                      Capacity: {band.total_allocated}
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex justify-end pt-4">
+            <Button
+              size="lg"
+              className="h-14 px-8 bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-black text-lg rounded-xl shadow-lg"
+              disabled={!selectedBandId}
+              onClick={() => setStep(2)}
+            >
+              Continue to Ticket Type <ArrowRight className="ml-2 w-5 h-5" />
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* ────────────────────────────────────────────── */}
+      {/* STEP 2: TICKET TYPE (§6.2, Rule R4)             */}
+      {/* ────────────────────────────────────────────── */}
+      {step === 2 && (
+        <div className="space-y-6">
+          <div>
+            <h2 className="text-2xl font-black text-white">2. Choose Ticket Type</h2>
+            <p className="text-slate-400 text-sm mt-1">
+              Golden Rule (R4): A seat is issued once only — Digital QR or Physical serial, never both.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <button
+              type="button"
+              onClick={() => setTicketType('digital')}
+              className={`p-6 rounded-2xl border-2 text-left transition-all ${
+                ticketType === 'digital'
+                  ? 'bg-amber-500/15 border-amber-500 shadow-lg'
+                  : 'bg-[#1A2839] border-slate-800 hover:border-slate-700'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Smartphone className="w-8 h-8 text-[#E8913A]" />
+                <div>
+                  <h3 className="text-xl font-black text-white">Digital Pass</h3>
+                  <p className="text-xs text-slate-400 mt-0.5">Instant WhatsApp delivery with QR barcode</p>
+                </div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setTicketType('physical')}
+              className={`p-6 rounded-2xl border-2 text-left transition-all ${
+                ticketType === 'physical'
+                  ? 'bg-amber-500/15 border-amber-500 shadow-lg'
+                  : 'bg-[#1A2839] border-slate-800 hover:border-slate-700'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Ticket className="w-8 h-8 text-[#E8913A]" />
+                <div>
+                  <h3 className="text-xl font-black text-white">Physical Ticket</h3>
+                  <p className="text-xs text-slate-400 mt-0.5">Pre-printed ticket with serial number</p>
+                </div>
+              </div>
+            </button>
+          </div>
+
+          {ticketType === 'physical' && (
+            <div className="space-y-2 p-5 bg-[#1A2839] border border-amber-500/30 rounded-2xl">
+              <Label htmlFor="physicalSerial" className="text-base font-bold text-white">
+                Physical Ticket Serial Number <span className="text-red-400">*</span>
+              </Label>
+              <p className="text-xs text-slate-400">
+                Enter the exact serial number printed on the physical slip. Must be unique.
+              </p>
+              <Input
+                id="physicalSerial"
+                type="text"
+                placeholder="e.g. T-0452 or 104"
+                value={physicalSerial}
+                onChange={(e) => setPhysicalSerial(e.target.value)}
+                className="h-12 bg-slate-900 border-slate-700 text-white text-lg font-mono rounded-xl mt-1"
+                required
+              />
+            </div>
           )}
-        </Button>
-      </div>
-    </form>
+
+          <div className="flex justify-between pt-4">
+            <Button
+              variant="outline"
+              size="lg"
+              className="h-14 px-6 bg-[#1A2839] border-slate-800 text-white text-base rounded-xl"
+              onClick={() => setStep(1)}
+            >
+              <ArrowLeft className="mr-2 w-5 h-5" /> Back
+            </Button>
+            <Button
+              size="lg"
+              className="h-14 px-8 bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-black text-lg rounded-xl shadow-lg"
+              disabled={ticketType === 'physical' && !physicalSerial.trim()}
+              onClick={() => setStep(3)}
+            >
+              Continue to Seller <ArrowRight className="ml-2 w-5 h-5" />
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* ────────────────────────────────────────────── */}
+      {/* STEP 3: WHO SOLD IT (§6.4, Rule R2)            */}
+      {/* ────────────────────────────────────────────── */}
+      {step === 3 && (
+        <div className="space-y-6">
+          <div>
+            <h2 className="text-2xl font-black text-white">3. Who Sold This Pass?</h2>
+            <p className="text-slate-400 text-sm mt-1">
+              Select the member to receive competition credit.
+              {currentUser.role === 'group_admin' && ' (Scoped to your team members only, Rule R2)'}
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            <Label htmlFor="sellerSelect" className="text-base font-bold text-white">
+              Seller Name (for Friendly Competition Credit)
+            </Label>
+            <select
+              id="sellerSelect"
+              value={sellerMemberId}
+              onChange={(e) => setSellerMemberId(Number(e.target.value))}
+              className="w-full h-14 bg-[#1A2839] border-2 border-slate-700 text-white text-lg rounded-2xl px-4 font-medium focus:border-amber-500 focus:outline-none"
+            >
+              {sellers.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.full_name} {s.is_group_admin ? '★ (Coordinator)' : ''} {s.groups?.name ? `[${s.groups.name}]` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex justify-between pt-4">
+            <Button
+              variant="outline"
+              size="lg"
+              className="h-14 px-6 bg-[#1A2839] border-slate-800 text-white text-base rounded-xl"
+              onClick={() => setStep(2)}
+            >
+              <ArrowLeft className="mr-2 w-5 h-5" /> Back
+            </Button>
+            <Button
+              size="lg"
+              className="h-14 px-8 bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-black text-lg rounded-xl shadow-lg"
+              disabled={!sellerMemberId}
+              onClick={() => setStep(4)}
+            >
+              Continue to Donor Details <ArrowRight className="ml-2 w-5 h-5" />
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* ────────────────────────────────────────────── */}
+      {/* STEP 4: DONOR DETAILS (§6.5, Rule R6, §19.3)   */}
+      {/* ────────────────────────────────────────────── */}
+      {step === 4 && (
+        <div className="space-y-6">
+          <div>
+            <h2 className="text-2xl font-black text-white">4. Donor Details</h2>
+            <p className="text-slate-400 text-sm mt-1">
+              Who is attending or contributing? WhatsApp pass will be sent to this number.
+            </p>
+          </div>
+
+          {/* Rule R6: Seller fallback toggle */}
+          <div className="p-4 bg-[#1A2839] border border-slate-700 rounded-2xl flex items-center justify-between">
+            <div className="space-y-0.5">
+              <span className="text-base font-bold text-white flex items-center gap-2">
+                <UserCheck className="w-5 h-5 text-[#E8913A]" />
+                Donor details not available — send to seller
+              </span>
+              <p className="text-xs text-slate-400">
+                Copies seller's contact and flags record for audit transparency (Rule R6).
+              </p>
+            </div>
+            <input
+              type="checkbox"
+              id="fallbackToggle"
+              checked={donorIsFallback}
+              onChange={(e) => {
+                setDonorIsFallback(e.target.checked);
+                if (e.target.checked) setDuplicateWarning(null);
+              }}
+              className="w-6 h-6 rounded text-amber-500 focus:ring-amber-500 bg-slate-900 border-slate-700"
+            />
+          </div>
+
+          {!donorIsFallback ? (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="donorName" className="text-base font-bold text-white">
+                  Donor Full Name <span className="text-red-400">*</span>
+                </Label>
+                <Input
+                  id="donorName"
+                  type="text"
+                  placeholder="e.g. Mr. S. Ramanathan"
+                  value={donorName}
+                  onChange={(e) => setDonorName(e.target.value)}
+                  className="h-12 bg-[#1A2839] border-slate-700 text-white text-lg rounded-xl"
+                  required
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="donorPhone" className="text-base font-bold text-white">
+                  Donor WhatsApp Mobile Number <span className="text-red-400">*</span>
+                </Label>
+                <Input
+                  id="donorPhone"
+                  type="tel"
+                  placeholder="10-digit mobile (e.g. 9841012345)"
+                  value={donorPhone}
+                  onChange={(e) => setDonorPhone(e.target.value)}
+                  onBlur={handleDonorPhoneBlur}
+                  className="h-12 bg-[#1A2839] border-slate-700 text-white text-lg rounded-xl font-mono"
+                  required
+                />
+              </div>
+
+              {duplicateWarning && (
+                <div className="p-3 bg-amber-500/15 border border-amber-500/30 rounded-xl text-amber-300 text-xs flex items-center gap-2">
+                  <ShieldAlert className="w-4 h-4 flex-shrink-0" />
+                  <span>{duplicateWarning} (Multiple passes per family are welcome)</span>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <Label htmlFor="donorEmail" className="text-sm font-medium text-slate-300">
+                  Donor Email (Optional)
+                </Label>
+                <Input
+                  id="donorEmail"
+                  type="email"
+                  placeholder="name@example.com"
+                  value={donorEmail}
+                  onChange={(e) => setDonorEmail(e.target.value)}
+                  className="h-11 bg-[#1A2839] border-slate-700 text-white text-base rounded-xl"
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="p-5 bg-slate-900/60 border border-slate-800 rounded-2xl text-slate-300 text-sm">
+              Pass will be delivered to the selected seller's registered phone number.
+            </div>
+          )}
+
+          <div className="flex justify-between pt-4">
+            <Button
+              variant="outline"
+              size="lg"
+              className="h-14 px-6 bg-[#1A2839] border-slate-800 text-white text-base rounded-xl"
+              onClick={() => setStep(3)}
+            >
+              <ArrowLeft className="mr-2 w-5 h-5" /> Back
+            </Button>
+            <Button
+              size="lg"
+              className="h-14 px-8 bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-black text-lg rounded-xl shadow-lg"
+              disabled={!donorIsFallback && (!donorName.trim() || donorPhone.length < 10)}
+              onClick={() => setStep(5)}
+            >
+              Continue to Payment <ArrowRight className="ml-2 w-5 h-5" />
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* ────────────────────────────────────────────── */}
+      {/* STEP 5: PAYMENT (§6.6, §12)                    */}
+      {/* ────────────────────────────────────────────── */}
+      {step === 5 && (
+        <div className="space-y-6">
+          <div>
+            <h2 className="text-2xl font-black text-white">5. Payment Details</h2>
+            <p className="text-slate-400 text-sm mt-1">
+              Record the payment mode, amount, and mandatory reference number.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label className="text-base font-bold text-white">Payment Mode</Label>
+              <select
+                value={paymentMode}
+                onChange={(e) => setPaymentMode(e.target.value as PaymentMode)}
+                className="w-full h-12 bg-[#1A2839] border border-slate-700 text-white text-base rounded-xl px-3"
+              >
+                <option value="upi">UPI (GPay, PhonePe, Paytm)</option>
+                <option value="bank_transfer">Bank Transfer (IMPS / NEFT)</option>
+                <option value="cash">Cash</option>
+                <option value="cheque">Cheque</option>
+                <option value="card">Debit / Credit Card</option>
+                <option value="complimentary">Complimentary / Trust Approved</option>
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-base font-bold text-white">Payment Status</Label>
+              <select
+                value={paymentStatus}
+                onChange={(e) => setPaymentStatus(e.target.value as PaymentStatus)}
+                className="w-full h-12 bg-[#1A2839] border border-slate-700 text-white text-base rounded-xl px-3"
+              >
+                <option value="received">✓ Payment Received</option>
+                <option value="pending">⏳ Payment Pending</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label className="text-base font-bold text-white">Amount (₹)</Label>
+              <Input
+                type="number"
+                value={paymentAmount}
+                onChange={(e) => setPaymentAmount(Number(e.target.value))}
+                className="h-12 bg-[#1A2839] border-slate-700 text-white text-xl font-bold font-mono rounded-xl"
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-base font-bold text-white">
+                Reference Number / UTR <span className="text-red-400">*</span>
+              </Label>
+              <Input
+                type="text"
+                placeholder='e.g. UPI Ref / UTR / "CASH"'
+                value={paymentReferenceNo}
+                onChange={(e) => setPaymentReferenceNo(e.target.value)}
+                className="h-12 bg-[#1A2839] border-slate-700 text-white text-base rounded-xl font-mono"
+                required
+              />
+            </div>
+          </div>
+
+          {/* Screenshot upload */}
+          <div className="space-y-2 p-4 bg-[#1A2839] border border-slate-700 rounded-2xl">
+            <Label className="text-sm font-bold text-white flex items-center gap-2">
+              <Upload className="w-4 h-4 text-amber-500" />
+              Upload Payment Screenshot / Voucher (Optional)
+            </Label>
+            <input
+              type="file"
+              accept="image/*,application/pdf"
+              onChange={(e) => {
+                if (e.target.files && e.target.files[0]) {
+                  setProofFile(e.target.files[0]);
+                }
+              }}
+              className="text-xs text-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-amber-500/20 file:text-amber-400 hover:file:bg-amber-500/30"
+            />
+          </div>
+
+          {/* Language Selection (§19.10) */}
+          <div className="space-y-2">
+            <Label className="text-sm font-bold text-white">WhatsApp Message Language</Label>
+            <div className="flex gap-4">
+              <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                <input
+                  type="radio"
+                  name="lang"
+                  checked={preferredLanguage === 'en'}
+                  onChange={() => setPreferredLanguage('en')}
+                  className="text-amber-500 focus:ring-amber-500"
+                />
+                English
+              </label>
+              <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                <input
+                  type="radio"
+                  name="lang"
+                  checked={preferredLanguage === 'ta'}
+                  onChange={() => setPreferredLanguage('ta')}
+                  className="text-amber-500 focus:ring-amber-500"
+                />
+                தமிழ் (Tamil)
+              </label>
+            </div>
+          </div>
+
+          {/* Summary Box */}
+          <div className="p-4 bg-slate-900/80 border border-slate-800 rounded-2xl space-y-1.5 text-sm">
+            <div className="flex justify-between text-slate-300">
+              <span>Band:</span>
+              <span className="font-bold text-white">{selectedBand?.label}</span>
+            </div>
+            <div className="flex justify-between text-slate-300">
+              <span>Type:</span>
+              <span className="font-bold text-white">
+                {ticketType === 'digital' ? 'Digital QR' : `Physical Serial (${physicalSerial})`}
+              </span>
+            </div>
+            <div className="flex justify-between text-slate-300">
+              <span>Amount:</span>
+              <span className="font-bold text-[#E8913A]">₹{paymentAmount.toLocaleString('en-IN')}</span>
+            </div>
+          </div>
+
+          <div className="flex justify-between pt-4">
+            <Button
+              variant="outline"
+              size="lg"
+              className="h-14 px-6 bg-[#1A2839] border-slate-800 text-white text-base rounded-xl"
+              onClick={() => setStep(4)}
+              disabled={isSubmitting}
+            >
+              <ArrowLeft className="mr-2 w-5 h-5" /> Back
+            </Button>
+            <Button
+              size="lg"
+              className="h-14 px-8 bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-black text-lg rounded-xl shadow-lg"
+              disabled={isSubmitting || !paymentReferenceNo.trim()}
+              onClick={handleSubmit}
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="mr-2 w-5 h-5 animate-spin" /> Issuing Pass...
+                </>
+              ) : (
+                'Confirm & Issue Pass'
+              )}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* ────────────────────────────────────────────── */}
+      {/* STEP 6: SUCCESS & WHATSAPP DELIVERY (§6.7)     */}
+      {/* ────────────────────────────────────────────── */}
+      {step === 6 && successResult && (
+        <div className="space-y-6 text-center py-4">
+          <div className="w-20 h-20 mx-auto bg-emerald-500/15 border-2 border-emerald-500 rounded-full flex items-center justify-center">
+            <CheckCircle2 className="w-10 h-10 text-emerald-400" />
+          </div>
+
+          <div>
+            <h2 className="text-3xl font-black text-white">Pass Issued Successfully!</h2>
+            <p className="text-lg font-mono font-bold text-[#E8913A] mt-1">
+              Code: {successResult.passCode}
+            </p>
+            <p className="text-slate-400 text-sm mt-0.5">
+              {successResult.bandLabel}
+            </p>
+          </div>
+
+          {/* 60-Second Undo Window Card (§19.2) */}
+          {undoSecondsLeft > 0 ? (
+            <div className="p-4 bg-amber-500/10 border-2 border-amber-500/40 rounded-2xl max-w-md mx-auto space-y-2">
+              <div className="flex items-center justify-between text-amber-300 font-bold text-sm">
+                <span>Mistake? 60-Second Undo Active:</span>
+                <span className="font-mono text-base">{undoSecondsLeft}s left</span>
+              </div>
+              <Button
+                variant="destructive"
+                className="w-full h-11 bg-red-600 hover:bg-red-700 text-white font-bold text-sm rounded-xl"
+                onClick={handleUndo}
+                disabled={isUndoing}
+              >
+                {isUndoing ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                )}
+                Undo This Sale & Return Seat
+              </Button>
+            </div>
+          ) : (
+            <p className="text-xs text-slate-500">
+              The 60-second undo window has closed. Any corrections now require System Admin approval.
+            </p>
+          )}
+
+          {/* Action Buttons: WhatsApp to Donor & Seller */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-xl mx-auto pt-2">
+            <a
+              href={getWhatsAppUrl(successResult.donorPhone, successResult.donorMessage)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-center gap-2 h-14 bg-[#25D366] hover:bg-[#20bd5a] text-slate-950 font-black text-base rounded-2xl shadow-lg transition-all"
+            >
+              <Send className="w-5 h-5" />
+              Send to Donor WhatsApp
+            </a>
+
+            <a
+              href={getWhatsAppUrl(successResult.sellerPhone, successResult.sellerMessage)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-center gap-2 h-14 bg-[#1A2839] hover:bg-[#223345] border-2 border-slate-700 text-white font-bold text-base rounded-2xl transition-all"
+            >
+              <Send className="w-5 h-5 text-amber-400" />
+              Send Seller Credit
+            </a>
+          </div>
+
+          <div className="pt-4">
+            <Button
+              variant="outline"
+              size="lg"
+              className="h-12 px-8 bg-slate-900 border-slate-700 text-white font-bold text-base rounded-xl"
+              onClick={handleResetForNext}
+            >
+              Sell Another Pass
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

@@ -1,348 +1,236 @@
 'use client';
 
 import { useState } from 'react';
-import { loginWithPassword, registerWithPassword } from './actions';
-import { createClient } from '@/lib/supabase/client';
+import { loginAction, setInitialPasswordAction } from './actions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Mail, Lock, Loader2, CheckCircle2, AlertCircle, KeyRound } from 'lucide-react';
+import { Lock, Loader2, AlertCircle, KeyRound, User, ShieldCheck } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('');
+  const [loginId, setLoginId] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [fullName, setFullName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isSuccess, setIsSuccess] = useState(false);
-  const [successMessage, setSuccessMessage] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const supabase = createClient();
+  // First login forced password set
+  const [mustChangePassword, setMustChangePassword] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
 
-  // 1. Password Sign In
-  const handlePasswordLogin = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setError(null);
 
     const formData = new FormData();
-    formData.append('email', email);
+    formData.append('loginId', loginId);
     formData.append('password', password);
 
     try {
-      const res = await loginWithPassword(formData);
+      const res = await loginAction(formData);
       if (res?.error) {
         setError(res.error);
+        setIsLoading(false);
+      } else if (res?.mustChangePassword) {
+        setMustChangePassword(true);
         setIsLoading(false);
       }
     } catch (err: any) {
       if (err?.message?.includes('NEXT_REDIRECT')) {
         return;
       }
-      setError(err.message || 'Invalid email or password.');
+      setError(err.message || 'Invalid credentials.');
       setIsLoading(false);
     }
   };
 
-  // 2. Direct Sign Up
-  const handleSignUp = async (e: React.FormEvent) => {
+  const handleSetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setError(null);
 
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters.');
+    if (newPassword.length < 6) {
+      setError('New password must be at least 6 characters.');
       setIsLoading(false);
       return;
     }
 
-    if (password !== confirmPassword) {
+    if (newPassword !== confirmPassword) {
       setError('Passwords do not match.');
       setIsLoading(false);
       return;
     }
 
     const formData = new FormData();
-    formData.append('email', email);
-    formData.append('password', password);
-    formData.append('fullName', fullName);
+    formData.append('newPassword', newPassword);
+    formData.append('confirmPassword', confirmPassword);
 
     try {
-      const res = await registerWithPassword(formData);
+      const res = await setInitialPasswordAction(formData);
       if (res?.error) {
         setError(res.error);
-        setIsLoading(false);
-      } else if (res?.success) {
-        setSuccessMessage(res.message);
-        setIsSuccess(true);
         setIsLoading(false);
       }
     } catch (err: any) {
       if (err?.message?.includes('NEXT_REDIRECT')) {
         return;
       }
-      setError(err.message || 'Sign up failed.');
-      setIsLoading(false);
-    }
-  };
-
-  // 3. Magic Link Sign In
-  const handleMagicLink = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      const { error } = await supabase.auth.signInWithOtp({
-        email,
-        options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
-        },
-      });
-
-      if (error) {
-        throw error;
-      }
-
-      setSuccessMessage('Check your email for the magic sign-in link.');
-      setIsSuccess(true);
-    } catch (err: any) {
-      setError(err.message || 'Failed to send magic link. Please try again.');
-    } finally {
+      setError(err.message || 'Failed to update password.');
       setIsLoading(false);
     }
   };
 
   return (
-    <Card className="w-full max-w-md shadow-xl bg-[#131F2E] border-0">
-      <CardHeader className="space-y-2 text-center pb-3">
-        <div className="w-14 h-14 mx-auto bg-slate-800 border border-amber-500/30 rounded-full flex items-center justify-center mb-1">
-          <KeyRound className="w-7 h-7 text-[#E8913A]" />
+    <Card className="w-full max-w-md shadow-2xl bg-[#131F2E] border border-slate-800 text-white rounded-2xl overflow-hidden">
+      <CardHeader className="space-y-3 text-center pb-4 pt-6">
+        <div className="w-16 h-16 mx-auto bg-slate-800/80 border-2 border-amber-500/40 rounded-2xl flex items-center justify-center shadow-inner">
+          {mustChangePassword ? (
+            <ShieldCheck className="w-8 h-8 text-amber-500" />
+          ) : (
+            <KeyRound className="w-8 h-8 text-[#E8913A]" />
+          )}
         </div>
         <div>
-          <CardTitle className="text-2xl font-black tracking-tight text-white">
+          <CardTitle className="text-3xl font-black tracking-tight">
             Hrudhayam <span className="text-[#E8913A]">LIVE</span>
           </CardTitle>
-          <CardDescription className="text-xs font-medium text-slate-400 mt-1">
-            Seat & Pass Manager • Admin Portal
+          <CardDescription className="text-sm font-medium text-slate-400 mt-1">
+            {mustChangePassword 
+              ? 'Security Setup • Set Your New Password' 
+              : 'Seat & Pass Manager • Coordinator Portal'}
           </CardDescription>
         </div>
       </CardHeader>
       
-      <CardContent>
+      <CardContent className="px-6 pb-6">
         {error && (
-          <Alert variant="destructive" className="mb-4">
-            <AlertCircle className="h-4 w-4" />
-            <AlertTitle>Notice</AlertTitle>
+          <Alert variant="destructive" className="mb-5 bg-red-950/50 border-red-800 text-red-200">
+            <AlertCircle className="h-5 w-5 text-red-400" />
+            <AlertTitle className="text-sm font-bold">Notice</AlertTitle>
             <AlertDescription className="text-xs">{error}</AlertDescription>
           </Alert>
         )}
 
-        {isSuccess ? (
-          <div className="flex flex-col items-center justify-center space-y-4 py-4 text-center">
-            <CheckCircle2 className="w-12 h-12 text-[#16A34A]" />
-            <div>
-              <h3 className="font-semibold text-lg text-white mb-2">Success</h3>
-              <p className="text-slate-400 text-sm">{successMessage}</p>
+        {mustChangePassword ? (
+          <form onSubmit={handleSetPassword} className="space-y-4">
+            <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-300 text-xs">
+              This is your first login. Please set a secure password of at least 6 characters.
             </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="newPassword" className="text-sm font-semibold text-slate-200">New Password</Label>
+              <div className="relative">
+                <Lock className="absolute left-3.5 top-3.5 h-5 w-5 text-slate-400" />
+                <Input
+                  id="newPassword"
+                  type="password"
+                  placeholder="At least 6 characters"
+                  required
+                  minLength={6}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="pl-11 h-12 bg-[#1A2839] border-[#2A3F55] text-white text-base rounded-xl"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="confirmPassword" className="text-sm font-semibold text-slate-200">Confirm Password</Label>
+              <div className="relative">
+                <Lock className="absolute left-3.5 top-3.5 h-5 w-5 text-slate-400" />
+                <Input
+                  id="confirmPassword"
+                  type="password"
+                  placeholder="Re-type new password"
+                  required
+                  minLength={6}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="pl-11 h-12 bg-[#1A2839] border-[#2A3F55] text-white text-base rounded-xl"
+                />
+              </div>
+            </div>
+
             <Button 
-              variant="outline" 
-              className="mt-2 w-full bg-[#1A2839] border-[#2A3F55] text-white"
-              onClick={() => setIsSuccess(false)}
+              type="submit" 
+              className="w-full h-12 bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-bold text-base transition-colors rounded-xl mt-2"
+              disabled={isLoading || !newPassword || !confirmPassword}
             >
-              Back to Sign In
+              {isLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                  Updating Password...
+                </>
+              ) : (
+                'Save Password & Enter App'
+              )}
             </Button>
-          </div>
+          </form>
         ) : (
-          <Tabs defaultValue="signin" className="w-full">
-            <TabsList className="grid w-full grid-cols-3 mb-4 text-xs bg-[#1A2839] border border-[#2A3F55]">
-              <TabsTrigger value="signin" className="data-[state=active]:bg-[#E8913A] data-[state=active]:text-slate-950 font-bold">Sign In</TabsTrigger>
-              <TabsTrigger value="signup" className="data-[state=active]:bg-[#E8913A] data-[state=active]:text-slate-950 font-bold">Register</TabsTrigger>
-              <TabsTrigger value="magiclink" className="data-[state=active]:bg-[#E8913A] data-[state=active]:text-slate-950 font-bold">Email Link</TabsTrigger>
-            </TabsList>
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="loginId" className="text-sm font-semibold text-slate-200">
+                Login ID (Mobile Number or Username)
+              </Label>
+              <div className="relative">
+                <User className="absolute left-3.5 top-3.5 h-5 w-5 text-slate-400" />
+                <Input
+                  id="loginId"
+                  name="loginId"
+                  type="text"
+                  placeholder="e.g. 9841068826 or admin"
+                  required
+                  autoFocus
+                  value={loginId}
+                  onChange={(e) => setLoginId(e.target.value)}
+                  className="pl-11 h-12 bg-[#1A2839] border-[#2A3F55] text-white text-base rounded-xl"
+                />
+              </div>
+            </div>
 
-            {/* Tab 1: Sign In with Password */}
-            <TabsContent value="signin">
-              <form onSubmit={handlePasswordLogin} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="email" className="text-xs font-medium text-slate-300">Email address</Label>
-                  <div className="relative">
-                    <Mail className="absolute left-3 top-2.5 h-5 w-5 text-slate-400" />
-                    <Input
-                      id="email"
-                      name="email"
-                      type="email"
-                      placeholder="name@example.com"
-                      required
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      className="pl-10 h-11 bg-[#1A2839] border-[#2A3F55] text-white text-xs"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="password" className="text-xs font-medium text-slate-300">Password</Label>
-                  <div className="relative">
-                    <Lock className="absolute left-3 top-2.5 h-5 w-5 text-slate-400" />
-                    <Input
-                      id="password"
-                      name="password"
-                      type="password"
-                      placeholder="••••••••"
-                      required
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="pl-10 h-11 bg-[#1A2839] border-[#2A3F55] text-white text-xs"
-                    />
-                  </div>
-                </div>
-                
-                <Button 
-                  type="submit" 
-                  className="w-full h-11 bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-bold text-sm transition-colors shadow-md shadow-amber-950/20"
-                  disabled={isLoading || !email || !password}
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                      Signing In...
-                    </>
-                  ) : (
-                    'Sign In'
-                  )}
-                </Button>
-              </form>
-            </TabsContent>
-
-            {/* Tab 2: Direct Sign Up */}
-            <TabsContent value="signup">
-              <form onSubmit={handleSignUp} className="space-y-3">
-                <div className="space-y-1">
-                  <Label htmlFor="fullName" className="text-xs font-medium">Full Name</Label>
-                  <Input
-                    id="fullName"
-                    name="fullName"
-                    placeholder="Your Name"
-                    required
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    className="h-10"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <Label htmlFor="signup-email" className="text-xs font-medium">Email address</Label>
-                  <Input
-                    id="signup-email"
-                    name="email"
-                    type="email"
-                    placeholder="name@example.com"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="h-10"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-1">
-                    <Label htmlFor="signup-password" className="text-xs font-medium">Password</Label>
-                    <Input
-                      id="signup-password"
-                      name="password"
-                      type="password"
-                      placeholder="••••••••"
-                      required
-                      minLength={6}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="h-10"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label htmlFor="confirm-password" className="text-xs font-medium">Confirm</Label>
-                    <Input
-                      id="confirm-password"
-                      type="password"
-                      placeholder="••••••••"
-                      required
-                      minLength={6}
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      className="h-10"
-                    />
-                  </div>
-                </div>
-
-                <Button 
-                  type="submit" 
-                  className="w-full h-10 bg-[#E8913A] hover:bg-[#d07f30] text-white font-medium text-sm transition-colors mt-2"
-                  disabled={isLoading || !email || !password || !fullName}
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Creating Account...
-                    </>
-                  ) : (
-                    'Create Account & Sign In'
-                  )}
-                </Button>
-              </form>
-            </TabsContent>
-
-            {/* Tab 3: Magic Link */}
-            <TabsContent value="magiclink">
-              <form onSubmit={handleMagicLink} className="space-y-4">
-                <p className="text-xs text-slate-400">
-                  Enter your email to receive a passwordless sign-in link.
-                </p>
-                <div className="space-y-2">
-                  <Label htmlFor="magic-email" className="text-sm font-medium">Email address</Label>
-                  <div className="relative">
-                    <Mail className="absolute left-3 top-2.5 h-5 w-5 text-slate-400" />
-                    <Input
-                      id="magic-email"
-                      name="magic-email"
-                      type="email"
-                      placeholder="name@example.com"
-                      required
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      className="pl-10 h-11"
-                    />
-                  </div>
-                </div>
-                
-                <Button 
-                  type="submit" 
-                  className="w-full h-11 bg-[#0F2B3C] hover:bg-[#1A4A5E] text-white font-medium text-base transition-colors"
-                  disabled={isLoading || !email}
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                      Sending Link...
-                    </>
-                  ) : (
-                    'Send Sign-In Link'
-                  )}
-                </Button>
-              </form>
-            </TabsContent>
-          </Tabs>
+            <div className="space-y-2">
+              <Label htmlFor="password" className="text-sm font-semibold text-slate-200">
+                Password
+              </Label>
+              <div className="relative">
+                <Lock className="absolute left-3.5 top-3.5 h-5 w-5 text-slate-400" />
+                <Input
+                  id="password"
+                  name="password"
+                  type="password"
+                  placeholder="Enter your password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="pl-11 h-12 bg-[#1A2839] border-[#2A3F55] text-white text-base rounded-xl"
+                />
+              </div>
+            </div>
+            
+            <Button 
+              type="submit" 
+              className="w-full h-12 bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-bold text-base transition-colors shadow-lg shadow-amber-950/30 rounded-xl mt-2"
+              disabled={isLoading || !loginId || !password}
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                  Signing In...
+                </>
+              ) : (
+                'Sign In'
+              )}
+            </Button>
+          </form>
         )}
       </CardContent>
-      {!isSuccess && (
-        <CardFooter className="flex justify-center border-t py-3 text-xs text-slate-400">
-          Hrudhayam LIVE Internal Admin Portal
-        </CardFooter>
-      )}
+
+      <CardFooter className="flex justify-center border-t border-slate-800/80 py-4 text-xs text-slate-400 bg-slate-900/40">
+        Rotary Club of Aarch City Madras • Hrudhayam LIVE
+      </CardFooter>
     </Card>
   );
 }

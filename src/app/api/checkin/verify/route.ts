@@ -1,215 +1,182 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { getSessionUser } from '@/lib/auth/session';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyQrToken } from '@/lib/tokens';
 import { logAudit } from '@/lib/audit';
 
 export async function POST(req: Request) {
   try {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-
+    const user = await getSessionUser();
     if (!user) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ success: false, error: 'Unauthorized. Please log in.' }, { status: 401 });
     }
 
     const adminClient = createAdminClient();
-
-    const { data: profile } = await adminClient
-      .from('profiles')
-      .select('role, door_duty, full_name')
-      .eq('id', user.id)
-      .single();
-
-    if (!profile) {
-      return NextResponse.json({ success: false, error: 'Profile not found' }, { status: 403 });
-    }
-
     const body = await req.json();
-    const { token, passCode, action } = body;
+    const { token, passCode, physicalSerial, action } = body;
 
-    let targetPassCode = passCode;
+    let searchField = '';
+    let searchValue = '';
 
-    // 1. Cryptographically verify QR token if token string was passed
+    // 1. Resolve identifier: QR Token, Pass Code, or Physical Serial
     if (token) {
       const decoded = await verifyQrToken(token);
       if (!decoded) {
-        return NextResponse.json({ 
-          success: false, 
-          error: 'SECURITY ALERT: Invalid or tampered QR token. This barcode cannot be verified.' 
+        return NextResponse.json({
+          success: false,
+          error: 'SECURITY ALERT: Invalid or corrupted QR barcode. Could not verify signature.',
         }, { status: 400 });
       }
-      targetPassCode = decoded.passCode;
+      searchField = 'pass_code';
+      searchValue = decoded.passCode;
+    } else if (passCode) {
+      searchField = 'pass_code';
+      searchValue = passCode.trim();
+    } else if (physicalSerial) {
+      searchField = 'physical_serial';
+      searchValue = physicalSerial.trim();
+    } else {
+      return NextResponse.json({
+        success: false,
+        error: 'Please provide a QR barcode token, pass code, or physical serial number.',
+      }, { status: 400 });
     }
 
-    if (!targetPassCode) {
-      return NextResponse.json({ success: false, error: 'No pass code or QR token provided' }, { status: 400 });
-    }
-
-    // 2. Lookup sale in sales table
-    let { data: sale } = await adminClient
-      .from('sales')
-      .select('*, band:bands(name, standard_price), checked_in_profile:profiles!sales_checked_in_by_fkey(full_name)')
-      .eq('pass_code', targetPassCode)
+    // 2. Lookup pass in passes table
+    const { data: pass, error: passError } = await adminClient
+      .from('passes')
+      .select(`
+        *,
+        band:bands(label, price),
+        payments(amount, status, mode, reference_no)
+      `)
+      .eq(searchField, searchValue)
       .maybeSingle();
 
-    // Fallback to legacy seats if not found
-    if (!sale) {
-      const { data: seat } = await adminClient
-        .from('seats')
-        .select('*')
-        .eq('pass_code', targetPassCode)
-        .maybeSingle();
-
-      if (seat && seat.guest_name) {
-        sale = {
-          id: seat.id,
-          pass_code: seat.pass_code,
-          donor_name: seat.guest_name,
-          payment_status: seat.payment_status || 'pending',
-          checked_in: seat.checked_in || false,
-          checked_in_at: seat.checked_in_at,
-          checked_in_by: seat.checked_in_by,
-          cancelled: false,
-          band: {
-            name: seat.tier === 5000 ? '₹5,000 Platinum' : seat.tier === 3000 ? '₹3,500 Gold' : '₹1,500 Bronze',
-            standard_price: seat.tier || 5000,
-          },
-        } as any;
-      }
-    }
-
-    if (!sale || sale.cancelled) {
-      return NextResponse.json({ 
-        success: false, 
-        error: 'CANCELLED / INVALID PASS: This pass has been cancelled or released back to inventory.' 
+    if (passError || !pass) {
+      return NextResponse.json({
+        success: false,
+        error: `INVALID PASS: No active pass found for ${searchField === 'physical_serial' ? `Serial ${searchValue}` : `Code ${searchValue}`}.`,
       }, { status: 404 });
     }
 
-    // 3. Permission check
-    const isSuperAdmin = profile.role === 'super_admin';
-    const isSystemAdmin = profile.role === 'system_admin';
-    const hasDoorDuty = profile.door_duty === true;
-    const isOwner = sale.sold_by === user.id;
-
-    if (!isSuperAdmin && !isSystemAdmin && !hasDoorDuty && !isOwner) {
-      return NextResponse.json({ 
-        success: false, 
-        error: 'Permission Denied: You do not have door duty scanner authorization.' 
-      }, { status: 403 });
+    // Check cancellation
+    if (pass.status === 'cancelled') {
+      return NextResponse.json({
+        success: false,
+        error: `CANCELLED PASS: This pass was cancelled on ${new Date(pass.cancelled_at).toLocaleDateString('en-IN')}. Reason: ${pass.cancel_reason || 'Administrative cancellation'}.`,
+        donorName: pass.donor_name,
+        bandLabel: pass.band?.label,
+        passCode: pass.pass_code,
+      }, { status: 400 });
     }
 
-    const bandName = sale.band?.name || `₹${sale.standard_price?.toLocaleString('en-IN') || '5,000'} Band`;
+    const bandLabel = pass.band?.label || 'Admission Pass';
+    const isPaid = (pass.payments || []).some((p: any) => p.status === 'received');
 
-    // 4. SUPER ADMIN / SYSTEM ADMIN OVERRIDE ACTION
+    // 3. Supervisor Override action (§9)
     if (action === 'override') {
-      if (!isSuperAdmin && !isSystemAdmin) {
-        return NextResponse.json({ 
-          success: false, 
-          error: 'Only Super Admins or System Admins can override check-in status.' 
+      if (user.role !== 'super_admin' && user.role !== 'system_admin') {
+        return NextResponse.json({
+          success: false,
+          error: 'Only Super Admins or System Admins can override gate check-in.',
         }, { status: 403 });
       }
 
       const now = new Date().toISOString();
       await adminClient
-        .from('sales')
+        .from('passes')
         .update({
-          checked_in: true,
-          checked_in_at: now,
-          checked_in_by: user.id,
+          status: 'used',
+          used_at: now,
           updated_at: now,
         })
-        .eq('id', sale.id);
+        .eq('id', pass.id);
 
-      await logAudit(
-        user.id,
-        'CHECK_IN_OVERRIDE',
-        'sale',
-        sale.id,
-        {
-          pass_code: sale.pass_code,
-          donor_name: sale.donor_name,
-          band_name: bandName,
-          override_by_role: profile.role,
-          overridden_by_name: profile.full_name,
-        }
-      );
+      await logAudit(user.id, 'GATE_SCAN_OVERRIDE', 'passes', pass.id, {
+        pass_code: pass.pass_code,
+        donor_name: pass.donor_name,
+        band: bandLabel,
+        overridden_by: user.fullName,
+      });
 
       return NextResponse.json({
         success: true,
         overridden: true,
-        message: 'Supervisor admission override applied successfully.',
-        donorName: sale.donor_name,
-        bandName,
-        passCode: sale.pass_code,
-        paymentStatus: sale.payment_status,
+        message: 'Supervisor admission override recorded.',
+        donorName: pass.donor_name,
+        bandLabel,
+        passCode: pass.pass_code,
+        ticketType: pass.ticket_type,
+        physicalSerial: pass.physical_serial,
       });
     }
 
-    // 5. DUPLICATE SCAN CHECK
-    if (sale.checked_in) {
-      let checkedInByName = sale.checked_in_profile?.full_name || 'Gate Volunteer';
-
-      if (!sale.checked_in_profile && sale.checked_in_by) {
-        const { data: verifier } = await adminClient
-          .from('profiles')
-          .select('full_name')
-          .eq('id', sale.checked_in_by)
-          .single();
-        if (verifier?.full_name) checkedInByName = verifier.full_name;
-      }
+    // 4. Duplicate scan check (Rule R8: Single use)
+    if (pass.status === 'used') {
+      const usedTime = pass.used_at 
+        ? new Date(pass.used_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
+        : 'earlier today';
 
       return NextResponse.json({
         success: false,
         duplicate: true,
-        error: `ALREADY CHECKED IN: This pass was scanned and admitted at ${new Date(sale.checked_in_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} by ${checkedInByName}.`,
-        donorName: sale.donor_name,
-        bandName,
-        passCode: sale.pass_code,
-        originalScanTime: sale.checked_in_at,
-        checkedInByName,
-        paymentStatus: sale.payment_status,
+        error: `ALREADY ENTERED: This pass was already admitted at ${usedTime}. Duplicate scans are rejected.`,
+        donorName: pass.donor_name,
+        bandLabel,
+        passCode: pass.pass_code,
+        usedAt: pass.used_at,
+        isPaid,
       });
     }
 
-    // 6. VALID FIRST-TIME CHECK-IN
+    // 5. Atomic check-in transition (Rule R8 race condition guard)
     const now = new Date().toISOString();
-    const { error: updateError } = await adminClient
-      .from('sales')
+    const { data: updatedPass, error: updateError } = await adminClient
+      .from('passes')
       .update({
-        checked_in: true,
-        checked_in_at: now,
-        checked_in_by: user.id,
+        status: 'used',
+        used_at: now,
         updated_at: now,
       })
-      .eq('id', sale.id);
+      .eq('id', pass.id)
+      .eq('status', 'issued') // Guarantees only 1 concurrent scan succeeds
+      .select('id, used_at')
+      .maybeSingle();
 
-    if (updateError) throw updateError;
+    if (updateError || !updatedPass) {
+      return NextResponse.json({
+        success: false,
+        duplicate: true,
+        error: 'ALREADY ENTERED: Another gate scanner just admitted this pass moments ago.',
+        donorName: pass.donor_name,
+        bandLabel,
+        passCode: pass.pass_code,
+      });
+    }
 
-    await logAudit(
-      user.id,
-      'CHECK_IN',
-      'sale',
-      sale.id,
-      {
-        pass_code: sale.pass_code,
-        donor_name: sale.donor_name,
-        band_name: bandName,
-        scanned_by: profile.full_name,
-      }
-    );
+    // 6. Audit Log
+    await logAudit(user.id, 'GATE_CHECKIN', 'passes', pass.id, {
+      pass_code: pass.pass_code,
+      donor_name: pass.donor_name,
+      band: bandLabel,
+      ticket_type: pass.ticket_type,
+      scanned_by: user.fullName,
+    });
 
     return NextResponse.json({
       success: true,
       duplicate: false,
-      donorName: sale.donor_name,
-      bandName,
-      passCode: sale.pass_code,
-      paymentStatus: sale.payment_status,
-      checkedInAt: now,
+      donorName: pass.donor_name,
+      bandLabel,
+      passCode: pass.pass_code,
+      ticketType: pass.ticket_type,
+      physicalSerial: pass.physical_serial,
+      isPaid,
+      usedAt: now,
     });
   } catch (err: any) {
-    console.error('Check-in verification error:', err);
-    return NextResponse.json({ success: false, error: err.message || 'Internal check-in error' }, { status: 500 });
+    console.error('Checkin verify error:', err);
+    return NextResponse.json({ success: false, error: err.message || 'Check-in failed.' }, { status: 500 });
   }
 }
