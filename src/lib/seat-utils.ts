@@ -110,6 +110,7 @@ export function getSeatColor(seat: {
   checked_in?: boolean;
   is_blocked?: boolean;
   sponsor_id?: string | null;
+  pass_code?: string | null;
 }): string {
   // 1. SPL VIP Box (Non-editable VIP)
   if (seat.row_label === "SPL VIP" || seat.obligation === "chief") return "#8B5CF6"; // Royal Purple
@@ -123,8 +124,10 @@ export function getSeatColor(seat: {
   // 4. Checked In (At Venue)
   if (seat.checked_in) return "#0284C7"; // Sky Blue
 
-  // 5. Paid Pass
-  if ((seat.payment_status || "").toLowerCase() === "received") return "#10B981"; // Emerald Green
+  // 5. Paid Pass (must have active guest or pass code)
+  if ((seat.payment_status || "").toLowerCase() === "received" && (seat.pass_code || seat.guest_name)) {
+    return "#10B981"; // Emerald Green
+  }
 
   // 6. Guest Assigned / Pending
   if (seat.guest_name && seat.guest_name.trim() !== "") return "#F97316"; // Amber Orange

@@ -70,37 +70,119 @@ export async function updateBandAllocation(bandId: string, newTotal: number, new
 }
 
 /**
- * Helper to dynamically sync band inventory quotas directly from individual row seat counts.
- * Ensures Band Quotas = sum of physical seats in assigned rows (always sums to 1,398).
+ * Update the price of a price band (e.g. change ₹5,000 to ₹6,000).
+ * Updates bands.price, bands.standard_price, and bands.label/name.
+ * Also synchronizes the tier column on associated rows and seats.
+ */
+export async function updateBandPrice(bandId: string, newPrice: number) {
+  try {
+    const user = await requireSuperOrSystemAdmin();
+    const adminClient = createAdminClient();
+
+    if (!newPrice || newPrice <= 0) {
+      return { success: false, error: 'Price must be greater than 0.' };
+    }
+
+    const { data: oldBand } = await adminClient
+      .from('bands')
+      .select('*')
+      .eq('id', bandId)
+      .single();
+
+    if (!oldBand) return { success: false, error: 'Band not found.' };
+
+    const oldPrice = oldBand.price;
+    // Derive clean letter prefix, e.g. "Band A" from "Band A (₹5,000)"
+    const bandLetter = oldBand.label ? oldBand.label.split('(')[0].trim() : (oldBand.name ? oldBand.name.split('(')[0].trim() : 'Band');
+    const newLabel = `${bandLetter} (₹${newPrice.toLocaleString('en-IN')})`;
+
+    const updatePayload = {
+      price: newPrice,
+      standard_price: newPrice,
+      label: newLabel,
+      name: newLabel,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error: updateError } = await adminClient
+      .from('bands')
+      .update(updatePayload)
+      .eq('id', bandId);
+
+    if (updateError) throw updateError;
+
+    // Update tier in rows and seats that matched oldPrice
+    if (oldPrice && oldPrice !== newPrice) {
+      await adminClient
+        .from('rows')
+        .update({ tier: newPrice, updated_at: new Date().toISOString() })
+        .eq('tier', oldPrice);
+
+      await adminClient
+        .from('seats')
+        .update({ tier: newPrice, updated_at: new Date().toISOString() })
+        .eq('tier', oldPrice);
+    }
+
+    await logAudit(user.id, 'BAND_PRICE_UPDATE', 'bands', bandId, {
+      old_price: oldPrice,
+      new_price: newPrice,
+      label: newLabel,
+    });
+
+    revalidatePath('/admin/bands');
+    revalidatePath('/sell');
+    revalidatePath('/dashboard');
+    revalidatePath('/reports');
+    return { success: true, band: { ...oldBand, ...updatePayload } };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to update band price.' };
+  }
+}
+
+/**
+ * Dynamic helper to synchronize band allocation counts strictly from public.seats.
  */
 export async function syncBandAllocationsFromSeats(adminClient: any) {
-  const { data: seatsData } = await adminClient
-    .from('seats')
-    .select('tier')
-    .neq('row_label', 'SPL VIP');
+  const [{ data: bandsData }, { data: seatsData }] = await Promise.all([
+    adminClient.from('bands').select('*').order('sort_order'),
+    adminClient.from('seats').select('tier').neq('row_label', 'SPL VIP'),
+  ]);
 
-  const counts: Record<number, number> = {
-    5000: 0,
-    3500: 0,
-    2500: 0,
-    1500: 0,
-  };
+  if (!bandsData || bandsData.length === 0) return;
+
+  const bandPriceMap = new Map<number, string>();
+  for (const b of bandsData) {
+    bandPriceMap.set(b.price, b.id);
+  }
+
+  const counts: Record<string, number> = {};
+  for (const b of bandsData) {
+    counts[b.id] = 0;
+  }
 
   if (seatsData) {
     for (const s of seatsData) {
-      const tier = s.tier === 3000 ? 3500 : s.tier;
-      if (tier && counts[tier] !== undefined) {
-        counts[tier]++;
+      const tier = s.tier;
+      if (tier && bandPriceMap.has(tier)) {
+        const bandId = bandPriceMap.get(tier)!;
+        counts[bandId] = (counts[bandId] || 0) + 1;
       }
     }
   }
 
-  await Promise.all([
-    adminClient.from('bands').update({ total_allocated: counts[5000], total_capacity: counts[5000], updated_at: new Date().toISOString() }).eq('id', 'band_5000'),
-    adminClient.from('bands').update({ total_allocated: counts[3500], total_capacity: counts[3500], updated_at: new Date().toISOString() }).eq('id', 'band_3500'),
-    adminClient.from('bands').update({ total_allocated: counts[2500], total_capacity: counts[2500], updated_at: new Date().toISOString() }).eq('id', 'band_2500'),
-    adminClient.from('bands').update({ total_allocated: counts[1500], total_capacity: counts[1500], updated_at: new Date().toISOString() }).eq('id', 'band_1500'),
-  ]);
+  await Promise.all(
+    bandsData.map((b: any) =>
+      adminClient
+        .from('bands')
+        .update({
+          total_allocated: counts[b.id] || 0,
+          total_capacity: counts[b.id] || 0,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', b.id)
+    )
+  );
 }
 
 /**
@@ -358,8 +440,9 @@ export async function recalibrateBandsToVenueCapacity() {
 
 /**
  * Create an Earmarked Protected Block (VIP, Police, Corporation).
+ * Earmarks seats from a specific price band, deducting from sellable quota so total remains 1,398.
  */
-export async function createProtectedBlock(label: string, seatCount: number) {
+export async function createProtectedBlock(label: string, seatCount: number, bandId?: string) {
   try {
     const user = await requireSuperOrSystemAdmin();
     const adminClient = createAdminClient();
@@ -368,24 +451,57 @@ export async function createProtectedBlock(label: string, seatCount: number) {
       return { success: false, error: 'Label and positive seat count are required.' };
     }
 
+    const targetBandId = bandId || 'band_5000';
+
+    const { data: band } = await adminClient
+      .from('bands')
+      .select('id, label, total_allocated')
+      .eq('id', targetBandId)
+      .single();
+
+    if (!band) return { success: false, error: 'Price band not found.' };
+
+    if ((band.total_allocated || 0) < seatCount) {
+      return {
+        success: false,
+        error: `Cannot block ${seatCount} seats from ${band.label}. Only ${band.total_allocated || 0} seats available.`,
+      };
+    }
+
     const { data: block, error } = await adminClient
       .from('protected_blocks')
       .insert({
         label: label.trim(),
         seat_count: seatCount,
+        band_id: targetBandId,
       })
       .select()
       .single();
 
     if (error) throw error;
 
+    // Deduct from the band's sellable quota
+    const newAllocation = Math.max(0, (band.total_allocated || 0) - seatCount);
+    await adminClient
+      .from('bands')
+      .update({
+        total_allocated: newAllocation,
+        total_capacity: newAllocation,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', targetBandId);
+
     await logAudit(user.id, 'PROTECTED_BLOCK_CREATE', 'protected_blocks', block.id, {
       label: block.label,
       seat_count: block.seat_count,
+      band_id: targetBandId,
+      band_label: band.label,
+      new_band_allocation: newAllocation,
     });
 
     revalidatePath('/admin/bands');
     revalidatePath('/dashboard');
+    revalidatePath('/sell');
     return { success: true, block };
   } catch (err: any) {
     return { success: false, error: err.message };
@@ -394,9 +510,9 @@ export async function createProtectedBlock(label: string, seatCount: number) {
 
 /**
  * Release a Protected Block into a sellable band (§10).
- * Increments target band's total_allocated count by the block's seat count.
+ * Restores the block's seat count back into the target band's inventory.
  */
-export async function releaseProtectedBlock(blockId: string, targetBandId: string) {
+export async function releaseProtectedBlock(blockId: string, targetBandId?: string) {
   try {
     const user = await requireSuperOrSystemAdmin();
     const adminClient = createAdminClient();
@@ -412,40 +528,90 @@ export async function releaseProtectedBlock(blockId: string, targetBandId: strin
       return { success: false, error: 'This block has already been released.' };
     }
 
+    const releaseBandId = targetBandId || block.band_id || 'band_5000';
+
     const { data: band } = await adminClient
       .from('bands')
       .select('id, label, total_allocated')
-      .eq('id', targetBandId)
+      .eq('id', releaseBandId)
       .single();
 
     if (!band) return { success: false, error: 'Target band not found.' };
 
     const newAllocation = (band.total_allocated || 0) + block.seat_count;
 
-    // 1. Update band allocation
+    // 1. Update band allocation (restore seats)
     await adminClient
       .from('bands')
-      .update({ total_allocated: newAllocation, total_capacity: newAllocation })
-      .eq('id', targetBandId);
+      .update({ total_allocated: newAllocation, total_capacity: newAllocation, updated_at: new Date().toISOString() })
+      .eq('id', releaseBandId);
 
     // 2. Mark block as released
     await adminClient
       .from('protected_blocks')
       .update({
-        released_to_band_id: targetBandId,
+        released_to_band_id: releaseBandId,
         updated_at: new Date().toISOString(),
       })
       .eq('id', blockId);
 
     await logAudit(user.id, 'PROTECTED_BLOCK_RELEASE', 'protected_blocks', blockId, {
-      released_to_band_id: targetBandId,
-      seats_added: block.seat_count,
+      released_to_band_id: releaseBandId,
+      seats_restored: block.seat_count,
       new_band_total: newAllocation,
     });
 
     revalidatePath('/admin/bands');
     revalidatePath('/sell');
     revalidatePath('/dashboard');
+    revalidatePath('/reports');
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Delete / Remove an Earmarked Protected Block.
+ * If unreleased, returns the earmarked seats back to its originating band.
+ */
+export async function deleteProtectedBlock(blockId: string) {
+  try {
+    const user = await requireSuperOrSystemAdmin();
+    const adminClient = createAdminClient();
+
+    const { data: block } = await adminClient
+      .from('protected_blocks')
+      .select('*')
+      .eq('id', blockId)
+      .single();
+
+    if (!block) return { success: false, error: 'Block not found.' };
+
+    // If unreleased, return seats back to its band
+    if (!block.released_to_band_id && block.band_id) {
+      const { data: band } = await adminClient
+        .from('bands')
+        .select('id, total_allocated')
+        .eq('id', block.band_id)
+        .single();
+
+      if (band) {
+        const restored = (band.total_allocated || 0) + block.seat_count;
+        await adminClient
+          .from('bands')
+          .update({ total_allocated: restored, total_capacity: restored, updated_at: new Date().toISOString() })
+          .eq('id', block.band_id);
+      }
+    }
+
+    await adminClient.from('protected_blocks').delete().eq('id', blockId);
+
+    await logAudit(user.id, 'PROTECTED_BLOCK_DELETE', 'protected_blocks', blockId, block);
+
+    revalidatePath('/admin/bands');
+    revalidatePath('/dashboard');
+    revalidatePath('/sell');
     return { success: true };
   } catch (err: any) {
     return { success: false, error: err.message };

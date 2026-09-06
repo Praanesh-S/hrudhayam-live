@@ -165,12 +165,27 @@ export async function deleteSponsor(id: string) {
     const user = await requireUser();
     const adminClient = createAdminClient();
 
+    // Release any allocated complimentary seats for this sponsor
+    await adminClient
+      .from('seats')
+      .update({
+        sponsor_id: null,
+        obligation: null,
+        guest_name: null,
+        payment_status: 'pending',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('sponsor_id', id);
+
     const { error } = await adminClient.from('sponsors').delete().eq('id', id);
     if (error) return { error: error.message };
 
     await logAudit(user.id, 'SPONSOR_DELETE', 'sponsors', id, {});
 
     revalidatePath('/admin/sponsors');
+    revalidatePath('/admin/bands');
+    revalidatePath('/dashboard');
+    revalidatePath('/guests');
     revalidatePath('/leaderboard');
     revalidatePath('/reports');
     return { success: true };

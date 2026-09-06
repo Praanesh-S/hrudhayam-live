@@ -91,6 +91,7 @@ export interface ProtectedBlock {
   id: string;
   label: string;
   seat_count: number;
+  band_id?: string | null;
   released_to_band_id: string | null;
   created_at?: string;
   updated_at?: string;
