@@ -70,6 +70,87 @@ export async function updateBandAllocation(bandId: string, newTotal: number, new
 }
 
 /**
+ * Bulk-set pricing tier on a range of rows (e.g. Ground Floor Rows A–F to ₹5,000).
+ * Updates both the rows table and all individual seat records in public.seats.
+ */
+export async function bulkSetRowTier(section: 'Ground Floor' | 'Balcony', fromRow: string, toRow: string, tier: number) {
+  try {
+    const user = await requireSuperOrSystemAdmin();
+    const adminClient = createAdminClient();
+
+    const { data: rowsData } = await adminClient.from('rows').select('*').eq('section', section);
+    if (!rowsData || rowsData.length === 0) return { success: false, error: 'Rows not found' };
+
+    const sortedRows = rowsData.sort((a, b) => a.display_order - b.display_order);
+    const startIdx = sortedRows.findIndex(r => r.row_label === fromRow);
+    const endIdx = sortedRows.findIndex(r => r.row_label === toRow);
+
+    if (startIdx === -1 || endIdx === -1) return { success: false, error: 'Invalid row range' };
+
+    const range = sortedRows.slice(Math.min(startIdx, endIdx), Math.max(startIdx, endIdx) + 1);
+    const targetRowIds = range.map(r => r.id);
+
+    // Update rows
+    await adminClient
+      .from('rows')
+      .update({ tier, updated_at: new Date().toISOString() })
+      .in('id', targetRowIds);
+
+    // Update corresponding seats
+    await adminClient
+      .from('seats')
+      .update({ tier, updated_at: new Date().toISOString() })
+      .in('row_id', targetRowIds);
+
+    await logAudit(user.id, 'BULK_SET_ROW_TIER', 'rows', `${section} ${fromRow}-${toRow}`, {
+      tier,
+      rows_count: targetRowIds.length,
+    });
+
+    revalidatePath('/admin/bands');
+    revalidatePath('/sell');
+    revalidatePath('/dashboard');
+
+    return { success: true, count: targetRowIds.length };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to update row tiers.' };
+  }
+}
+
+/**
+ * Recalibrate Band Capacities to match the exact venue architectural layout:
+ * 1,398 Total Regular Seats: 467 (₹5,000) + 474 (₹3,500) + 0 (₹2,500) + 457 (₹1,500)
+ * plus 50 SPL VIP Box seats.
+ */
+export async function recalibrateBandsToVenueCapacity() {
+  try {
+    const user = await requireSuperOrSystemAdmin();
+    const adminClient = createAdminClient();
+
+    await Promise.all([
+      adminClient.from('bands').update({ total_allocated: 467, total_capacity: 467, price: 5000, updated_at: new Date().toISOString() }).eq('id', 'band_5000'),
+      adminClient.from('bands').update({ total_allocated: 474, total_capacity: 474, price: 3500, updated_at: new Date().toISOString() }).eq('id', 'band_3500'),
+      adminClient.from('bands').update({ total_allocated: 0, total_capacity: 0, price: 2500, updated_at: new Date().toISOString() }).eq('id', 'band_2500'),
+      adminClient.from('bands').update({ total_allocated: 457, total_capacity: 457, price: 1500, updated_at: new Date().toISOString() }).eq('id', 'band_1500'),
+    ]);
+
+    await logAudit(user.id, 'RECALIBRATE_VENUE_CAPACITY', 'bands', 'all', {
+      total_allocated: 1398,
+      note: 'Recalibrated band capacities to exact architectural blueprint (1,398 regular seats + 50 VIP box)',
+    });
+
+    revalidatePath('/admin/bands');
+    revalidatePath('/sell');
+    revalidatePath('/dashboard');
+    revalidatePath('/reports');
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to recalibrate band capacities.' };
+  }
+}
+
+/**
  * Create an Earmarked Protected Block (VIP, Police, Corporation).
  */
 export async function createProtectedBlock(label: string, seatCount: number) {

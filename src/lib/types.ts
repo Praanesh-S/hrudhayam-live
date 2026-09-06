@@ -248,3 +248,38 @@ export interface AuditLog {
   actor_name?: string | null;
   actor_login_id?: string | null;
 }
+
+export type SeatSection = 'Ground Floor' | 'Balcony';
+export type ObligationType = 'chief' | 'police' | 'sponsor' | 'vip';
+export type TierValue = 5000 | 3500 | 3000 | 2500 | 1500;
+
+export interface VenueRow {
+  id: string;
+  section: SeatSection;
+  row_label: string;
+  seat_count: number;
+  tier: number | null;
+  obligation: ObligationType | null;
+  lock_status: 'Unlocked' | 'Locked';
+  display_order: number;
+  is_placeholder: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SeatData {
+  id: string;
+  section: SeatSection;
+  row_label: string;
+  seat_no: number;
+  tier: number | null;
+  obligation: string | null;
+  guest_name: string | null;
+  guest_phone?: string | null;
+  guest_email?: string | null;
+  pass_code?: string | null;
+  payment_status: string;
+  checked_in: boolean;
+  ticket_sent?: boolean;
+  owner_id?: string | null;
+}

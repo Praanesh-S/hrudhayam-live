@@ -81,3 +81,15 @@ export function formatINR(amount: number): string {
     maximumFractionDigits: 0,
   }).format(amount);
 }
+
+export const SECTION_PREFIX: Record<string, string> = {
+  "Ground Floor": "GF",
+  "Balcony": "BAL",
+};
+
+export const OBLIGATION_LABELS: Record<string, string> = {
+  chief: "VIP / Chief Guest",
+  police: "Police / Official",
+  sponsor: "Corporate / Sponsor",
+  vip: "VIP Reserved",
+};
