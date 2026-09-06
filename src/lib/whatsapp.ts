@@ -48,22 +48,22 @@ export function formatWhatsAppPhone(phone?: string | null): string {
 }
 
 /**
- * Generates the WhatsApp deep link (wa.me)
- * Strips any Unicode Variation Selectors (\uFE00-\uFE0F) that break WhatsApp URL encoding and show as '?'
+ * Generates the WhatsApp deep link (api.whatsapp.com/send)
+ * Uses api.whatsapp.com instead of wa.me to prevent Meta's proxy redirect from corrupting text into '?'
  */
 export function getWhatsAppUrl(phone: string | null | undefined, message: string): string {
   const formattedPhone = formatWhatsAppPhone(phone);
   const cleanMessage = message.replace(/[\uFE00-\uFE0F]/g, '');
   const encodedText = encodeURIComponent(cleanMessage);
   if (formattedPhone) {
-    return `https://wa.me/${formattedPhone}?text=${encodedText}`;
+    return `https://api.whatsapp.com/send?phone=${formattedPhone}&text=${encodedText}`;
   }
   return `https://api.whatsapp.com/send?text=${encodedText}`;
 }
 
 /**
  * Format Donor Pass WhatsApp message (Digital or Physical, English or Tamil)
- * Uses high-compatibility Unicode glyphs with no variation selectors to ensure 0 '?' characters.
+ * Pure standard text formatting - zero broken emojis, zero '?' characters, and no external app links.
  */
 export function formatDonorPassMessage(params: WhatsAppPassMessageParams): string {
   const {
@@ -80,145 +80,134 @@ export function formatDonorPassMessage(params: WhatsAppPassMessageParams): strin
     totalPasses = 1,
     paymentStatus = 'received',
     language = 'en',
-    hostUrl,
   } = params;
 
-  const baseUrl = hostUrl || (typeof window !== 'undefined' ? window.location.origin : 'https://hrudhayam.live');
-  const passUrl = `${baseUrl}/pass/${passCode}`;
   const isPaid = paymentStatus === 'received' || paymentStatus === 'paid';
   const passIndexText = totalPasses > 1 ? ` (Pass ${passIndex} of ${totalPasses})` : '';
 
   // Multi-pass confirmation batch
   if (quantity > 1 && passCodes && passCodes.length > 1) {
     if (language === 'ta') {
-      return `🎫 *ஹ்ருதயம் LIVE 2026 - அதிகாரப்பூர்வ நுழைவுச் சீட்டுகள் (${quantity} பாஸ்கள்)*
+      return `*ஹ்ருதயம் LIVE 2026 - அதிகாரப்பூர்வ நுழைவுச் சீட்டுகள் (${quantity} பாஸ்கள்)*
 ---------------------------------------
 அன்பார்ந்த *${donorName}*,
 
 ரோட்டரி கிளப் ஆஃப் ஆர்ச் சிட்டி மெட்ராஸ் அமைப்பிற்கு உங்கள் மேலான ஆதரவுக்கு மனமார்ந்த நன்றிகள். உங்கள் ${quantity} பாஸ்கள் உறுதிசெய்யப்பட்டன.
 
-📍 *இடம்:* தி மியூசிக் அகாடமி, ஆல்வார்பேட்டை, சென்னை
-📅 *தேதி:* வெள்ளி, 9 அக்டோபர் 2026
-⏰ *நேரம்:* மாலை 5:30 மணி முதல் | இசை நிகழ்ச்சி: 6:30 மணி
+*இடம்:* தி மியூசிக் அகாடமி, ஆல்வார்பேட்டை, சென்னை
+*தேதி:* வெள்ளி, 9 அக்டோபர் 2026
+*நேரம்:* மாலை 5:30 மணி முதல் | இசை நிகழ்ச்சி: 6:30 மணி
 
-🎫 *பிரிவு:* *${bandLabel}* (${quantity} இருக்கைகள்)
-🔢 *பாஸ் குறியீடுகள்:* ${passCodes.join(', ')}
-${ticketType === 'physical' && physicalSerials ? `🎫 *டிக்கெட் எண்கள்:* ${physicalSerials.join(', ')}\n` : ''}💳 *கட்டணம்:* ${isPaid ? '✅ பெறப்பட்டது' : 'நிலுவையில்'}
+*பிரிவு:* *${bandLabel}* (${quantity} இருக்கைகள்)
+*பாஸ் குறியீடுகள்:* ${passCodes.join(', ')}
+${ticketType === 'physical' && physicalSerials ? `*டிக்கெட் எண்கள்:* ${physicalSerials.join(', ')}\n` : ''}*கட்டணம்:* ${isPaid ? 'பெறப்பட்டது' : 'நிலுவையில்'}
 
-${ticketType === 'digital' ? `📄 *அதிகாரப்பூர்வ பாஸ் PDF பதிவிறக்கம் (செயலி/உள்நுழைவு தேவையில்லை):*
-${passCodes.map((c, i) => `👉 பாஸ் ${i + 1} PDF: ${baseUrl}/api/tickets/generate?passCode=${c}&download=1`).join('\n')}
+${ticketType === 'digital' ? `உங்கள் ${quantity} அதிகாரப்பூர்வ PDF நுழைவுச் சீட்டுகள் இச்செய்தியுடன் இணைக்கப்பட்டுள்ளன.
+அரங்க நுழைவாயிலில் இந்த PDF சீட்டுகளைக் காண்பித்து அனுமதிக்கப்படவும்.` : `தயவுசெய்து உங்கள் அச்சிடப்பட்ட நுழைவுச் சீட்டை அரங்க நுழைவாயிலில் காண்பிக்கவும்.`}
 
-📱 *மொபைல் பாஸ் & QR குறியீடு:*
-${passCodes.map((c, i) => `👉 பாஸ் ${i + 1}: ${baseUrl}/pass/${c}`).join('\n')}` : `_தயவுசெய்து உங்கள் அச்சிடப்பட்ட நுழைவுச் சீட்டை அரங்க நுழைவாயிலில் காண்பிக்கவும்._`}
-
-_அரங்க நுழைவாயிலில் இந்த QR குறியீட்டையோ அல்லது பதிவிறக்கம் செய்யப்பட்ட PDF பாஸையோ காண்பித்து அனுமதிக்கப்படவும்._`.replace(/[\uFE00-\uFE0F]/g, '');
+ரோட்டரி கிளப் ஆஃப் ஆர்ச் சிட்டி மெட்ராஸ்`;
     }
 
-    return `🎫 *HRUDHAYAM LIVE 2026 - Official Donor Passes (${quantity} Passes)*
+    return `*HRUDHAYAM LIVE 2026 - Official Donor Passes (${quantity} Passes)*
 ---------------------------------------
 Dear *${donorName}*,
 
 Thank you for your generous contribution towards Public-Access AEDs in Chennai! Your ${quantity} donor passes for *HRUDHAYAM LIVE 2026* are confirmed.
 
-📍 *Venue:* The Music Academy, TTK Road, Alwarpet, Chennai
-📅 *Date:* Friday, 9 October 2026
-⏰ *Gates Open:* 5:30 PM | *Concert:* 6:30 PM
+*Venue:* The Music Academy, TTK Road, Alwarpet, Chennai
+*Date:* Friday, 9 October 2026
+*Time:* Gates Open: 5:30 PM | Concert: 6:30 PM
 
-🎫 *Category:* *${bandLabel}* (${quantity} Seats)
-🔢 *Pass Codes:* ${passCodes.join(', ')}
-${ticketType === 'physical' && physicalSerials ? `🎫 *Ticket Serials:* ${physicalSerials.join(', ')}\n` : ''}💳 *Payment:* ${isPaid ? '✅ Confirmed / Received' : 'Pending'}
+*Category:* *${bandLabel}* (${quantity} Seats)
+*Pass Codes:* ${passCodes.join(', ')}
+${ticketType === 'physical' && physicalSerials ? `*Ticket Serials:* ${physicalSerials.join(', ')}\n` : ''}*Payment:* ${isPaid ? 'Confirmed / Received' : 'Pending'}
 
-${ticketType === 'digital' ? `📄 *Download Official Pass PDF (Direct Download - No app or login needed):*
-${passCodes.map((c, i) => `👉 Pass ${i + 1} PDF: ${baseUrl}/api/tickets/generate?passCode=${c}&download=1`).join('\n')}
+${ticketType === 'digital' ? `Your ${quantity} Official PDF Admission Passes are attached with this message.
+Please present the barcode on the attached PDF passes at the gate for admission.` : `Please present your physical ticket at the entrance for admission.`}
 
-📱 *Mobile QR Code / Web Pass:*
-${passCodes.map((c, i) => `👉 Pass ${i + 1}: ${baseUrl}/pass/${c}`).join('\n')}` : `_Please present your physical ticket at the entrance for admission._`}
-
-_Please present your downloaded PDF ticket or mobile QR code at the gate for rapid admission._`.replace(/[\uFE00-\uFE0F]/g, '');
+Rotary Club of Aarch City Madras`;
   }
 
   if (language === 'ta') {
     if (ticketType === 'physical') {
-      return `🎫 *ஹ்ருதயம் LIVE 2026 - நன்கொடையாளர் நுழைவுச் சீட்டு*${passIndexText}
+      return `*ஹ்ருதயம் LIVE 2026 - நன்கொடையாளர் நுழைவுச் சீட்டு*${passIndexText}
 ---------------------------------------
 அன்பார்ந்த *${donorName}*,
 
 ரோட்டரி கிளப் ஆஃப் ஆர்ச் சிட்டி மெட்ராஸ் அமைப்பிற்கு உங்கள் மேலான ஆதரவுக்கு மனமார்ந்த நன்றிகள்.
 
-📍 *இடம்:* தி மியூசிக் அகாடமி, ஆல்வார்பேட்டை, சென்னை
-📅 *தேதி:* வெள்ளி, 9 அக்டோபர் 2026
-⏰ *நேரம்:* மாலை 5:30 மணி முதல் | இசை நிகழ்ச்சி: 6:30 மணி
+*இடம்:* தி மியூசிக் அகாடமி, ஆல்வார்பேட்டை, சென்னை
+*தேதி:* வெள்ளி, 9 அக்டோபர் 2026
+*நேரம்:* மாலை 5:30 மணி முதல் | இசை நிகழ்ச்சி: 6:30 மணி
 
-🎫 *பிரிவு:* *${bandLabel}*
-${seatDetails ? `💺 *இருக்கை:* *${seatDetails}*\n` : ''}🔢 *டிக்கெட் எண்:* *${physicalSerial || 'நேரடிச் சீட்டு'}*
-💳 *கட்டணம்:* ${isPaid ? '✅ பெறப்பட்டது' : 'நிலுவையில்'}
+*பிரிவு:* *${bandLabel}*
+${seatDetails ? `*இருக்கை:* *${seatDetails}*\n` : ''}*டிக்கெட் எண்:* *${physicalSerial || 'நேரடிச் சீட்டு'}*
+*கட்டணம்:* ${isPaid ? 'பெறப்பட்டது' : 'நிலுவையில்'}
 
-_தயவுசெய்து உங்கள் அச்சிடப்பட்ட நுழைவுச் சீட்டை அரங்க நுழைவாயிலில் காண்பிக்கவும்._`.replace(/[\uFE00-\uFE0F]/g, '');
+தயவுசெய்து உங்கள் அச்சிடப்பட்ட நுழைவுச் சீட்டை அரங்க நுழைவாயிலில் காண்பிக்கவும்.
+
+ரோட்டரி கிளப் ஆஃப் ஆர்ச் சிட்டி மெட்ராஸ்`;
     }
 
-    return `🎫 *ஹ்ருதயம் LIVE 2026 - அதிகாரப்பூர்வ இ-பாஸ்*${passIndexText}
+    return `*ஹ்ருதயம் LIVE 2026 - அதிகாரப்பூர்வ இ-பாஸ்*${passIndexText}
 ---------------------------------------
 அன்பார்ந்த *${donorName}*,
 
 ரோட்டரி கிளப் ஆஃப் ஆர்ச் சிட்டி மெட்ராஸ் அமைப்பிற்கு உங்கள் மேலான ஆதரவுக்கு மனமார்ந்த நன்றிகள்.
 
-📍 *இடம்:* தி மியூசிக் அகாடமி, ஆல்வார்பேட்டை, சென்னை
-📅 *தேதி:* வெள்ளி, 9 அக்டோபர் 2026
-⏰ *நேரம்:* மாலை 5:30 மணி முதல் | இசை நிகழ்ச்சி: 6:30 மணி
+*இடம்:* தி மியூசிக் அகாடமி, ஆல்வார்பேட்டை, சென்னை
+*தேதி:* வெள்ளி, 9 அக்டோபர் 2026
+*நேரம்:* மாலை 5:30 மணி முதல் | இசை நிகழ்ச்சி: 6:30 மணி
 
-🎫 *பிரிவு:* *${bandLabel}*
-${seatDetails ? `💺 *இருக்கை:* *${seatDetails}*\n` : ''}🔢 *பாஸ் குறியீடு:* *${passCode}*
-💳 *கட்டணம்:* ${isPaid ? '✅ பெறப்பட்டது' : 'நிலுவையில்'}
+*பிரிவு:* *${bandLabel}*
+${seatDetails ? `*இருக்கை:* *${seatDetails}*\n` : ''}*பாஸ் குறியீடு:* *${passCode}*
+*கட்டணம்:* ${isPaid ? 'பெறப்பட்டது' : 'நிலுவையில்'}
 
-📄 *அதிகாரப்பூர்வ பாஸ் PDF பதிவிறக்கம் (செயலி/உள்நுழைவு தேவையில்லை):*
-👉 PDF பதிவிறக்க: ${baseUrl}/api/tickets/generate?passCode=${passCode}&download=1
+உங்கள் அதிகாரப்பூர்வ PDF நுழைவுச் சீட்டு இச்செய்தியுடன் இணைக்கப்பட்டுள்ளது.
+அரங்க நுழைவாயிலில் இந்த PDF சீட்டைக் காண்பித்து அனுமதிக்கப்படவும்.
 
-📱 *மொபைல் பாஸ் & QR குறியீடு:*
-👉 ${passUrl}
-
-_அரங்க நுழைவாயிலில் இந்த QR குறியீட்டையோ அல்லது பதிவிறக்கம் செய்யப்பட்ட PDF பாஸையோ காண்பித்து அனுமதிக்கப்படவும்._`.replace(/[\uFE00-\uFE0F]/g, '');
+ரோட்டரி கிளப் ஆஃப் ஆர்ச் சிட்டி மெட்ராஸ்`;
   }
 
   // English
   if (ticketType === 'physical') {
-    return `🎫 *HRUDHAYAM LIVE 2026 - Official Donor Pass Confirmation*${passIndexText}
+    return `*HRUDHAYAM LIVE 2026 - Official Donor Pass Confirmation*${passIndexText}
 ---------------------------------------
 Dear *${donorName}*,
 
 Thank you for your generous contribution towards Public-Access AEDs in Chennai! Your donor pass for *HRUDHAYAM LIVE 2026* is confirmed.
 
-📍 *Venue:* The Music Academy, TTK Road, Alwarpet, Chennai
-📅 *Date:* Friday, 9 October 2026
-⏰ *Gates Open:* 5:30 PM | *Concert:* 6:30 PM
+*Venue:* The Music Academy, TTK Road, Alwarpet, Chennai
+*Date:* Friday, 9 October 2026
+*Time:* Gates Open: 5:30 PM | Concert: 6:30 PM
 
-🎫 *Category:* *${bandLabel}*
-${seatDetails ? `💺 *Allocated Seat:* *${seatDetails}*\n` : ''}🔢 *Ticket Serial Number:* *${physicalSerial || 'Physical Pass'}*
-💳 *Payment:* ${isPaid ? '✅ Confirmed / Received' : 'Pending'}
+*Category:* *${bandLabel}*
+${seatDetails ? `*Allocated Seat:* *${seatDetails}*\n` : ''}*Ticket Serial Number:* *${physicalSerial || 'Physical Pass'}*
+*Payment:* ${isPaid ? 'Confirmed / Received' : 'Pending'}
 
-_Please carry and present your physical ticket at the entrance for admission._`.replace(/[\uFE00-\uFE0F]/g, '');
+Please carry and present your physical ticket at the entrance for admission.
+
+Rotary Club of Aarch City Madras`;
   }
 
-  return `🎫 *HRUDHAYAM LIVE 2026 - Official Donor Pass*${passIndexText}
+  return `*HRUDHAYAM LIVE 2026 - Official Donor Pass*${passIndexText}
 ---------------------------------------
 Dear *${donorName}*,
 
 Thank you for your generous contribution towards Public-Access AEDs in Chennai! Your donor pass for *HRUDHAYAM LIVE 2026* is confirmed.
 
-📍 *Venue:* The Music Academy, TTK Road, Alwarpet, Chennai
-📅 *Date:* Friday, 9 October 2026
-⏰ *Gates Open:* 5:30 PM | *Concert:* 6:30 PM
+*Venue:* The Music Academy, TTK Road, Alwarpet, Chennai
+*Date:* Friday, 9 October 2026
+*Time:* Gates Open: 5:30 PM | Concert: 6:30 PM
 
-🎫 *Category:* *${bandLabel}*
-${seatDetails ? `💺 *Allocated Seat:* *${seatDetails}*\n` : ''}🔢 *Pass Code:* *${passCode}*
-💳 *Payment:* ${isPaid ? '✅ Confirmed / Received' : 'Pending'}
+*Category:* *${bandLabel}*
+${seatDetails ? `*Allocated Seat:* *${seatDetails}*\n` : ''}*Pass Code:* *${passCode}*
+*Payment:* ${isPaid ? 'Confirmed / Received' : 'Pending'}
 
-📄 *Download Official Pass PDF (Direct Download - No app or login needed):*
-👉 Download PDF: ${baseUrl}/api/tickets/generate?passCode=${passCode}&download=1
+Your Official PDF Admission Pass is attached with this message.
+Please present the barcode on the attached PDF at the entrance gate for admission.
 
-📱 *Mobile QR Code / Web Pass:*
-👉 View Online: ${passUrl}
-
-_Please present the downloaded PDF ticket or mobile QR code at the gate for rapid admission._`.replace(/[\uFE00-\uFE0F]/g, '');
+Rotary Club of Aarch City Madras`;
 }
 
 /**
@@ -229,20 +218,22 @@ export function formatSellerCreditMessage(params: SellerCreditMessageParams): st
   const formattedAmount = `₹${totalRaised.toLocaleString('en-IN')}`;
 
   if (language === 'ta') {
-    return `🙏 *ஹ்ருதயம் LIVE 2026 - உங்கள் ஆதரவுக்கு நன்றி*
+    return `*ஹ்ருதயம் LIVE 2026 - உங்கள் ஆதரவுக்கு நன்றி*
 ---------------------------------------
 வணக்கம் *${sellerName}*,
 
-உங்கள் பெயரில் இதுவரை *${formattedAmount}* நிதி திரட்டப்பட்டுள்ளது! பொது மக்கள் பயன்பாட்டிற்கான AED உயிர் காக்கும் கருவிகள் நிறுவும் இந்த நற்பணிக்கு உங்கள் பங்களிப்பிற்கு மனமார்ந்த வாழ்த்துகளும் நன்றிகளும்.`.replace(/[\uFE00-\uFE0F]/g, '');
+உங்கள் பெயரில் இதுவரை *${formattedAmount}* நிதி திரட்டப்பட்டுள்ளது! பொது மக்கள் பயன்பாட்டிற்கான AED உயிர் காக்கும் கருவிகள் நிறுவும் இந்த நற்பணிக்கு உங்கள் பங்களிப்பிற்கு மனமார்ந்த வாழ்த்துகளும் நன்றிகளும்.
+
+ரோட்டரி கிளப் ஆஃப் ஆர்ச் சிட்டி மெட்ராஸ்`;
   }
 
-  return `🙏 *HRUDHAYAM LIVE 2026 - Rotary Club of Aarch City Madras*
+  return `*HRUDHAYAM LIVE 2026 - Rotary Club of Aarch City Madras*
 ---------------------------------------
 Dear *${sellerName}*,
 
 *${formattedAmount}* has been raised in your name so far for the Public-Access AED project.
 
-Thank you for championing this life-saving cause!`.replace(/[\uFE00-\uFE0F]/g, '');
+Thank you for championing this life-saving cause!`;
 }
 
 /**
@@ -256,15 +247,17 @@ export function formatPendingPaymentReminder(params: {
   upiVpa?: string;
 }): string {
   const { donorOrSponsorName, amount, category, upiVpa = 'hrudhayamlive@indianbank' } = params;
-  return `🔔 *Payment Reminder - HRUDHAYAM LIVE 2026*
+  return `*Payment Reminder - HRUDHAYAM LIVE 2026*
 ---------------------------------------
 Dear *${donorOrSponsorName}*,
 
 This is a gentle reminder regarding your pledged contribution of *₹${amount.toLocaleString('en-IN')}* for *${category}* for Hrudhayam LIVE 2026.
 
-💳 *UPI ID for payment:* \`${upiVpa}\`
+*UPI ID for payment:* \`${upiVpa}\`
 
-Kindly share the transaction reference / UTR once completed. Thank you for your generous support!`.replace(/[\uFE00-\uFE0F]/g, '');
+Kindly share the transaction reference / UTR once completed. Thank you for your generous support!
+
+Rotary Club of Aarch City Madras`;
 }
 
 /**

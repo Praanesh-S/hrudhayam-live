@@ -30,6 +30,14 @@ import {
   FileText
 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 interface SellClientProps {
   bands: Band[];
@@ -262,6 +270,7 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
   // PDF Sharing & Direct Download Handlers for Step 6
   const [isSharingPdf, setIsSharingPdf] = useState<boolean>(false);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState<boolean>(false);
+  const [showDesktopAttachGuide, setShowDesktopAttachGuide] = useState<boolean>(false);
 
   const handleSharePdfViaWhatsApp = async () => {
     if (!successResult) return;
@@ -274,7 +283,8 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
         message: successResult.donorMessage,
       });
       if (res.method === 'download_and_whatsapp') {
-        toast.info('Pass PDF downloaded! Attach it directly to your WhatsApp chat with the donor.');
+        setShowDesktopAttachGuide(true);
+        toast.info('Pass PDF downloaded & WhatsApp Web opened! Attach the PDF to the chat.');
       } else if (res.method === 'native_share') {
         toast.success('Pass PDF ready to share!');
       }
@@ -1056,6 +1066,10 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
                   )}
                 </button>
 
+                <p className="text-[11px] text-slate-400 text-center">
+                  Mobile: Attaches PDF directly in WhatsApp • Desktop: Downloads PDF & opens WhatsApp Web ready to attach
+                </p>
+
                 {/* 2. Secondary Row: Download PDF & WhatsApp Text */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Button
@@ -1082,7 +1096,7 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
                     className="h-12 bg-[#1A2839] hover:bg-[#223345] border-2 border-slate-700 text-slate-200 hover:text-white font-bold text-sm rounded-xl flex items-center justify-center gap-2 transition-all no-underline"
                   >
                     <Send className="w-4 h-4 text-emerald-400" />
-                    Send Text Link on WhatsApp
+                    Open WhatsApp Chat
                   </a>
                 </div>
 
@@ -1149,6 +1163,55 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
           </div>
         </div>
       )}
+
+      {/* Desktop WhatsApp PDF Attachment Guide Dialog */}
+      <Dialog open={showDesktopAttachGuide} onOpenChange={setShowDesktopAttachGuide}>
+        <DialogContent className="bg-[#0D1926] border-[#1D3249] text-white max-w-md">
+          <DialogHeader>
+            <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mb-2">
+              <FileText className="w-6 h-6" />
+            </div>
+            <DialogTitle className="text-lg font-black text-white">
+              Pass PDF Ready to Attach
+            </DialogTitle>
+            <DialogDescription className="text-slate-300 text-xs">
+              WhatsApp Web has opened in a new tab, and your donor&apos;s official pass PDF has been downloaded to your computer.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2 text-xs">
+            <div className="p-3.5 bg-slate-900/80 rounded-xl border border-slate-800 space-y-2">
+              <p className="font-bold text-amber-400 flex items-center gap-1.5">
+                <span>📎</span> How to attach the PDF in WhatsApp Web:
+              </p>
+              <ol className="list-decimal list-inside space-y-1.5 text-slate-300 text-[11px] leading-relaxed">
+                <li>
+                  Switch to the newly opened <strong>WhatsApp Web</strong> tab.
+                </li>
+                <li>
+                  Click the <strong>Paperclip (📎)</strong> icon next to the chat bar and select <strong>Document</strong> (or drag &amp; drop the downloaded PDF into the chat).
+                </li>
+                <li>
+                  Select the downloaded file: <span className="font-mono text-white bg-slate-800 px-1 py-0.5 rounded">{successResult ? `Hrudhayam-Pass-${successResult.passCode}.pdf` : 'Pass.pdf'}</span>
+                </li>
+                <li>
+                  Hit <strong>Send</strong>! The donor receives the authentic PDF admission pass without needing any login or app.
+                </li>
+              </ol>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0 border-t border-slate-800 pt-3">
+            <Button
+              type="button"
+              className="w-full bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-black text-xs h-10 rounded-xl"
+              onClick={() => setShowDesktopAttachGuide(false)}
+            >
+              Got it, I will attach it in WhatsApp!
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
