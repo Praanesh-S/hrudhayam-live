@@ -47,8 +47,13 @@ export async function requireSuperOrSystemAdmin(): Promise<AuthUser> {
  */
 export async function requireGroupAdmin(): Promise<AuthUser> {
   const user = await requireUser();
-  if (user.role !== 'group_admin' && user.role !== 'super_admin' && user.role !== 'system_admin') {
-    throw new AuthError('Access denied. Group Admin privileges required.', 403);
+  if (
+    user.role !== 'group_admin' && 
+    user.role !== 'tech_coordinator' && 
+    user.role !== 'super_admin' && 
+    user.role !== 'system_admin'
+  ) {
+    throw new AuthError('Access denied. Group Admin or Tech Coordinator privileges required.', 403);
   }
   return user;
 }

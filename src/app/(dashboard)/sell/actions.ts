@@ -4,11 +4,11 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { requireUser } from '@/lib/auth/guards';
 import { logAudit } from '@/lib/audit';
 import { generateUniquePassCode } from '@/lib/band-utils';
-import { signQrToken } from '@/lib/tokens';
 import { formatDonorPassMessage, formatSellerCreditMessage, formatWhatsAppPhone } from '@/lib/whatsapp';
 import { revalidatePath } from 'next/cache';
 import crypto from 'crypto';
 import { PaymentMode, PaymentStatus, TicketType } from '@/lib/types';
+import { createSession } from '@/lib/auth/session';
 
 export interface IssuePassInput {
   bandId: string;
@@ -181,21 +181,46 @@ export async function issuePass(input: IssuePassInput) {
       }
     }
 
-    // 4. Band Inventory & Hard Oversell Block (Rule R5)
-    const { data: availData, error: availError } = await adminClient
-      .rpc('get_band_available_seats', { p_band_id: bandId });
+    // 4. Band Inventory & Row-based Seat Reservation (Rule R5)
+    const bandCategoryMap: Record<string, string> = {
+      band_5000: 'b5000',
+      band_3500: 'b3500',
+      band_2500: 'b2500',
+      band_1500: 'b1500',
+      band_pp: 'pp',
+    };
+    const category = bandCategoryMap[bandId];
 
-    if (availError) {
-      console.error('Error checking band availability:', availError);
-      return { success: false, error: 'Could not verify seat availability.' };
-    }
+    let assignedSeats: any[] = [];
+    if (category) {
+      const { data: foundSeats, error: seatFetchErr } = await adminClient
+        .from('seats')
+        .select('id, row_label, seat_no, section')
+        .eq('category', category)
+        .eq('sold', false)
+        .order('section', { ascending: true })
+        .order('row_label', { ascending: true })
+        .order('seat_no', { ascending: true })
+        .limit(quantity);
 
-    const availableSeats = typeof availData === 'number' ? availData : 0;
-    if (availableSeats < quantity) {
-      return { 
-        success: false, 
-        error: `HARD LIMIT REACHED: Only ${availableSeats} seat${availableSeats === 1 ? '' : 's'} remaining in this price band. Cannot issue ${quantity} passes.` 
-      };
+      if (seatFetchErr || !foundSeats || foundSeats.length < quantity) {
+        return { 
+          success: false, 
+          error: `HARD LIMIT REACHED: Only ${foundSeats?.length || 0} seats remaining in this price band. Cannot issue ${quantity} passes.` 
+        };
+      }
+      assignedSeats = foundSeats;
+    } else {
+      const { data: availData, error: availError } = await adminClient
+        .rpc('get_band_available_seats', { p_band_id: bandId });
+
+      const availableSeats = typeof availData === 'number' ? availData : 0;
+      if (availableSeats < quantity) {
+        return { 
+          success: false, 
+          error: `HARD LIMIT REACHED: Only ${availableSeats} seat${availableSeats === 1 ? '' : 's'} remaining in this price band. Cannot issue ${quantity} passes.` 
+        };
+      }
     }
 
     // Fetch band metadata
@@ -216,13 +241,19 @@ export async function issuePass(input: IssuePassInput) {
     const passesToInsert = [];
     for (let i = 0; i < quantity; i++) {
       const passCode = await generateUniquePassCode(adminClient);
-      const qrToken = await signQrToken(passCode);
+      const qrToken = null;
+      const assignedSeat = assignedSeats[i];
+      const serial = serialList[i] || `PL-${passCode}`;
+
       passesToInsert.push({
         pass_code: passCode,
         band_id: bandId,
-        ticket_type: ticketType,
-        physical_serial: ticketType === 'physical' ? serialList[i] : null,
-        seat_id: i === 0 && input.seatId ? input.seatId : null,
+        ticket_type: 'physical' as const,
+        physical_serial: serial,
+        serial_no: serial,
+        seat_id: assignedSeat?.id || (i === 0 && input.seatId ? input.seatId : null),
+        row_label: assignedSeat?.row_label || null,
+        price: band.price,
         seller_member_id: sellerMemberId,
         issued_by_user_id: user.id,
         donor_name: finalDonorName,
@@ -249,6 +280,26 @@ export async function issuePass(input: IssuePassInput) {
       return { success: false, error: 'Failed to issue passes. ' + (passError?.message || '') };
     }
 
+    // 6b. Mark assigned seats as sold in public.seats
+    for (let i = 0; i < insertedPasses.length; i++) {
+      const p = insertedPasses[i];
+      if (p.seat_id) {
+        await adminClient
+          .from('seats')
+          .update({
+            sold: true,
+            owner_id: user.id,
+            guest_name: finalDonorName,
+            guest_phone: finalDonorPhone,
+            guest_email: donorEmail?.trim() || null,
+            pass_code: p.pass_code,
+            payment_status: paymentStatus,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', p.seat_id);
+      }
+    }
+
     // 7. Insert Structured Payments (1 record per pass, splitting amount evenly)
     const totalAmount = paymentAmount >= 0 ? paymentAmount : band.price * quantity;
     const baseAmount = Math.floor(totalAmount / quantity);
@@ -271,23 +322,6 @@ export async function issuePass(input: IssuePassInput) {
 
     if (paymentError) {
       console.error('Error recording payment:', paymentError);
-    }
-
-    // 7b. If legacy seat linked, update public.seats
-    if (seatData && input.seatId) {
-      await adminClient
-        .from('seats')
-        .update({
-          owner_id: user.id,
-          guest_name: finalDonorName,
-          guest_phone: finalDonorPhone,
-          guest_email: donorEmail?.trim() || null,
-          pass_code: insertedPasses[0].pass_code,
-          qr_token: insertedPasses[0].qr_token,
-          payment_status: paymentStatus,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', input.seatId);
     }
 
     // 8. Calculate Seller's Updated Total Raised (for thank you message)
@@ -473,6 +507,7 @@ export async function undoSale(passId: string, undoToken: string) {
       await adminClient
         .from('seats')
         .update({
+          sold: false,
           owner_id: null,
           guest_name: null,
           guest_phone: null,
@@ -610,3 +645,181 @@ export async function releaseSoftHold(holdId: string) {
     return { success: false, error: err.message || 'Failed to release soft hold.' };
   }
 }
+
+/**
+ * Mark a pending payment as received (Step 6).
+ * Reference / UTR is mandatory. Flips payment status to received.
+ * Logs to audit trail.
+ */
+export async function markPendingPaymentReceived(
+  paymentIdOrIds: string | string[],
+  referenceNo: string,
+  mode: PaymentMode
+) {
+  try {
+    const user = await requireUser();
+    const adminClient = createAdminClient();
+
+    if (!referenceNo || !referenceNo.trim()) {
+      return { success: false, error: 'Reference number / UTR is mandatory.' };
+    }
+
+    const ids = Array.isArray(paymentIdOrIds) ? paymentIdOrIds : [paymentIdOrIds];
+    if (ids.length === 0) {
+      return { success: false, error: 'No payments specified.' };
+    }
+
+    // 1. Fetch payments and linked passes
+    const { data: payments, error: fetchErr } = await adminClient
+      .from('payments')
+      .select('*, passes(*)')
+      .in('id', ids);
+
+    if (fetchErr || !payments || payments.length === 0) {
+      return { success: false, error: 'Pending payment record(s) not found.' };
+    }
+
+    // Role check: Group Admin or Tech Coordinator can only mark for their own group
+    if (user.role !== 'super_admin' && user.role !== 'system_admin' && user.groupId) {
+      for (const payment of payments) {
+        const pass = (payment as any).passes;
+        if (pass?.seller_member_id) {
+          const { data: seller } = await adminClient
+            .from('members')
+            .select('group_id')
+            .eq('id', pass.seller_member_id)
+            .single();
+          if (seller && seller.group_id !== user.groupId) {
+            return { success: false, error: 'You can only clear pending payments for your own group.' };
+          }
+        }
+      }
+    }
+
+    const now = new Date().toISOString();
+    const { error: updateErr } = await adminClient
+      .from('payments')
+      .update({
+        status: 'received',
+        reference_no: referenceNo.trim(),
+        mode,
+        collected_by_user_id: user.id,
+        collected_at: now,
+        updated_at: now,
+      })
+      .in('id', ids);
+
+    if (updateErr) throw updateErr;
+
+    // Also update pass payment status if needed
+    const passIds = payments.map((p) => p.pass_id).filter(Boolean);
+    if (passIds.length > 0) {
+      await adminClient
+        .from('passes')
+        .update({ updated_at: now })
+        .in('id', passIds);
+
+      const seatIds = payments
+        .map((p) => (p as any).passes?.seat_id)
+        .filter(Boolean);
+      if (seatIds.length > 0) {
+        await adminClient
+          .from('seats')
+          .update({ payment_status: 'received', updated_at: now })
+          .in('id', seatIds);
+      }
+    }
+
+    await logAudit(user.id, 'PAYMENT_MARKED_RECEIVED', 'payments', ids[0], {
+      reference_no: referenceNo.trim(),
+      mode,
+      payment_count: ids.length,
+      cleared_by: user.fullName,
+    });
+
+    revalidatePath('/sell');
+    revalidatePath('/payments');
+    revalidatePath('/dashboard');
+    revalidatePath('/leaderboard');
+
+    return { success: true };
+  } catch (err: any) {
+    console.error('Error marking pending payment received:', err);
+    return { success: false, error: err.message || 'Failed to mark payment received.' };
+  }
+}
+
+/**
+ * Demo switch role action for testing elder flows (§Image 2 & Image 3)
+ */
+export async function demoSwitchRoleAction(targetRole: 'super_admin' | 'group_admin' | 'tech_coordinator') {
+  try {
+    const adminClient = createAdminClient();
+    let targetUserId: string | null = null;
+
+    if (targetRole === 'super_admin') {
+      const { data } = await adminClient
+        .from('users')
+        .select('id')
+        .eq('role', 'super_admin')
+        .limit(1)
+        .single();
+      targetUserId = data?.id || null;
+    } else if (targetRole === 'group_admin') {
+      const { data } = await adminClient
+        .from('users')
+        .select('id')
+        .eq('role', 'group_admin')
+        .limit(1)
+        .single();
+      targetUserId = data?.id || null;
+    } else if (targetRole === 'tech_coordinator') {
+      const { data } = await adminClient
+        .from('users')
+        .select('id')
+        .eq('role', 'tech_coordinator')
+        .limit(1)
+        .maybeSingle();
+      if (data?.id) {
+        targetUserId = data.id;
+      } else {
+        // Look up member with is_tech_coord or fallback to a member in Team 1
+        const { data: member } = await adminClient
+          .from('members')
+          .select('id, phone_raw, full_name')
+          .eq('is_tech_coord', true)
+          .limit(1)
+          .maybeSingle();
+
+        if (member) {
+          const { data: newUser } = await adminClient
+            .from('users')
+            .insert({
+              login_id: member.phone_raw.replace(/\D/g, '').slice(-10) || `tc_${member.id}`,
+              role: 'tech_coordinator',
+              member_id: member.id,
+              password_hash: 'demo',
+              must_change_password: false,
+              is_active: true,
+            })
+            .select('id')
+            .single();
+          targetUserId = newUser?.id || null;
+        }
+      }
+    }
+
+    if (!targetUserId) {
+      return { success: false, error: `Could not find demo user for role: ${targetRole}` };
+    }
+
+    await createSession(targetUserId);
+    revalidatePath('/sell');
+    revalidatePath('/dashboard');
+    return { success: true };
+  } catch (err: any) {
+    console.error('Error switching demo role:', err);
+    return { success: false, error: err.message || 'Failed to switch demo role' };
+  }
+}
+

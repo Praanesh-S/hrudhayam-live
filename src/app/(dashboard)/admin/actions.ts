@@ -261,6 +261,137 @@ export async function assignRowToBand(rowId: string, targetTier: number) {
 }
 
 /**
+ * Save complete hall layout plan with staged checks (Step 3).
+ * Updates seats, rows, recomputes band quotas, and records audit trail.
+ */
+export async function saveLayoutPlan(
+  seatsUpdates: Array<{
+    id: string;
+    category: string;
+    price: number;
+    counts_to_raise: boolean;
+    obligation_type?: string | null;
+    name?: string | null;
+  }>,
+  reassignments?: Array<{
+    row: string;
+    section: string;
+    salesCount: number;
+    oldPrice: number;
+    newPrice: number;
+  }>
+) {
+  try {
+    const user = await requireSuperOrSystemAdmin();
+    const adminClient = createAdminClient();
+
+    if (!seatsUpdates || seatsUpdates.length === 0) {
+      return { success: false, error: 'No seat updates provided.' };
+    }
+
+    // 1. Update seats in parallel batches
+    const now = new Date().toISOString();
+    const batchSize = 100;
+    for (let i = 0; i < seatsUpdates.length; i += batchSize) {
+      const batch = seatsUpdates.slice(i, i + batchSize);
+      await Promise.all(
+        batch.map((s) =>
+          adminClient
+            .from('seats')
+            .update({
+              category: s.category,
+              tier: s.price,
+              price: s.price,
+              counts_to_raise: s.counts_to_raise,
+              obligation_type: s.obligation_type || null,
+              name: s.name || null,
+              is_blocked: s.category === 'blocked',
+              updated_at: now,
+            })
+            .eq('id', s.id)
+        )
+      );
+    }
+
+    // 2. Compute quotas for each band
+    const bandCounts: Record<string, number> = {
+      band_5000: 0,
+      band_3500: 0,
+      band_2500: 0,
+      band_1500: 0,
+      band_pp: 0,
+    };
+
+    for (const s of seatsUpdates) {
+      if (s.category === 'b5000') bandCounts.band_5000++;
+      else if (s.category === 'b3500') bandCounts.band_3500++;
+      else if (s.category === 'b2500') bandCounts.band_2500++;
+      else if (s.category === 'b1500') bandCounts.band_1500++;
+      else if (s.category === 'pp') bandCounts.band_pp++;
+    }
+
+    // 3. Update bands table quotas
+    await Promise.all([
+      adminClient.from('bands').update({ total_allocated: bandCounts.band_5000, total_capacity: bandCounts.band_5000, updated_at: now }).eq('id', 'band_5000'),
+      adminClient.from('bands').update({ total_allocated: bandCounts.band_3500, total_capacity: bandCounts.band_3500, updated_at: now }).eq('id', 'band_3500'),
+      adminClient.from('bands').update({ total_allocated: bandCounts.band_2500, total_capacity: bandCounts.band_2500, updated_at: now }).eq('id', 'band_2500'),
+      adminClient.from('bands').update({ total_allocated: bandCounts.band_1500, total_capacity: bandCounts.band_1500, updated_at: now }).eq('id', 'band_1500'),
+      adminClient.from('bands').update({ total_allocated: bandCounts.band_pp, total_capacity: bandCounts.band_pp, updated_at: now }).eq('id', 'band_pp'),
+    ]);
+
+    // 4. Record audit log
+    await logAudit(user.id, 'LAYOUT_PLAN_COMMITTED', 'seats', 'all', {
+      total_seats_updated: seatsUpdates.length,
+      band_quotas: bandCounts,
+      reassignments: reassignments || [],
+      saved_at: now,
+    });
+
+    revalidatePath('/admin/bands');
+    revalidatePath('/dashboard');
+    revalidatePath('/sell');
+    revalidatePath('/reports');
+
+    return { success: true, savedAt: now };
+  } catch (err: any) {
+    console.error('Error saving layout plan:', err);
+    return { success: false, error: err.message || 'Failed to save layout plan.' };
+  }
+}
+
+/**
+ * Update an individual seat's name (for VIP, Obligation, or Sponsor comp).
+ */
+export async function updateSeatName(seatId: string, name: string) {
+  try {
+    const user = await requireSuperOrSystemAdmin();
+    const adminClient = createAdminClient();
+
+    const cleanName = name.trim() || null;
+    const { error } = await adminClient
+      .from('seats')
+      .update({
+        name: cleanName,
+        guest_name: cleanName,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', seatId);
+
+    if (error) throw error;
+
+    await logAudit(user.id, 'SEAT_NAME_UPDATE', 'seats', seatId, {
+      seat_id: seatId,
+      name: cleanName,
+    });
+
+    revalidatePath('/admin/bands');
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to update seat name.' };
+  }
+}
+
+/**
  * Block exact individual seats (e.g. ['GF-A-01', 'GF-B-05']).
  * Blocked seats cannot be sold in /sell.
  */
@@ -1257,5 +1388,265 @@ export async function deleteUserAccount(userId: string) {
     return { success: true };
   } catch (err: any) {
     return { success: false, error: err.message || 'Failed to delete user account.' };
+  }
+}
+
+/**
+ * Promote a member to Tech Coordinator for their team (Step 7).
+ * Enforces exactly 1 Tech Coordinator per team. Captures mobile for login.
+ */
+export async function makeTechCoordinatorAction(memberId: number, mobile: string) {
+  try {
+    const user = await requireSuperOrSystemAdmin();
+    const adminClient = createAdminClient();
+
+    const { data: member, error: memberErr } = await adminClient
+      .from('members')
+      .select('id, full_name, group_id, phone_raw')
+      .eq('id', memberId)
+      .single();
+
+    if (memberErr || !member) {
+      return { success: false, error: 'Member not found.' };
+    }
+
+    const cleanMobile = mobile.trim();
+    const loginDigits = cleanMobile.replace(/\D/g, '').slice(-10);
+    if (!loginDigits || loginDigits.length < 10) {
+      return { success: false, error: 'A valid 10-digit mobile number is required for login.' };
+    }
+
+    // 1. Unset tech coordinator from any existing member in this group
+    await adminClient
+      .from('members')
+      .update({ is_tech_coord: false, has_login: false, updated_at: new Date().toISOString() })
+      .eq('group_id', member.group_id)
+      .eq('is_tech_coord', true);
+
+    // Deactivate old tech coordinator user accounts for this group
+    const { data: groupMembers } = await adminClient
+      .from('members')
+      .select('id')
+      .eq('group_id', member.group_id)
+      .neq('id', memberId);
+
+    if (groupMembers && groupMembers.length > 0) {
+      const otherMemberIds = groupMembers.map((m) => m.id);
+      await adminClient
+        .from('users')
+        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .in('member_id', otherMemberIds)
+        .eq('role', 'tech_coordinator');
+    }
+
+    // 2. Set this member as tech coordinator
+    await adminClient
+      .from('members')
+      .update({
+        is_tech_coord: true,
+        has_login: true,
+        phone_raw: cleanMobile,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', memberId);
+
+    // 3. Upsert user login account
+    const { data: existingUser } = await adminClient
+      .from('users')
+      .select('id')
+      .eq('member_id', memberId)
+      .maybeSingle();
+
+    if (existingUser) {
+      await adminClient
+        .from('users')
+        .update({
+          login_id: loginDigits,
+          role: 'tech_coordinator',
+          is_active: true,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existingUser.id);
+    } else {
+      const passwordHash = await hashPassword('Welcome@2026');
+      await adminClient.from('users').insert({
+        login_id: loginDigits,
+        password_hash: passwordHash,
+        role: 'tech_coordinator',
+        member_id: memberId,
+        must_change_password: true,
+        is_active: true,
+      });
+    }
+
+    await logAudit(user.id, 'MAKE_TECH_COORDINATOR', 'members', String(memberId), {
+      member_name: member.full_name,
+      group_id: member.group_id,
+      login_id: loginDigits,
+      promoted_by: user.fullName,
+    });
+
+    revalidatePath('/admin/members');
+    revalidatePath('/admin/users');
+    revalidatePath('/sell');
+
+    return { success: true };
+  } catch (err: any) {
+    console.error('Error making tech coordinator:', err);
+    return { success: false, error: err.message || 'Failed to promote to Tech Coordinator.' };
+  }
+}
+
+/**
+ * Remove Tech Coordinator role from a member (Step 7).
+ */
+export async function removeTechCoordinatorAction(memberId: number) {
+  try {
+    const user = await requireSuperOrSystemAdmin();
+    const adminClient = createAdminClient();
+
+    const { data: member } = await adminClient
+      .from('members')
+      .select('id, full_name, group_id')
+      .eq('id', memberId)
+      .single();
+
+    if (!member) {
+      return { success: false, error: 'Member not found.' };
+    }
+
+    await adminClient
+      .from('members')
+      .update({
+        is_tech_coord: false,
+        has_login: false,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', memberId);
+
+    // Deactivate linked user account
+    await adminClient
+      .from('users')
+      .update({
+        is_active: false,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('member_id', memberId)
+      .eq('role', 'tech_coordinator');
+
+    await logAudit(user.id, 'REMOVE_TECH_COORDINATOR', 'members', String(memberId), {
+      member_name: member.full_name,
+      group_id: member.group_id,
+      removed_by: user.fullName,
+    });
+
+    revalidatePath('/admin/members');
+    revalidatePath('/admin/users');
+    revalidatePath('/sell');
+
+    return { success: true };
+  } catch (err: any) {
+    console.error('Error removing tech coordinator:', err);
+    return { success: false, error: err.message || 'Failed to remove Tech Coordinator role.' };
+  }
+}
+
+/**
+ * Add a new member to a team (Step 7).
+ */
+export async function addTeamMemberAction(groupId: number, fullName: string, phone: string) {
+  try {
+    const user = await requireSuperOrSystemAdmin();
+    const adminClient = createAdminClient();
+
+    if (!fullName.trim() || !phone.trim()) {
+      return { success: false, error: 'Name and mobile number are required.' };
+    }
+
+    const { data: newMember, error: insErr } = await adminClient
+      .from('members')
+      .insert({
+        group_id: groupId,
+        full_name: fullName.trim(),
+        phone_raw: phone.trim(),
+        is_group_admin: false,
+        is_tech_coord: false,
+        has_login: false,
+        is_active: true,
+      })
+      .select()
+      .single();
+
+    if (insErr) throw insErr;
+
+    await logAudit(user.id, 'ADD_TEAM_MEMBER', 'members', String(newMember.id), {
+      full_name: fullName.trim(),
+      phone: phone.trim(),
+      group_id: groupId,
+      added_by: user.fullName,
+    });
+
+    revalidatePath('/admin/members');
+    revalidatePath('/admin/users');
+    revalidatePath('/sell');
+
+    return { success: true, member: newMember };
+  } catch (err: any) {
+    console.error('Error adding team member:', err);
+    return { success: false, error: err.message || 'Failed to add member.' };
+  }
+}
+
+/**
+ * Update member details (Name & Mobile).
+ */
+export async function updateMemberDetailsAction(memberId: number, fullName: string, phone: string) {
+  try {
+    const user = await requireSuperOrSystemAdmin();
+    const adminClient = createAdminClient();
+
+    if (!fullName.trim() || !phone.trim()) {
+      return { success: false, error: 'Name and mobile number are required.' };
+    }
+
+    const cleanPhone = phone.trim();
+    const cleanDigits = cleanPhone.replace(/\D/g, '').slice(-10);
+
+    const { error: updErr } = await adminClient
+      .from('members')
+      .update({
+        full_name: fullName.trim(),
+        phone_raw: cleanPhone,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', memberId);
+
+    if (updErr) throw updErr;
+
+    // If user account linked, update login_id
+    if (cleanDigits.length >= 10) {
+      await adminClient
+        .from('users')
+        .update({
+          login_id: cleanDigits,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('member_id', memberId);
+    }
+
+    await logAudit(user.id, 'UPDATE_MEMBER_DETAILS', 'members', String(memberId), {
+      full_name: fullName.trim(),
+      phone: cleanPhone,
+      updated_by: user.fullName,
+    });
+
+    revalidatePath('/admin/members');
+    revalidatePath('/admin/users');
+    revalidatePath('/sell');
+
+    return { success: true };
+  } catch (err: any) {
+    console.error('Error updating member details:', err);
+    return { success: false, error: err.message || 'Failed to update member.' };
   }
 }

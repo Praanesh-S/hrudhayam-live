@@ -17,14 +17,15 @@ interface HeaderProps {
 const getPageTitle = (pathname: string) => {
   if (pathname.startsWith('/dashboard')) return { title: 'Fill & Goal Dashboard', subtitle: 'Live Band Allocations & AED Stations' };
   if (pathname.startsWith('/sell')) return { title: 'Sell a Pass', subtitle: 'Step-by-step Pass Issuance & WhatsApp Delivery' };
-  if (pathname.startsWith('/checkin')) return { title: 'Gate Scanner & Check-in', subtitle: 'Barcode QR Validation & Gate Admission' };
+  if (pathname.startsWith('/checkin')) return { title: 'Gate Check-in', subtitle: 'Physical Pass Serial Verification & Hall Admission' };
   if (pathname.startsWith('/leaderboard')) return { title: 'Competition Leaderboards', subtitle: 'Team & Individual Standings • Prize Freeze' };
   if (pathname.startsWith('/clubs')) return { title: 'Participating Rotary Clubs', subtitle: '₹25,000 Entry Fee & ₹15,000 Pass Allotments' };
   if (pathname.startsWith('/payments')) return { title: 'Structured Payments', subtitle: 'Collection Verification & WhatsApp Reminders' };
   if (pathname.startsWith('/guests')) return { title: 'Passes & Guests Directory', subtitle: 'Search, Re-send WhatsApp & View Pass Status' };
   if (pathname.startsWith('/reports')) return { title: 'Reports & Audit Export', subtitle: 'Master Excel Downloads & Financial Summary' };
+  if (pathname.startsWith('/email')) return { title: 'WhatsApp Communications Hub', subtitle: 'Free Broadcast Lists & 1-Click wa.me Direct Messaging' };
   if (pathname.startsWith('/admin/bands')) return { title: 'Bands & Protected Seats', subtitle: 'Capacity Quotas & Earmarked Seat Blocks' };
-  if (pathname.startsWith('/admin/members')) return { title: 'Groups, Members & Accounts', subtitle: 'Roster Management & Super Admin Delegation' };
+  if (pathname.startsWith('/admin/users') || pathname.startsWith('/admin/members')) return { title: 'Groups, Members & Logins', subtitle: 'Administration & Coordinator Delegations' };
   if (pathname.startsWith('/admin/sponsors')) return { title: 'Sponsors Console', subtitle: 'Packages, Logos & Complimentary Passes' };
   if (pathname.startsWith('/admin/passes')) return { title: 'Pass Operations (System Admin)', subtitle: 'Void Cancellations & Band Reassignments' };
   if (pathname.startsWith('/admin/audit-logs')) return { title: 'Audit Trail', subtitle: 'Immutable System Activity Logs' };

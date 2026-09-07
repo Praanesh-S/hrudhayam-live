@@ -16,7 +16,8 @@ import {
   Ticket,
   Heart,
   ShieldCheck,
-  RotateCcw
+  RotateCcw,
+  MessageSquare
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AuthUser } from '@/lib/auth/session';
@@ -29,19 +30,20 @@ export function SidebarContent({ user, onNavigate }: { user: AuthUser; onNavigat
   const pathname = usePathname();
 
   const mainNavItems = [
-    { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: ['super_admin', 'group_admin', 'system_admin'] },
-    { name: 'Sell a Pass', href: '/sell', icon: PlusCircle, roles: ['super_admin', 'group_admin', 'system_admin'] },
-    { name: 'Gate Scanner', href: '/checkin', icon: ScanLine, roles: ['super_admin', 'group_admin', 'system_admin'] },
-    { name: 'Leaderboards', href: '/leaderboard', icon: Trophy, roles: ['super_admin', 'group_admin', 'system_admin'] },
-    { name: 'Participating Clubs', href: '/clubs', icon: Building2, roles: ['super_admin', 'group_admin', 'system_admin'] },
-    { name: 'Payments & Collections', href: '/payments', icon: CreditCard, roles: ['super_admin', 'group_admin', 'system_admin'] },
-    { name: 'Passes & Guests', href: '/guests', icon: Ticket, roles: ['super_admin', 'group_admin', 'system_admin'] },
-    { name: 'Reports & Export', href: '/reports', icon: BarChart3, roles: ['super_admin', 'group_admin', 'system_admin'] },
+    { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: ['super_admin', 'group_admin', 'system_admin', 'tech_coordinator'] },
+    { name: 'Sell a Pass', href: '/sell', icon: PlusCircle, roles: ['super_admin', 'group_admin', 'system_admin', 'tech_coordinator'] },
+    { name: 'Gate Check-in', href: '/checkin', icon: Ticket, roles: ['super_admin', 'group_admin', 'system_admin', 'tech_coordinator'] },
+    { name: 'WhatsApp Comms', href: '/email', icon: MessageSquare, roles: ['super_admin', 'group_admin', 'system_admin', 'tech_coordinator'] },
+    { name: 'Leaderboards', href: '/leaderboard', icon: Trophy, roles: ['super_admin', 'group_admin', 'system_admin', 'tech_coordinator'] },
+    { name: 'Participating Clubs', href: '/clubs', icon: Building2, roles: ['super_admin', 'group_admin', 'system_admin', 'tech_coordinator'] },
+    { name: 'Payments & Collections', href: '/payments', icon: CreditCard, roles: ['super_admin', 'group_admin', 'system_admin', 'tech_coordinator'] },
+    { name: 'Passes & Guests', href: '/guests', icon: Ticket, roles: ['super_admin', 'group_admin', 'system_admin', 'tech_coordinator'] },
+    { name: 'Reports & Export', href: '/reports', icon: BarChart3, roles: ['super_admin', 'group_admin', 'system_admin', 'tech_coordinator'] },
   ];
 
   const adminNavItems = [
     { name: 'Bands & Protected Seats', href: '/admin/bands', icon: Layers, roles: ['super_admin', 'system_admin'] },
-    { name: 'Groups, Members & Logins', href: '/admin/members', icon: Users, roles: ['super_admin', 'system_admin'] },
+    { name: 'Groups, Members & Logins', href: '/admin/users', icon: Users, roles: ['super_admin', 'system_admin'] },
     { name: 'Sponsors', href: '/admin/sponsors', icon: Building2, roles: ['super_admin', 'system_admin'] },
     { name: 'Pass Operations', href: '/admin/passes', icon: RotateCcw, roles: ['super_admin', 'system_admin'] },
     { name: 'Audit Trail', href: '/admin/audit-logs', icon: History, roles: ['super_admin', 'system_admin'] },

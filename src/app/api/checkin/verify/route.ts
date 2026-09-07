@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth/session';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { verifyQrToken } from '@/lib/tokens';
 import { logAudit } from '@/lib/audit';
 
 export async function POST(req: Request) {
@@ -13,36 +12,18 @@ export async function POST(req: Request) {
 
     const adminClient = createAdminClient();
     const body = await req.json();
-    const { token, passCode, physicalSerial, action } = body;
+    const { serialNo, action } = body;
 
-    let searchField = '';
-    let searchValue = '';
+    const rawSerial = (serialNo || '').trim();
 
-    // 1. Resolve identifier: QR Token, Pass Code, or Physical Serial
-    if (token) {
-      const decoded = await verifyQrToken(token);
-      if (!decoded) {
-        return NextResponse.json({
-          success: false,
-          error: 'SECURITY ALERT: Invalid or corrupted QR barcode. Could not verify signature.',
-        }, { status: 400 });
-      }
-      searchField = 'pass_code';
-      searchValue = decoded.passCode;
-    } else if (passCode) {
-      searchField = 'pass_code';
-      searchValue = passCode.trim();
-    } else if (physicalSerial) {
-      searchField = 'physical_serial';
-      searchValue = physicalSerial.trim();
-    } else {
+    if (!rawSerial) {
       return NextResponse.json({
         success: false,
-        error: 'Please provide a QR barcode token, pass code, or physical serial number.',
+        error: 'Please enter a physical pass serial number.',
       }, { status: 400 });
     }
 
-    // 2. Lookup pass in passes table
+    // Lookup pass by serial_no (or pass_code fallback)
     const { data: pass, error: passError } = await adminClient
       .from('passes')
       .select(`
@@ -50,13 +31,13 @@ export async function POST(req: Request) {
         band:bands(label, price),
         payments(amount, status, mode, reference_no)
       `)
-      .eq(searchField, searchValue)
+      .or(`serial_no.ilike.${rawSerial},pass_code.ilike.${rawSerial}`)
       .maybeSingle();
 
     if (passError || !pass) {
       return NextResponse.json({
         success: false,
-        error: `INVALID PASS: No active pass found for ${searchField === 'physical_serial' ? `Serial ${searchValue}` : `Code ${searchValue}`}.`,
+        error: `INVALID SERIAL: No pass record found matching "${rawSerial}". Check for typing error or refer to printed manifest.`,
       }, { status: 404 });
     }
 
@@ -67,116 +48,70 @@ export async function POST(req: Request) {
         error: `CANCELLED PASS: This pass was cancelled on ${new Date(pass.cancelled_at).toLocaleDateString('en-IN')}. Reason: ${pass.cancel_reason || 'Administrative cancellation'}.`,
         donorName: pass.donor_name,
         bandLabel: pass.band?.label,
-        passCode: pass.pass_code,
+        serialNo: pass.serial_no || pass.pass_code,
       }, { status: 400 });
     }
 
     const bandLabel = pass.band?.label || 'Admission Pass';
     const isPaid = (pass.payments || []).some((p: any) => p.status === 'received');
 
-    // 3. Supervisor Override action (§9)
-    if (action === 'override') {
-      if (user.role !== 'super_admin' && user.role !== 'system_admin') {
-        return NextResponse.json({
-          success: false,
-          error: 'Only Super Admins or System Admins can override gate check-in.',
-        }, { status: 403 });
-      }
-
-      const now = new Date().toISOString();
-      await adminClient
-        .from('passes')
-        .update({
-          status: 'used',
-          used_at: now,
-          updated_at: now,
-        })
-        .eq('id', pass.id);
-
-      await logAudit(user.id, 'GATE_SCAN_OVERRIDE', 'passes', pass.id, {
-        pass_code: pass.pass_code,
-        donor_name: pass.donor_name,
-        band: bandLabel,
-        overridden_by: user.fullName,
+    // Anti-Reuse / Anti-Photocopy Check (§Step 1):
+    // A serial can be marked "entered" once; a second entry attempt on the same serial is rejected.
+    if ((pass.entered_at || pass.used_at) && action !== 'override') {
+      const entryTime = new Date(pass.entered_at || pass.used_at).toLocaleTimeString('en-IN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
       });
-
-      return NextResponse.json({
-        success: true,
-        overridden: true,
-        message: 'Supervisor admission override recorded.',
-        donorName: pass.donor_name,
-        bandLabel,
-        passCode: pass.pass_code,
-        ticketType: pass.ticket_type,
-        physicalSerial: pass.physical_serial,
-      });
-    }
-
-    // 4. Duplicate scan check (Rule R8: Single use)
-    if (pass.status === 'used') {
-      const usedTime = pass.used_at 
-        ? new Date(pass.used_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
-        : 'earlier today';
-
       return NextResponse.json({
         success: false,
         duplicate: true,
-        error: `ALREADY ENTERED: This pass was already admitted at ${usedTime}. Duplicate scans are rejected.`,
+        error: `ANTI-REUSE ALERT: This physical pass (Serial: ${pass.serial_no || pass.pass_code}) was already admitted at ${entryTime}. DO NOT ADMIT — possible photocopy or duplicate pass.`,
         donorName: pass.donor_name,
         bandLabel,
-        passCode: pass.pass_code,
-        usedAt: pass.used_at,
+        rowLabel: pass.row_label || 'Unspecified',
+        serialNo: pass.serial_no || pass.pass_code,
+        usedAt: pass.entered_at || pass.used_at,
         isPaid,
-      });
+      }, { status: 409 });
     }
 
-    // 5. Atomic check-in transition (Rule R8 race condition guard)
+    // Check-in admission (First time)
     const now = new Date().toISOString();
-    const { data: updatedPass, error: updateError } = await adminClient
+    const { error: updateError } = await adminClient
       .from('passes')
       .update({
         status: 'used',
         used_at: now,
+        entered_at: now,
         updated_at: now,
       })
-      .eq('id', pass.id)
-      .eq('status', 'issued') // Guarantees only 1 concurrent scan succeeds
-      .select('id, used_at')
-      .maybeSingle();
+      .eq('id', pass.id);
 
-    if (updateError || !updatedPass) {
-      return NextResponse.json({
-        success: false,
-        duplicate: true,
-        error: 'ALREADY ENTERED: Another gate scanner just admitted this pass moments ago.',
-        donorName: pass.donor_name,
-        bandLabel,
-        passCode: pass.pass_code,
-      });
+    if (updateError) {
+      throw updateError;
     }
 
-    // 6. Audit Log
-    await logAudit(user.id, 'GATE_CHECKIN', 'passes', pass.id, {
-      pass_code: pass.pass_code,
+    await logAudit(user.id, action === 'override' ? 'GATE_ENTRY_OVERRIDE' : 'GATE_ENTRY_SUCCESS', 'passes', pass.id, {
+      serial_no: pass.serial_no || pass.pass_code,
       donor_name: pass.donor_name,
       band: bandLabel,
-      ticket_type: pass.ticket_type,
-      scanned_by: user.fullName,
+      row_label: pass.row_label,
+      staff_user: user.fullName,
     });
 
     return NextResponse.json({
       success: true,
-      duplicate: false,
       donorName: pass.donor_name,
       bandLabel,
-      passCode: pass.pass_code,
-      ticketType: pass.ticket_type,
-      physicalSerial: pass.physical_serial,
+      rowLabel: pass.row_label || 'Row Open',
+      serialNo: pass.serial_no || pass.pass_code,
       isPaid,
       usedAt: now,
+      message: 'Admission pass verified and marked as ENTERED.',
     });
   } catch (err: any) {
-    console.error('Checkin verify error:', err);
-    return NextResponse.json({ success: false, error: err.message || 'Check-in failed.' }, { status: 500 });
+    console.error('Error verifying serial check-in:', err);
+    return NextResponse.json({ success: false, error: err.message || 'Server error during check-in' }, { status: 500 });
   }
 }

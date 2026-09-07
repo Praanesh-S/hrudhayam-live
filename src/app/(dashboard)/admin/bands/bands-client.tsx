@@ -1,848 +1,862 @@
 'use client';
 
-import { useState } from 'react';
-import { Band, ProtectedBlock, SeatData, VenueRow, SeatSection } from '@/lib/types';
+import React, { useState, useMemo } from 'react';
+import { Band, SeatData, VenueRow, SeatSection, SeatCategory } from '@/lib/types';
 import { AuthUser } from '@/lib/auth/session';
-import { 
-  updateBandAllocation, 
-  updateBandPrice,
-  createProtectedBlock, 
-  releaseProtectedBlock,
-  deleteProtectedBlock,
-  bulkSetRowTier,
-  assignRowToBand,
-  blockExactSeats,
-  unblockExactSeats,
-  blockRow,
-  unblockRow,
-  recalibrateBandsToVenueCapacity
-} from '../actions';
+import { saveLayoutPlan, updateSeatName } from '../actions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { 
-  Layers, 
-  Shield, 
-  Plus, 
   CheckCircle2, 
   AlertCircle, 
   Loader2, 
-  ArrowRight,
   Crown,
-  Lock,
-  MapPin,
-  RefreshCw,
-  Sliders,
-  Pencil,
-  Trash2,
-  Download,
-  X
+  ArrowUpDown,
+  RotateCcw,
+  Check,
+  User,
+  X,
+  AlertTriangle
 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import SeatMap from '@/components/dashboard/SeatMap';
 
 interface BandsClientProps {
   bands: Band[];
-  protectedBlocks: ProtectedBlock[];
+  protectedBlocks: any[];
   seats: SeatData[];
   rows: VenueRow[];
   currentUser: AuthUser;
 }
 
+const CATEGORY_META: Record<SeatCategory, { label: string; price: number; color: string; countsToRaise: boolean }> = {
+  b5000: { label: '₹5,000 — Band A', price: 5000, color: '#F59E0B', countsToRaise: true },
+  b3500: { label: '₹3,500 — Band B', price: 3500, color: '#8B5CF6', countsToRaise: true },
+  b2500: { label: '₹2,500 — Band C', price: 2500, color: '#0D9488', countsToRaise: true },
+  b1500: { label: '₹1,500 — Band D', price: 1500, color: '#64748B', countsToRaise: true },
+  pp: { label: '₹1,000 — PP', price: 1000, color: '#0284C7', countsToRaise: true },
+  vip: { label: 'VIP (SPL)', price: 0, color: '#EAB308', countsToRaise: false },
+  obligation: { label: 'Obligation', price: 0, color: '#EF4444', countsToRaise: false },
+  sponsor_comp: { label: 'Sponsor comp', price: 0, color: '#06B6D4', countsToRaise: false },
+  blocked: { label: 'Blocked', price: 0, color: '#475569', countsToRaise: false },
+  unassigned: { label: 'Unassigned', price: 0, color: '#1E293B', countsToRaise: false },
+};
+
 export function BandsClient({
   bands,
-  protectedBlocks,
-  seats,
-  rows,
+  seats: initialSeats,
+  rows: initialRows,
   currentUser,
 }: BandsClientProps) {
-  // Navigation tabs: 'blueprint' | 'bands' | 'protected'
-  const [activeTab, setActiveTab] = useState<'blueprint' | 'bands' | 'protected'>('blueprint');
+  // Staged seats state
+  const [stagedSeats, setStagedSeats] = useState<SeatData[]>(initialSeats);
+  const [activeFloor, setActiveFloor] = useState<SeatSection>('Ground Floor');
 
-  // Edit band price state
-  const [editingPriceBand, setEditingPriceBand] = useState<Band | null>(null);
-  const [editPriceInput, setEditPriceInput] = useState<number>(0);
+  // Form controls for Assign Rows
+  const [assignFloor, setAssignFloor] = useState<SeatSection>('Ground Floor');
+  const [fromRow, setFromRow] = useState<string>('A');
+  const [toRow, setToRow] = useState<string>('C');
+  const [selectedCategory, setSelectedCategory] = useState<SeatCategory>('b5000');
 
-  // New protected block modal state
-  const [showBlockModal, setShowBlockModal] = useState(false);
-  const [blockLabel, setBlockLabel] = useState('');
-  const [blockCount, setBlockCount] = useState(10);
-  const [blockBandId, setBlockBandId] = useState<string>(bands[0]?.id || 'band_5000');
+  // Interactive seat naming modal
+  const [namingSeat, setNamingSeat] = useState<SeatData | null>(null);
+  const [guestNameInput, setGuestNameInput] = useState('');
 
-  // Releasing block modal state
-  const [releasingBlockId, setReleasingBlockId] = useState<string | null>(null);
-  const [targetBandId, setTargetBandId] = useState<string>(bands[0]?.id || '');
+  // Reassignment confirmation modal for rows with sales
+  const [pendingReassignment, setPendingReassignment] = useState<{
+    row: string;
+    section: SeatSection;
+    salesCount: number;
+    oldPrice: number;
+    newPrice: number;
+    newCategory: SeatCategory;
+    affectedSeatIds: string[];
+  } | null>(null);
 
-  // Bulk Tier Assigner state
-  const [showRowAssigner, setShowRowAssigner] = useState(false);
-  const [assignSection, setAssignSection] = useState<SeatSection>('Ground Floor');
-  const [assignFromRow, setAssignFromRow] = useState<string>('A');
-  const [assignToRow, setAssignToRow] = useState<string>('F');
-  const [assignTier, setAssignTier] = useState<number>(5000);
-  const [matrixSection, setMatrixSection] = useState<SeatSection>('Ground Floor');
-
+  // Review & Save dialog
+  const [showReviewModal, setShowReviewModal] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [lastSavedTime, setLastSavedTime] = useState<string | null>(null);
 
-  // Capacity calculations
-  const totalAllocated = bands.reduce((acc, b) => acc + (b.total_allocated || 0), 0);
-  const totalSold = bands.reduce((acc, b) => acc + (b.sold_count || 0), 0);
-  const totalRemaining = bands.reduce((acc, b) => acc + (b.remaining_count || 0), 0);
+  // Derive row order for each floor
+  const groundRowsList = useMemo(() => [
+    'Special A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N'
+  ], []);
 
-  const handleStartEditPrice = (band: Band) => {
-    setEditingPriceBand(band);
-    setEditPriceInput(band.price);
-  };
+  const balconyRowsList = useMemo(() => [
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O'
+  ], []);
 
-  const handleSaveBandPrice = async (e: React.FormEvent) => {
+  const currentFloorRows = assignFloor === 'Ground Floor' ? groundRowsList : balconyRowsList;
+
+  // Track if staged changes exist
+  const hasStagedChanges = useMemo(() => {
+    if (stagedSeats.length !== initialSeats.length) return true;
+    for (let i = 0; i < stagedSeats.length; i++) {
+      if (
+        stagedSeats[i].category !== initialSeats[i].category ||
+        stagedSeats[i].price !== initialSeats[i].price ||
+        stagedSeats[i].name !== initialSeats[i].name
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }, [stagedSeats, initialSeats]);
+
+  // Calculations for Summary Rail
+  const summary = useMemo(() => {
+    let groundMoney = 0;
+    let balconyMoney = 0;
+
+    const soldCounts: Record<string, number> = {
+      b5000: 0,
+      b3500: 0,
+      b2500: 0,
+      b1500: 0,
+      pp: 0,
+    };
+
+    const reservedCounts: Record<string, { count: number; named: number }> = {
+      vip: { count: 0, named: 0 },
+      obligation: { count: 0, named: 0 },
+      sponsor_comp: { count: 0, named: 0 },
+      blocked: { count: 0, named: 0 },
+    };
+
+    let unassignedCount = 0;
+    let sellableSeats = 0;
+    let totalHeldBack = 0;
+
+    for (const s of stagedSeats) {
+      const price = s.price || CATEGORY_META[s.category]?.price || 0;
+      const isNamed = !!(s.name || s.guest_name);
+
+      if (CATEGORY_META[s.category]?.countsToRaise) {
+        sellableSeats++;
+        if (s.section === 'Ground Floor') groundMoney += price;
+        else balconyMoney += price;
+
+        if (soldCounts[s.category] !== undefined) {
+          soldCounts[s.category]++;
+        }
+      } else if (reservedCounts[s.category]) {
+        totalHeldBack++;
+        reservedCounts[s.category].count++;
+        if (isNamed) reservedCounts[s.category].named++;
+      } else if (s.category === 'unassigned') {
+        unassignedCount++;
+      }
+    }
+
+    const totalPotentialRaise = 
+      soldCounts.b5000 * 5000 +
+      soldCounts.b3500 * 3500 +
+      soldCounts.b2500 * 2500 +
+      soldCounts.b1500 * 1500 +
+      soldCounts.pp * 1000;
+
+    return {
+      groundMoney,
+      balconyMoney,
+      soldCounts,
+      reservedCounts,
+      unassignedCount,
+      sellableSeats,
+      totalHeldBack,
+      totalPotentialRaise,
+    };
+  }, [stagedSeats]);
+
+  // Handle Apply to Rows
+  const handleApplyRows = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingPriceBand) return;
-    if (editPriceInput <= 0) {
-      setStatusMessage({ type: 'error', text: 'Price must be greater than 0.' });
+    const rowsList = assignFloor === 'Ground Floor' ? groundRowsList : balconyRowsList;
+    const fromIdx = rowsList.indexOf(fromRow);
+    const toIdx = rowsList.indexOf(toRow);
+
+    if (fromIdx === -1 || toIdx === -1) return;
+
+    const startIdx = Math.min(fromIdx, toIdx);
+    const endIdx = Math.max(fromIdx, toIdx);
+    const targetRows = rowsList.slice(startIdx, endIdx + 1);
+
+    const targetCategoryMeta = CATEGORY_META[selectedCategory];
+
+    // Check if any target row has sold seats
+    const rowsWithSales: string[] = [];
+    for (const rLabel of targetRows) {
+      const rowSeats = stagedSeats.filter((s) => s.section === assignFloor && s.row_label === rLabel);
+      const soldCount = rowSeats.filter((s) => s.sold || s.payment_status === 'received').length;
+      if (soldCount > 0) {
+        rowsWithSales.push(rLabel);
+      }
+    }
+
+    if (rowsWithSales.length > 0) {
+      // Prompt confirmation for the first row with sales
+      const targetRow = rowsWithSales[0];
+      const rowSeats = stagedSeats.filter((s) => s.section === assignFloor && s.row_label === targetRow);
+      const soldCount = rowSeats.filter((s) => s.sold || s.payment_status === 'received').length;
+      const oldPrice = rowSeats[0]?.price || 5000;
+
+      setPendingReassignment({
+        row: targetRow,
+        section: assignFloor,
+        salesCount: soldCount,
+        oldPrice,
+        newPrice: targetCategoryMeta.price,
+        newCategory: selectedCategory,
+        affectedSeatIds: rowSeats.filter((s) => !s.sold && s.payment_status !== 'received').map((s) => s.id),
+      });
       return;
     }
 
-    setIsLoading(true);
-    setStatusMessage(null);
+    // Apply immediately to all seats in range
+    setStagedSeats((prev) =>
+      prev.map((s) => {
+        if (s.section === assignFloor && targetRows.includes(s.row_label)) {
+          return {
+            ...s,
+            category: selectedCategory,
+            price: targetCategoryMeta.price,
+            tier: targetCategoryMeta.price,
+            counts_to_raise: targetCategoryMeta.countsToRaise,
+            obligation_type: selectedCategory === 'obligation' ? 'police' : (selectedCategory === 'vip' ? 'vip' : null),
+            is_blocked: selectedCategory === 'blocked',
+          };
+        }
+        return s;
+      })
+    );
 
-    const res = await updateBandPrice(editingPriceBand.id, editPriceInput);
-    setIsLoading(false);
+    setStatusMessage({
+      type: 'success',
+      text: `Staged: Rows ${fromRow} to ${toRow} in ${assignFloor} assigned as ${targetCategoryMeta.label}. Click "Review & Save" to commit.`,
+    });
+  };
 
-    if (res.success) {
-      const bandName = editingPriceBand.label.split('(')[0].trim();
-      setStatusMessage({ 
-        type: 'success', 
-        text: `Price for ${bandName} updated to ₹${editPriceInput.toLocaleString('en-IN')}. Row and seat tiers updated!` 
-      });
-      setEditingPriceBand(null);
-    } else {
-      setStatusMessage({ type: 'error', text: res.error || 'Failed to update band price.' });
+  // Confirm row reassignment with sales
+  const handleConfirmReassignment = () => {
+    if (!pendingReassignment) return;
+    const { newCategory, newPrice, affectedSeatIds } = pendingReassignment;
+    const targetCategoryMeta = CATEGORY_META[newCategory];
+
+    setStagedSeats((prev) =>
+      prev.map((s) => {
+        if (affectedSeatIds.includes(s.id)) {
+          return {
+            ...s,
+            category: newCategory,
+            price: newPrice,
+            tier: newPrice,
+            counts_to_raise: targetCategoryMeta.countsToRaise,
+            obligation_type: newCategory === 'obligation' ? 'police' : null,
+            is_blocked: newCategory === 'blocked',
+          };
+        }
+        return s;
+      })
+    );
+
+    setStatusMessage({
+      type: 'success',
+      text: `Row ${pendingReassignment.row} unsold seats updated to ${targetCategoryMeta.label}. Sold seats retain ₹${pendingReassignment.oldPrice.toLocaleString('en-IN')}.`,
+    });
+    setPendingReassignment(null);
+  };
+
+  // Seat Click Handler
+  const handleSeatClick = (seat: SeatData) => {
+    if (['vip', 'obligation', 'sponsor_comp'].includes(seat.category)) {
+      setNamingSeat(seat);
+      setGuestNameInput(seat.name || seat.guest_name || '');
     }
   };
 
-  const handleCreateBlock = async (e: React.FormEvent) => {
+  // Save named guest for seat
+  const handleSaveSeatName = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
-    setStatusMessage(null);
+    if (!namingSeat) return;
 
-    const res = await createProtectedBlock(blockLabel, blockCount, blockBandId);
-    setIsLoading(false);
+    setStagedSeats((prev) =>
+      prev.map((s) => (s.id === namingSeat.id ? { ...s, name: guestNameInput.trim() || null, guest_name: guestNameInput.trim() || null } : s))
+    );
 
-    if (res.success) {
-      const bandName = bands.find(b => b.id === blockBandId)?.label || blockBandId;
-      setStatusMessage({ 
-        type: 'success', 
-        text: `Protected block "${blockLabel}" (${blockCount} seats) reserved from ${bandName}.` 
-      });
-      setBlockLabel('');
-      setBlockCount(10);
-      setShowBlockModal(false);
-    } else {
-      setStatusMessage({ type: 'error', text: res.error || 'Failed to create block.' });
-    }
+    await updateSeatName(namingSeat.id, guestNameInput.trim());
+    setNamingSeat(null);
   };
 
-  const handleReleaseBlock = async (blockId: string) => {
-    if (!targetBandId) return;
+  // Commit Layout Plan
+  const handleCommitPlan = async () => {
     setIsLoading(true);
     setStatusMessage(null);
 
-    const res = await releaseProtectedBlock(blockId, targetBandId);
+    const updates = stagedSeats.map((s) => ({
+      id: s.id,
+      category: s.category,
+      price: s.price || 0,
+      counts_to_raise: !!s.counts_to_raise,
+      obligation_type: s.obligation_type || null,
+      name: s.name || null,
+    }));
+
+    const res = await saveLayoutPlan(updates);
     setIsLoading(false);
 
     if (res.success) {
-      setStatusMessage({ type: 'success', text: 'Protected block released into sellable inventory!' });
-      setReleasingBlockId(null);
-    } else {
-      setStatusMessage({ type: 'error', text: res.error || 'Failed to release block.' });
-    }
-  };
-
-  const handleDeleteBlock = async (blockId: string) => {
-    if (!confirm('Are you sure you want to remove this protected block? Any unreleased seats will be restored to their original price band.')) {
-      return;
-    }
-
-    setIsLoading(true);
-    setStatusMessage(null);
-
-    const res = await deleteProtectedBlock(blockId);
-    setIsLoading(false);
-
-    if (res.success) {
-      setStatusMessage({ type: 'success', text: 'Protected block deleted and quota restored to price band.' });
-    } else {
-      setStatusMessage({ type: 'error', text: res.error || 'Failed to delete block.' });
-    }
-  };
-
-  const handleApplyRowTier = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
-    setStatusMessage(null);
-
-    const res = await bulkSetRowTier(assignSection, assignFromRow, assignToRow, assignTier);
-    setIsLoading(false);
-
-    if (res.success) {
+      const timeStr = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      setLastSavedTime(timeStr);
       setStatusMessage({
         type: 'success',
-        text: `Successfully updated ${res.count} row(s) in ${assignSection} (${assignFromRow} to ${assignToRow}) to ₹${assignTier.toLocaleString('en-IN')}.`,
+        text: `Layout saved · ${timeStr}. Real-time quotas and capacities updated.`,
       });
-      setShowRowAssigner(false);
+      setShowReviewModal(false);
     } else {
-      setStatusMessage({ type: 'error', text: res.error || 'Failed to update row tiers.' });
+      setStatusMessage({ type: 'error', text: res.error || 'Failed to save layout plan.' });
     }
   };
 
-  const handleAssignRowToBand = async (rowId: string, tier: number) => {
-    setIsLoading(true);
-    setStatusMessage(null);
-    const res = await assignRowToBand(rowId, tier);
-    setIsLoading(false);
-    if (res.success) {
-      setStatusMessage({ 
-        type: 'success', 
-        text: `Row assigned to ₹${tier.toLocaleString('en-IN')}. Band quotas updated!` 
-      });
-    } else {
-      setStatusMessage({ type: 'error', text: res.error || 'Failed to assign row.' });
+  // Discard staged changes
+  const handleDiscard = () => {
+    if (confirm('Discard all unsaved staged changes and revert to current database layout?')) {
+      setStagedSeats(initialSeats);
+      setStatusMessage(null);
     }
   };
-
-  const handleToggleRowBlock = async (section: SeatSection, rowLabel: string, currentlyBlocked: boolean) => {
-    setIsLoading(true);
-    setStatusMessage(null);
-    const res = currentlyBlocked 
-      ? await unblockRow(section, rowLabel)
-      : await blockRow(section, rowLabel, 'VIP / Reserved');
-    setIsLoading(false);
-    if (res.success) {
-      setStatusMessage({ 
-        type: 'success', 
-        text: currentlyBlocked 
-          ? `Row ${rowLabel} (${section}) unblocked and released to sellable inventory.` 
-          : `Row ${rowLabel} (${section}) blocked as Reserved.` 
-      });
-    } else {
-      setStatusMessage({ type: 'error', text: res.error || 'Failed to toggle row block.' });
-    }
-  };
-
-  const handleRecalibrateCapacity = async () => {
-    if (!confirm('Recalibrate band allocations to exact 1,398 venue capacity?')) {
-      return;
-    }
-
-    setIsLoading(true);
-    setStatusMessage(null);
-
-    const res = await recalibrateBandsToVenueCapacity();
-    setIsLoading(false);
-
-    if (res.success) {
-      setStatusMessage({
-        type: 'success',
-        text: 'Band capacities recalibrated to exact 1,398 sellable seats.',
-      });
-    } else {
-      setStatusMessage({ type: 'error', text: res.error || 'Failed to recalibrate.' });
-    }
-  };
-
-  const rowLetters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N'];
 
   return (
     <div className="space-y-6">
+      {/* Header Banner */}
+      <div>
+        <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
+          Bands & Protected Seats
+        </h1>
+        <p className="text-xs sm:text-sm text-slate-400 mt-1">
+          Plan the hall — assign each row to a price band or reserve it.{' '}
+          <strong className="text-white">
+            The Music Academy, Madras — 648 Ground Floor + 750 Balcony + 50 VIP = 1,448 total (1,398 sellable).
+          </strong>
+        </p>
+      </div>
+
       {statusMessage && (
         <Alert className={statusMessage.type === 'success' ? 'bg-emerald-950/70 border-emerald-800 text-emerald-100' : 'bg-red-950/70 border-red-800 text-red-100'}>
           {statusMessage.type === 'success' ? <CheckCircle2 className="h-5 w-5 text-emerald-400" /> : <AlertCircle className="h-5 w-5 text-red-400" />}
-          <AlertTitle className="text-base font-bold">{statusMessage.type === 'success' ? 'Success' : 'Error'}</AlertTitle>
-          <AlertDescription className="text-sm">{statusMessage.text}</AlertDescription>
+          <AlertTitle className="text-sm font-bold">{statusMessage.type === 'success' ? 'Success' : 'Error'}</AlertTitle>
+          <AlertDescription className="text-xs">{statusMessage.text}</AlertDescription>
         </Alert>
       )}
 
       {/* ─────────────────────────────────────────────────────────────
-          1. CLEAN CAPACITY BANNER (Decluttered, Simple, Direct)
+          1. TOP ACTION BOX: ASSIGN ROWS (Exact replica of Image 1)
       ───────────────────────────────────────────────────────────── */}
-      <div className="p-5 bg-gradient-to-r from-[#131F2E] via-[#162538] to-[#131F2E] border border-slate-800 rounded-2xl shadow-lg space-y-4">
-        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                Venue Seating Blueprint
-              </span>
-              <span className="text-xs text-slate-400">The Music Academy, Madras</span>
-            </div>
-            <h2 className="text-xl sm:text-2xl font-black text-white mt-1">
-              Bands & Protected Quotas
-            </h2>
-            <p className="text-xs sm:text-sm text-slate-300 mt-0.5">
-              Sellable Capacity: <strong className="text-white font-mono">1,398 Seats</strong> (GF 648 + Balcony 750) + <strong className="text-purple-300 font-mono">50 VIP Box Seats</strong>.
-            </p>
+      <form onSubmit={handleApplyRows} className="p-5 bg-[#131F2E] border border-slate-800 rounded-2xl space-y-3 shadow-xl">
+        <div className="flex items-center gap-2 text-amber-400 text-sm font-bold">
+          <ArrowUpDown className="w-4 h-4" />
+          Assign rows
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end">
+          <div className="space-y-1">
+            <Label className="text-xs text-slate-400 font-bold">Floor</Label>
+            <select
+              value={assignFloor}
+              onChange={(e) => {
+                const floor = e.target.value as SeatSection;
+                setAssignFloor(floor);
+                setFromRow(floor === 'Ground Floor' ? 'A' : 'A');
+                setToRow(floor === 'Ground Floor' ? 'C' : 'C');
+              }}
+              className="w-full h-10 bg-[#1A2839] border border-slate-700 text-white rounded-xl px-3 text-xs font-bold"
+            >
+              <option value="Ground Floor">Ground Floor</option>
+              <option value="Balcony">Balcony</option>
+            </select>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
-            {totalAllocated !== 1398 && (
-              <Button
-                onClick={handleRecalibrateCapacity}
-                disabled={isLoading}
-                className="bg-amber-500 hover:bg-[#D97706] text-slate-950 font-bold rounded-xl h-9 px-3 text-xs flex items-center gap-1.5 shadow-md"
+          <div className="space-y-1">
+            <Label className="text-xs text-slate-400 font-bold">From row</Label>
+            <select
+              value={fromRow}
+              onChange={(e) => setFromRow(e.target.value)}
+              className="w-full h-10 bg-[#1A2839] border border-slate-700 text-white rounded-xl px-3 text-xs font-bold"
+            >
+              {currentFloorRows.map((r) => (
+                <option key={r} value={r}>Row {r}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs text-slate-400 font-bold">To row</Label>
+            <select
+              value={toRow}
+              onChange={(e) => setToRow(e.target.value)}
+              className="w-full h-10 bg-[#1A2839] border border-slate-700 text-white rounded-xl px-3 text-xs font-bold"
+            >
+              {currentFloorRows.map((r) => (
+                <option key={r} value={r}>Row {r}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs text-slate-400 font-bold">Assign as</Label>
+            <select
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value as SeatCategory)}
+              className="w-full h-10 bg-[#1A2839] border border-slate-700 text-white rounded-xl px-3 text-xs font-bold"
+            >
+              <option value="b5000">₹5,000 — Band A</option>
+              <option value="b3500">₹3,500 — Band B</option>
+              <option value="b2500">₹2,500 — Band C</option>
+              <option value="b1500">₹1,500 — Band D</option>
+              <option value="pp">₹1,000 — PP</option>
+              <option value="vip">VIP (SPL Reserved)</option>
+              <option value="obligation">Obligation (Police/Corp)</option>
+              <option value="sponsor_comp">Sponsor comp</option>
+              <option value="blocked">Blocked</option>
+              <option value="unassigned">Unassigned</option>
+            </select>
+          </div>
+
+          <div>
+            <Button
+              type="submit"
+              className="w-full h-10 bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-black rounded-xl text-xs shadow-md"
+            >
+              Apply to rows
+            </Button>
+          </div>
+        </div>
+
+        <p className="text-[11px] text-slate-500">
+          Reassigning a row that already has sales opens a confirmation: sold seats keep their original price, only unsold seats take the new band. VIP Box is fixed.
+        </p>
+      </form>
+
+      {/* ─────────────────────────────────────────────────────────────
+          2. MAIN PLANNING GRID (Left: Blueprint Layout, Right: Summary Rail)
+      ───────────────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* Left Section (8 cols): Interactive Seating Map */}
+        <div className="lg:col-span-8 bg-[#131F2E] border border-slate-800 rounded-3xl p-5 space-y-4 shadow-xl">
+          {/* Floor tabs */}
+          <div className="flex justify-between items-center pb-2 border-b border-slate-800">
+            <div className="inline-flex p-1 bg-[#0E1722] rounded-xl border border-slate-800">
+              <button
+                type="button"
+                onClick={() => setActiveFloor('Ground Floor')}
+                className={`px-4 py-1.5 rounded-lg text-xs font-black transition-all ${
+                  activeFloor === 'Ground Floor'
+                    ? 'bg-[#E8913A] text-slate-950 shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
               >
-                <RefreshCw className="w-3.5 h-3.5" />
-                Align to 1,398
+                Ground Floor <span className="text-[10px] font-normal opacity-80">648 + 50 VIP</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveFloor('Balcony')}
+                className={`px-4 py-1.5 rounded-lg text-xs font-black transition-all ${
+                  activeFloor === 'Balcony'
+                    ? 'bg-[#E8913A] text-slate-950 shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Balcony <span className="text-[10px] font-normal opacity-80">750</span>
+              </button>
+            </div>
+
+            <span className="text-xs text-slate-400 font-mono">
+              {activeFloor === 'Ground Floor' ? 'Rows A–N · nearest stage first' : 'Rows A–O · nearest stage first'}
+            </span>
+          </div>
+
+          {/* Stage Area */}
+          <div className="w-full py-2 bg-[#0E1722] border border-slate-800 text-center rounded-xl text-slate-500 font-black tracking-widest text-xs uppercase">
+            STAGE & PERFORMANCE AREA
+          </div>
+
+          {/* Layout Map: Ground Floor vs Balcony */}
+          <div className="flex gap-4 items-start overflow-x-auto pb-4">
+            {/* SPL VIP Box (Visible on Ground Floor) */}
+            {activeFloor === 'Ground Floor' && (
+              <div className="w-36 p-3 bg-[#0E1722] border-2 border-amber-500/40 rounded-2xl space-y-2 shrink-0">
+                <div className="text-center">
+                  <div className="text-xs font-black text-amber-400 flex items-center justify-center gap-1">
+                    <Crown className="w-3 h-3 text-amber-400" /> SPL VIP
+                  </div>
+                  <div className="text-[10px] text-slate-400">50 · reserved</div>
+                </div>
+
+                <div className="grid grid-cols-5 gap-1 pt-1">
+                  {stagedSeats
+                    .filter((s) => s.row_label === 'SPL VIP')
+                    .sort((a, b) => a.seat_no - b.seat_no)
+                    .map((s) => {
+                      const isNamed = !!(s.name || s.guest_name);
+                      return (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onClick={() => handleSeatClick(s)}
+                          title={`${s.id}: ${s.name || 'VIP Chief Guest'}`}
+                          className={`w-5 h-5 rounded text-[9px] font-black flex items-center justify-center transition-all ${
+                            isNamed ? 'bg-amber-400 text-slate-950 ring-1 ring-white' : 'bg-amber-500/30 text-amber-300 hover:bg-amber-500 hover:text-slate-950'
+                          }`}
+                        >
+                          {s.seat_no}
+                        </button>
+                      );
+                    })}
+                </div>
+
+                <div className="text-[9px] text-slate-500 text-center pt-1 border-t border-slate-800">
+                  ← VIP ENTRANCE
+                </div>
+              </div>
+            )}
+
+            {/* Rows List */}
+            <div className="flex-1 space-y-2 min-w-[500px]">
+              {(activeFloor === 'Ground Floor' ? groundRowsList : balconyRowsList).map((rLabel) => {
+                const rowSeats = stagedSeats.filter((s) => s.section === activeFloor && s.row_label === rLabel);
+                const isProvisional = rowSeats.some((s) => s.provisional);
+                const firstSeat = rowSeats[0];
+                const categoryMeta = firstSeat ? CATEGORY_META[firstSeat.category] : CATEGORY_META.unassigned;
+
+                // Split row into 3 blocks (left, center, right)
+                const total = rowSeats.length;
+                const leftCount = Math.floor(total * 0.25);
+                const centerCount = Math.floor(total * 0.5);
+                const leftBlock = rowSeats.slice(0, leftCount);
+                const centerBlock = rowSeats.slice(leftCount, leftCount + centerCount);
+                const rightBlock = rowSeats.slice(leftCount + centerCount);
+
+                return (
+                  <div key={rLabel} className="flex items-center gap-3">
+                    {/* Row Label */}
+                    <div className="w-16 text-xs font-mono font-black text-slate-300 flex items-center gap-1 shrink-0">
+                      <span>{rLabel}</span>
+                      {isProvisional && (
+                        <span className="text-[8px] px-1 bg-amber-500/20 text-amber-400 rounded border border-amber-500/30">
+                          Prov
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Physical Seats in 3 blocks */}
+                    <div className="flex-1 flex items-center gap-2">
+                      <div className="flex items-center gap-0.5">
+                        {leftBlock.map((s) => (
+                          <button
+                            key={s.id}
+                            type="button"
+                            onClick={() => handleSeatClick(s)}
+                            title={`${s.id}: ${CATEGORY_META[s.category]?.label} ${s.name ? `(${s.name})` : ''}`}
+                            className="w-2.5 h-3.5 rounded-xs transition-transform hover:scale-125"
+                            style={{ backgroundColor: CATEGORY_META[s.category]?.color || '#1E293B' }}
+                          />
+                        ))}
+                      </div>
+
+                      <div className="flex items-center gap-0.5">
+                        {centerBlock.map((s) => (
+                          <button
+                            key={s.id}
+                            type="button"
+                            onClick={() => handleSeatClick(s)}
+                            title={`${s.id}: ${CATEGORY_META[s.category]?.label} ${s.name ? `(${s.name})` : ''}`}
+                            className="w-2.5 h-3.5 rounded-xs transition-transform hover:scale-125"
+                            style={{ backgroundColor: CATEGORY_META[s.category]?.color || '#1E293B' }}
+                          />
+                        ))}
+                      </div>
+
+                      <div className="flex items-center gap-0.5">
+                        {rightBlock.map((s) => (
+                          <button
+                            key={s.id}
+                            type="button"
+                            onClick={() => handleSeatClick(s)}
+                            title={`${s.id}: ${CATEGORY_META[s.category]?.label} ${s.name ? `(${s.name})` : ''}`}
+                            className="w-2.5 h-3.5 rounded-xs transition-transform hover:scale-125"
+                            style={{ backgroundColor: CATEGORY_META[s.category]?.color || '#1E293B' }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Row Price / Category label on right */}
+                    <div className="w-24 text-right text-xs font-mono font-bold shrink-0" style={{ color: categoryMeta.color }}>
+                      {categoryMeta.label.split('—')[0].trim()}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Legend */}
+          <div className="pt-3 border-t border-slate-800 space-y-2">
+            <div className="flex flex-wrap items-center gap-3 text-[11px] font-bold">
+              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#F59E0B]" /> ₹5,000</span>
+              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#8B5CF6]" /> ₹3,500</span>
+              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#0D9488]" /> ₹2,500</span>
+              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#64748B]" /> ₹1,500</span>
+              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#0284C7]" /> ₹1,000 PP</span>
+              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#EAB308]" /> VIP</span>
+              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#EF4444]" /> Obligation</span>
+              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#06B6D4]" /> Sponsor comp</span>
+              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#475569]" /> Blocked</span>
+              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#1E293B]" /> Unassigned</span>
+            </div>
+            <p className="text-[10px] text-slate-500">
+              Dashed = reserved (VIP / obligation / sponsor comp / blocked). Priced bands + PP are sold. Click a VIP, obligation or sponsor seat to name who sits there (optional).
+            </p>
+          </div>
+        </div>
+
+        {/* Right Section (4 cols): Planning Summary Rail (Exact replica of Image 1) */}
+        <div className="lg:col-span-4 bg-[#131F2E] border border-slate-800 rounded-3xl p-5 space-y-5 shadow-xl">
+          <div>
+            <h3 className="text-base font-bold text-white">Planning summary</h3>
+            <p className="text-xs text-slate-400">Both floors combined</p>
+          </div>
+
+          {/* Ground & Balcony Subtotal Cards */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="p-3 bg-[#0E1722] rounded-2xl border border-slate-800 text-center">
+              <p className="text-[10px] uppercase font-bold text-slate-400">Ground</p>
+              <p className="text-lg font-black text-white font-mono mt-0.5">
+                ₹{(summary.groundMoney / 100000).toFixed(1)}L
+              </p>
+            </div>
+            <div className="p-3 bg-[#0E1722] rounded-2xl border border-slate-800 text-center">
+              <p className="text-[10px] uppercase font-bold text-slate-400">Balcony</p>
+              <p className="text-lg font-black text-white font-mono mt-0.5">
+                ₹{(summary.balconyMoney / 100000).toFixed(2)}L
+              </p>
+            </div>
+          </div>
+
+          {/* Sold — Counts Towards Raise */}
+          <div className="space-y-2 pt-2 border-t border-slate-800">
+            <p className="text-[11px] font-black uppercase tracking-wider text-slate-400">
+              SOLD — COUNTS TOWARDS RAISE
+            </p>
+
+            <div className="space-y-2 text-xs">
+              <div className="flex justify-between items-center">
+                <span className="flex items-center gap-1.5 font-bold text-white">
+                  <span className="w-2.5 h-2.5 rounded-xs bg-[#F59E0B]" /> ₹5,000
+                </span>
+                <div className="text-right">
+                  <span className="font-mono font-bold text-white">{summary.soldCounts.b5000}</span>
+                  <p className="text-[10px] text-slate-500">= ₹{(summary.soldCounts.b5000 * 5000).toLocaleString('en-IN')} if sold</p>
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center">
+                <span className="flex items-center gap-1.5 font-bold text-white">
+                  <span className="w-2.5 h-2.5 rounded-xs bg-[#8B5CF6]" /> ₹3,500
+                </span>
+                <div className="text-right">
+                  <span className="font-mono font-bold text-white">{summary.soldCounts.b3500}</span>
+                  <p className="text-[10px] text-slate-500">= ₹{(summary.soldCounts.b3500 * 3500).toLocaleString('en-IN')} if sold</p>
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center">
+                <span className="flex items-center gap-1.5 font-bold text-white">
+                  <span className="w-2.5 h-2.5 rounded-xs bg-[#0D9488]" /> ₹2,500
+                </span>
+                <div className="text-right">
+                  <span className="font-mono font-bold text-white">{summary.soldCounts.b2500}</span>
+                  <p className="text-[10px] text-slate-500">= ₹{(summary.soldCounts.b2500 * 2500).toLocaleString('en-IN')} if sold</p>
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center">
+                <span className="flex items-center gap-1.5 font-bold text-white">
+                  <span className="w-2.5 h-2.5 rounded-xs bg-[#64748B]" /> ₹1,500
+                </span>
+                <div className="text-right">
+                  <span className="font-mono font-bold text-white">{summary.soldCounts.b1500}</span>
+                  <p className="text-[10px] text-slate-500">= ₹{(summary.soldCounts.b1500 * 1500).toLocaleString('en-IN')} if sold</p>
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center">
+                <span className="flex items-center gap-1.5 font-bold text-white">
+                  <span className="w-2.5 h-2.5 rounded-xs bg-[#0284C7]" /> ₹1,000 PP
+                </span>
+                <div className="text-right">
+                  <span className="font-mono font-bold text-white">{summary.soldCounts.pp}</span>
+                  <p className="text-[10px] text-slate-500">= ₹{(summary.soldCounts.pp * 1000).toLocaleString('en-IN')} if sold</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Reserved — Not for Sale */}
+          <div className="space-y-2 pt-2 border-t border-slate-800">
+            <p className="text-[11px] font-black uppercase tracking-wider text-slate-400">
+              RESERVED — NOT FOR SALE
+            </p>
+
+            <div className="space-y-2 text-xs">
+              <div className="flex justify-between items-center">
+                <span className="flex items-center gap-1.5 font-bold text-white">
+                  <span className="w-2.5 h-2.5 rounded-xs bg-[#EAB308]" /> VIP
+                </span>
+                <span className="font-mono text-slate-300">
+                  {summary.reservedCounts.vip.count} · {summary.reservedCounts.vip.named} named
+                </span>
+              </div>
+
+              <div className="flex justify-between items-center">
+                <span className="flex items-center gap-1.5 font-bold text-white">
+                  <span className="w-2.5 h-2.5 rounded-xs bg-[#EF4444]" /> Obligation
+                </span>
+                <span className="font-mono text-slate-300">
+                  {summary.reservedCounts.obligation.count} · {summary.reservedCounts.obligation.named} named
+                </span>
+              </div>
+
+              <div className="flex justify-between items-center">
+                <span className="flex items-center gap-1.5 font-bold text-white">
+                  <span className="w-2.5 h-2.5 rounded-xs bg-[#06B6D4]" /> Sponsor comp
+                </span>
+                <span className="font-mono text-slate-300">
+                  {summary.reservedCounts.sponsor_comp.count} · {summary.reservedCounts.sponsor_comp.named} named
+                </span>
+              </div>
+
+              <div className="flex justify-between items-center">
+                <span className="flex items-center gap-1.5 font-bold text-white">
+                  <span className="w-2.5 h-2.5 rounded-xs bg-[#475569]" /> Blocked
+                </span>
+                <span className="font-mono text-slate-300">
+                  {summary.reservedCounts.blocked.count} seats
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Totals Box */}
+          <div className="p-3.5 bg-[#0E1722] rounded-2xl border border-slate-800 space-y-1.5 text-xs">
+            <div className="flex justify-between">
+              <span className="text-slate-400">Sellable Seats:</span>
+              <span className="font-mono font-bold text-white">{summary.sellableSeats}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-400">Potential Raise:</span>
+              <span className="font-mono font-black text-amber-400">₹{summary.totalPotentialRaise.toLocaleString('en-IN')}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-400">Held Back (Reserved):</span>
+              <span className="font-mono font-bold text-purple-300">{summary.totalHeldBack}</span>
+            </div>
+            {summary.unassignedCount > 0 && (
+              <div className="flex justify-between text-rose-400">
+                <span>Unassigned:</span>
+                <span className="font-mono font-bold">{summary.unassignedCount}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Save & Discard Actions */}
+          <div className="space-y-2 pt-2 border-t border-slate-800">
+            <Button
+              type="button"
+              disabled={isLoading || !hasStagedChanges}
+              onClick={() => setShowReviewModal(true)}
+              className="w-full h-11 bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-black rounded-xl text-sm shadow-md"
+            >
+              Review & Save Layout Plan
+            </Button>
+
+            {hasStagedChanges && (
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={handleDiscard}
+                className="w-full h-9 text-slate-400 hover:text-white text-xs"
+              >
+                <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Discard Staged Changes
               </Button>
             )}
 
-            <Button
-              onClick={() => setShowRowAssigner(!showRowAssigner)}
-              className="bg-[#1A2839] hover:bg-[#223345] border border-slate-700 text-slate-200 font-bold rounded-xl h-9 px-3 text-xs flex items-center gap-1.5"
-            >
-              <Sliders className="w-3.5 h-3.5 text-amber-400" />
-              Assign Row Tiers
-            </Button>
-
-            <Button
-              onClick={() => setShowBlockModal(true)}
-              className="bg-[#1A2839] hover:bg-[#223345] border border-slate-700 text-white font-bold rounded-xl h-9 px-3 text-xs flex items-center gap-1.5"
-            >
-              <Plus className="w-3.5 h-3.5 text-[#E8913A]" />
-              Earmark Block
-            </Button>
-
-            <a
-              href="/api/admin/backup"
-              download
-              className="inline-flex items-center gap-1.5 bg-[#1A2839] hover:bg-[#223345] border border-slate-700 text-slate-200 font-bold rounded-xl h-9 px-3 text-xs"
-              title="Download full JSON snapshot of database tables"
-            >
-              <Download className="w-3.5 h-3.5 text-emerald-400" />
-              Backup Data
-            </a>
-          </div>
-        </div>
-
-        {/* Live Metrics Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-slate-800">
-          <div className="p-3 bg-[#0E1722] rounded-xl border border-slate-800">
-            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Sellable Capacity</p>
-            <p className="text-xl font-black text-white mt-0.5 font-mono">1,398</p>
-          </div>
-
-          <div className="p-3 bg-[#0E1722] rounded-xl border border-purple-900/40">
-            <p className="text-[11px] font-bold text-purple-300 uppercase tracking-wider flex items-center gap-1">
-              <Crown className="w-3 h-3 text-purple-400" /> VIP Box (Fixed)
-            </p>
-            <p className="text-xl font-black text-purple-300 mt-0.5 font-mono">50</p>
-          </div>
-
-          <div className="p-3 bg-[#0E1722] rounded-xl border border-slate-800">
-            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Band Quotas</p>
-            <p className={`text-xl font-black mt-0.5 font-mono ${totalAllocated === 1398 ? 'text-emerald-400' : 'text-amber-400'}`}>
-              {totalAllocated} <span className="text-xs font-normal text-slate-400">/ 1,398</span>
-            </p>
-          </div>
-
-          <div className="p-3 bg-[#0E1722] rounded-xl border border-slate-800">
-            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Passes Sold</p>
-            <p className="text-xl font-black text-[#E8913A] mt-0.5 font-mono">
-              {totalSold} <span className="text-xs font-normal text-slate-400">({totalRemaining} Open)</span>
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* ─────────────────────────────────────────────────────────────
-          2. COLLAPSIBLE FORM: BULK ASSIGN ROW TIERS
-      ───────────────────────────────────────────────────────────── */}
-      {showRowAssigner && (
-        <form onSubmit={handleApplyRowTier} className="p-5 bg-[#131F2E] border border-amber-500/40 rounded-2xl space-y-4 shadow-xl">
-          <div className="flex justify-between items-center pb-2 border-b border-slate-800">
-            <div>
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Sliders className="w-4 h-4 text-[#E8913A]" /> Assign Pricing Tier to Row Range
-              </h3>
-              <p className="text-xs text-slate-400">
-                Bulk reassign price tiers across a range of rows. Updates blueprint map and band quotas live.
+            {lastSavedTime && (
+              <p className="text-[11px] text-emerald-400 text-center font-mono">
+                Layout saved · {lastSavedTime}
               </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowRowAssigner(false)}
-              className="text-slate-400 hover:text-white text-sm"
-            >
-              ✕
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-            <div className="space-y-1">
-              <Label className="text-xs font-bold text-slate-300">Section</Label>
-              <select
-                value={assignSection}
-                onChange={(e) => setAssignSection(e.target.value as SeatSection)}
-                className="w-full h-9 bg-[#1A2839] border border-slate-700 text-white rounded-xl px-3 text-xs font-bold"
-              >
-                <option value="Ground Floor">Ground Floor (648 Seats)</option>
-                <option value="Balcony">Balcony (750 Seats)</option>
-              </select>
-            </div>
-
-            <div className="space-y-1">
-              <Label className="text-xs font-bold text-slate-300">From Row</Label>
-              <select
-                value={assignFromRow}
-                onChange={(e) => setAssignFromRow(e.target.value)}
-                className="w-full h-9 bg-[#1A2839] border border-slate-700 text-white rounded-xl px-3 text-xs font-mono font-bold"
-              >
-                {rowLetters.map((r) => (
-                  <option key={r} value={r}>Row {r}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="space-y-1">
-              <Label className="text-xs font-bold text-slate-300">To Row</Label>
-              <select
-                value={assignToRow}
-                onChange={(e) => setAssignToRow(e.target.value)}
-                className="w-full h-9 bg-[#1A2839] border border-slate-700 text-white rounded-xl px-3 text-xs font-mono font-bold"
-              >
-                {rowLetters.map((r) => (
-                  <option key={r} value={r}>Row {r}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="space-y-1">
-              <Label className="text-xs font-bold text-slate-300">Price Tier</Label>
-              <select
-                value={assignTier}
-                onChange={(e) => setAssignTier(Number(e.target.value))}
-                className="w-full h-9 bg-[#1A2839] border border-slate-700 text-white rounded-xl px-3 text-xs font-bold"
-              >
-                {bands.map((b) => (
-                  <option key={b.id} value={b.price}>
-                    ₹{b.price.toLocaleString('en-IN')} ({b.label})
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setShowRowAssigner(false)}
-              className="bg-[#1A2839] border-slate-700 text-white rounded-xl text-xs h-8"
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              disabled={isLoading}
-              className="bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-bold rounded-xl text-xs h-8"
-            >
-              {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
-              Apply Tier
-            </Button>
-          </div>
-        </form>
-      )}
-
-      {/* ─────────────────────────────────────────────────────────────
-          3. NAVIGATION TABS (Simple & Accessible)
-      ───────────────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
-        <button
-          type="button"
-          onClick={() => setActiveTab('blueprint')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-xs sm:text-sm transition-all ${
-            activeTab === 'blueprint'
-              ? 'bg-[#E8913A] text-slate-950 shadow-md'
-              : 'bg-[#131F2E] text-slate-400 hover:text-white border border-slate-800'
-          }`}
-        >
-          <MapPin className="w-4 h-4" />
-          Blueprint Map
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('bands')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-xs sm:text-sm transition-all ${
-            activeTab === 'bands'
-              ? 'bg-[#E8913A] text-slate-950 shadow-md'
-              : 'bg-[#131F2E] text-slate-400 hover:text-white border border-slate-800'
-          }`}
-        >
-          <Layers className="w-4 h-4" />
-          Price Bands ({bands.length})
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('protected')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-xs sm:text-sm transition-all ${
-            activeTab === 'protected'
-              ? 'bg-[#E8913A] text-slate-950 shadow-md'
-              : 'bg-[#131F2E] text-slate-400 hover:text-white border border-slate-800'
-          }`}
-        >
-          <Shield className="w-4 h-4" />
-          Protected Blocks ({protectedBlocks.length})
-        </button>
-      </div>
-
-      {/* ─────────────────────────────────────────────────────────────
-          4. TAB 1: SEATING BLUEPRINT MAP
-      ───────────────────────────────────────────────────────────── */}
-      {activeTab === 'blueprint' && (
-        <div className="space-y-4">
-          <SeatMap 
-            seats={seats} 
-            bands={bands}
-            rows={rows} 
-            enableSeatBlocking={true}
-            onBlockSeats={blockExactSeats}
-            onUnblockSeats={unblockExactSeats}
-            onBlockRow={blockRow}
-            onUnblockRow={unblockRow}
-          />
-        </div>
-      )}
-
-      {/* ─────────────────────────────────────────────────────────────
-          5. TAB 2: PRICE BANDS INVENTORY (Editable Prices & Matrix)
-      ───────────────────────────────────────────────────────────── */}
-      {activeTab === 'bands' && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {bands.map((b) => {
-              return (
-                <Card key={b.id} className="bg-[#131F2E] border border-slate-800 rounded-2xl overflow-hidden shadow-md hover:border-slate-700 transition-colors">
-                  <CardContent className="p-4 space-y-3">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="text-base font-bold text-white">{b.label.split('(')[0].trim()}</h3>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-xl font-black text-[#E8913A] font-mono">
-                            ₹{b.price.toLocaleString('en-IN')}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => handleStartEditPrice(b)}
-                            className="p-1 rounded-md bg-slate-800/80 hover:bg-amber-500/20 text-slate-400 hover:text-amber-300 transition-colors"
-                            title="Edit band price"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                      <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-800 text-slate-300 font-mono">
-                        {b.total_allocated} seats
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-1.5 pt-2 border-t border-slate-800/80 text-center text-xs">
-                      <div className="p-1.5 bg-slate-900/50 rounded-lg">
-                        <div className="text-[10px] text-slate-400 uppercase">Allocated</div>
-                        <div className="font-bold text-white font-mono mt-0.5">{b.total_allocated}</div>
-                      </div>
-                      <div className="p-1.5 bg-slate-900/50 rounded-lg">
-                        <div className="text-[10px] text-slate-400 uppercase">Sold</div>
-                        <div className="font-bold text-[#E8913A] font-mono mt-0.5">{b.sold_count}</div>
-                      </div>
-                      <div className="p-1.5 bg-slate-900/50 rounded-lg">
-                        <div className="text-[10px] text-slate-400 uppercase">Open</div>
-                        <div className="font-bold text-emerald-400 font-mono mt-0.5">{b.remaining_count}</div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-
-          {/* Row-to-Band Allocation & Row Blocking Matrix */}
-          <div className="bg-[#131F2E] border border-slate-800 rounded-2xl p-5 space-y-4 shadow-lg">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-slate-800">
-              <div>
-                <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Sliders className="w-4 h-4 text-amber-400" />
-                  Row Pricing & Blocking Matrix
-                </h4>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Change price band per row or block whole rows from being sold.
-                </p>
-              </div>
-
-              <div className="inline-flex p-1 bg-[#0E1722] rounded-xl border border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setMatrixSection('Ground Floor')}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
-                    matrixSection === 'Ground Floor'
-                      ? 'bg-[#E8913A] text-slate-950 shadow-sm'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Ground Floor (648)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMatrixSection('Balcony')}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
-                    matrixSection === 'Balcony'
-                      ? 'bg-[#E8913A] text-slate-950 shadow-sm'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Balcony (750)
-                </button>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-800 text-slate-400 bg-slate-900/40">
-                    <th className="p-2.5">Row</th>
-                    <th className="p-2.5">Seats</th>
-                    <th className="p-2.5">Price Tier</th>
-                    <th className="p-2.5">Breakdown</th>
-                    <th className="p-2.5 text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60 text-slate-200">
-                  {rows
-                    .filter((r) => r.section === matrixSection && r.row_label !== 'SPL VIP')
-                    .sort((a, b) => a.display_order - b.display_order)
-                    .map((r) => {
-                      const rowSeats = seats.filter(
-                        (s) => s.section === r.section && s.row_label === r.row_label && s.row_label !== 'SPL VIP'
-                      );
-                      const blockedCount = rowSeats.filter((s) => s.is_blocked).length;
-                      const soldCount = rowSeats.filter((s) => (s.payment_status || '').toLowerCase() === 'received' || s.guest_name).length;
-                      const availableCount = rowSeats.length - blockedCount - soldCount;
-                      const isRowFullyBlocked = rowSeats.length > 0 && blockedCount === rowSeats.length;
-
-                      return (
-                        <tr key={r.id} className="hover:bg-slate-800/30 transition-colors">
-                          <td className="p-2.5 font-mono font-bold text-amber-400">
-                            Row {r.row_label}
-                          </td>
-                          <td className="p-2.5 font-mono text-slate-300">
-                            {r.seat_count || rowSeats.length}
-                          </td>
-                          <td className="p-2.5">
-                            <select
-                              value={r.tier || 5000}
-                              disabled={isLoading}
-                              onChange={(e) => handleAssignRowToBand(r.id, Number(e.target.value))}
-                              className="bg-[#1A2839] border border-slate-700 text-white rounded-lg px-2 py-1 text-xs font-bold cursor-pointer"
-                            >
-                              {bands.map((b) => (
-                                <option key={b.id} value={b.price}>
-                                  ₹{b.price.toLocaleString('en-IN')} ({b.label.split('(')[0].trim()})
-                                </option>
-                              ))}
-                            </select>
-                          </td>
-                          <td className="p-2.5">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-300 font-mono">
-                                {availableCount} Open
-                              </span>
-                              {blockedCount > 0 && (
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950 text-rose-300 border border-rose-850 font-mono">
-                                  {blockedCount} Blocked
-                                </span>
-                              )}
-                              {soldCount > 0 && (
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-850 font-mono">
-                                  {soldCount} Sold
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="p-2.5 text-right">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={isLoading || (soldCount > 0 && !isRowFullyBlocked)}
-                              onClick={() => handleToggleRowBlock(r.section, r.row_label, isRowFullyBlocked)}
-                              className={`h-7 px-2 text-xs font-bold rounded-lg ${
-                                isRowFullyBlocked
-                                  ? 'bg-emerald-950 text-emerald-300 border-emerald-800 hover:bg-emerald-900'
-                                  : 'bg-rose-950/60 text-rose-300 border-rose-800 hover:bg-rose-900'
-                              }`}
-                              title={soldCount > 0 && !isRowFullyBlocked ? 'Cannot block row with sold passes' : undefined}
-                            >
-                              {isRowFullyBlocked ? '🔓 Unblock' : '🔒 Block'}
-                            </Button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ─────────────────────────────────────────────────────────────
-          6. TAB 3: PROTECTED & EARMARKED BLOCKS (Clean & Concise)
-      ───────────────────────────────────────────────────────────── */}
-      {activeTab === 'protected' && (
-        <div className="space-y-4">
-          <div className="flex justify-between items-center">
-            <div>
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <Shield className="w-5 h-5 text-amber-500" /> Protected & Reserved Blocks
-              </h3>
-              <p className="text-xs text-slate-400">
-                Earmarked blocks for VIPs, Sponsors, and Officials. Deducts from price band quotas and can be released anytime.
-              </p>
-            </div>
-            <Button
-              onClick={() => setShowBlockModal(true)}
-              className="bg-[#1A2839] hover:bg-[#223345] border border-slate-700 text-white font-bold h-9 px-3 rounded-xl text-xs flex items-center gap-1.5"
-            >
-              <Plus className="w-3.5 h-3.5 text-[#E8913A]" /> Earmark Block
-            </Button>
-          </div>
-
-          {/* List of Protected Blocks */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {protectedBlocks.length === 0 ? (
-              <div className="col-span-2 p-8 text-center bg-[#131F2E] border border-slate-800 rounded-2xl text-slate-400 text-xs">
-                No earmarked protected blocks. Click &quot;Earmark Block&quot; to reserve seats for VIPs, Sponsors, or Dignitaries.
-              </div>
-            ) : (
-              protectedBlocks.map((block) => {
-                const assignedBand = bands.find((b) => b.id === (block.band_id || block.released_to_band_id));
-                const isReleased = Boolean(block.released_to_band_id);
-
-                return (
-                  <Card key={block.id} className="bg-[#131F2E] border border-slate-800 rounded-2xl shadow-md">
-                    <CardContent className="p-4 space-y-3">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h4 className="text-base font-bold text-white">{block.label}</h4>
-                            {assignedBand && (
-                              <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                                {assignedBand.label}
-                              </span>
-                            )}
-                          </div>
-                          <span className="text-xs text-slate-400 font-mono mt-1 block">
-                            {block.seat_count} seats reserved
-                          </span>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          {isReleased ? (
-                            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-950 text-emerald-400 border border-emerald-800">
-                              Released
-                            </span>
-                          ) : (
-                            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-950 text-amber-300 border border-amber-800">
-                              Locked
-                            </span>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteBlock(block.id)}
-                            className="p-1 rounded-md text-slate-400 hover:text-rose-400 hover:bg-rose-950/40 transition-colors"
-                            title="Delete block (restores seats to band)"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-
-                      {!isReleased ? (
-                        <div className="pt-2 border-t border-slate-800 space-y-2">
-                          {releasingBlockId === block.id ? (
-                            <div className="space-y-2 p-3 bg-slate-900 rounded-xl border border-amber-500/30">
-                              <Label className="text-xs text-slate-300">Release into Sellable Band:</Label>
-                              <select
-                                value={targetBandId}
-                                onChange={(e) => setTargetBandId(e.target.value)}
-                                className="w-full h-8 bg-[#1A2839] border border-slate-700 text-white rounded-lg px-2 text-xs"
-                              >
-                                {bands.map((b) => (
-                                  <option key={b.id} value={b.id}>
-                                    {b.label} (Current: {b.total_allocated})
-                                  </option>
-                                ))}
-                              </select>
-                              <div className="flex justify-end gap-2 pt-1">
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => setReleasingBlockId(null)}
-                                  className="text-slate-400 text-xs h-7"
-                                >
-                                  Cancel
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  disabled={isLoading}
-                                  onClick={() => handleReleaseBlock(block.id)}
-                                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs h-7 font-bold rounded-lg"
-                                >
-                                  Confirm Release
-                                </Button>
-                              </div>
-                            </div>
-                          ) : (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => {
-                                setReleasingBlockId(block.id);
-                                setTargetBandId(block.band_id || bands[0]?.id || '');
-                              }}
-                              className="w-full bg-[#1A2839] border-slate-700 text-slate-300 hover:text-white rounded-xl text-xs h-8"
-                            >
-                              <ArrowRight className="w-3 h-3 mr-1" /> Release to Public Band
-                            </Button>
-                          )}
-                        </div>
-                      ) : (
-                        <p className="text-[11px] text-slate-400 italic pt-1">
-                          Released into sellable inventory on {new Date(block.updated_at || block.created_at || '').toLocaleDateString('en-IN')}.
-                        </p>
-                      )}
-                    </CardContent>
-                  </Card>
-                );
-              })
             )}
           </div>
         </div>
+      </div>
+
+      {/* ─────────────────────────────────────────────────────────────
+          3. MODAL: REASSIGNMENT WITH SALES CONFIRMATION (Copy verbatim from spec)
+      ───────────────────────────────────────────────────────────── */}
+      {pendingReassignment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md p-6 bg-[#131F2E] border border-amber-500/60 rounded-2xl space-y-4 shadow-2xl">
+            <div className="flex items-center gap-2 text-amber-400">
+              <AlertTriangle className="w-5 h-5" />
+              <h3 className="text-base font-bold text-white">Row Has Existing Sales</h3>
+            </div>
+
+            <p className="text-sm text-slate-300">
+              Row <strong className="text-white">{pendingReassignment.row}</strong> has{' '}
+              <strong className="text-amber-400">{pendingReassignment.salesCount}</strong> sales.{' '}
+              {pendingReassignment.salesCount} sold seats keep ₹{pendingReassignment.oldPrice.toLocaleString('en-IN')};{' '}
+              {pendingReassignment.affectedSeatIds.length} unsold seats move to ₹{pendingReassignment.newPrice.toLocaleString('en-IN')}. Confirm?
+            </p>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setPendingReassignment(null)}
+                className="text-slate-400 hover:text-white text-xs"
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleConfirmReassignment}
+                className="bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-bold text-xs rounded-xl"
+              >
+                Confirm Reassignment
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ─────────────────────────────────────────────────────────────
-          7. MODAL: EDIT PRICE FOR A BAND
+          4. MODAL: NAMED SEAT DIALOG (VIP / Obligation / Sponsor)
       ───────────────────────────────────────────────────────────── */}
-      {editingPriceBand && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
-          <form onSubmit={handleSaveBandPrice} className="w-full max-w-md p-6 bg-[#131F2E] border border-slate-700 rounded-2xl space-y-4 shadow-2xl">
+      {namingSeat && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-4">
+          <form onSubmit={handleSaveSeatName} className="w-full max-w-sm p-5 bg-[#131F2E] border border-slate-700 rounded-2xl space-y-4 shadow-2xl">
             <div className="flex justify-between items-center pb-2 border-b border-slate-800">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <Pencil className="w-4 h-4 text-[#E8913A]" />
-                Edit Price: {editingPriceBand.label.split('(')[0].trim()}
-              </h3>
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
+                  <User className="w-4 h-4 text-amber-400" />
+                  Name Reserved Seat
+                </h3>
+                <span className="text-xs font-mono text-amber-300">{namingSeat.id}</span>
+              </div>
               <button
                 type="button"
-                onClick={() => setEditingPriceBand(null)}
+                onClick={() => setNamingSeat(null)}
                 className="text-slate-400 hover:text-white"
               >
                 <X className="w-4 h-4" />
@@ -850,40 +864,32 @@ export function BandsClient({
             </div>
 
             <div className="space-y-2">
-              <Label className="text-xs font-bold text-slate-300">Ticket Price (₹)</Label>
-              <div className="relative">
-                <span className="absolute left-3 top-2.5 text-slate-400 text-sm font-bold">₹</span>
-                <Input
-                  type="number"
-                  min="1"
-                  step="50"
-                  value={editPriceInput}
-                  onChange={(e) => setEditPriceInput(Number(e.target.value))}
-                  className="pl-8 h-10 bg-[#1A2839] border-slate-700 text-white rounded-xl font-mono text-base font-bold"
-                  required
-                />
-              </div>
-              <p className="text-[11px] text-slate-400">
-                Updating this price will update the band name, associated row pricing, and seat tiers automatically.
-              </p>
+              <Label className="text-xs text-slate-300">Dignitary / Guest Name (Optional)</Label>
+              <Input
+                placeholder="e.g. Chief Guest / Police Commissioner"
+                value={guestNameInput}
+                onChange={(e) => setGuestNameInput(e.target.value)}
+                className="h-10 bg-[#1A2839] border-slate-700 text-white rounded-xl text-xs"
+                autoFocus
+              />
             </div>
 
             <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
               <Button
                 type="button"
                 variant="ghost"
-                onClick={() => setEditingPriceBand(null)}
+                size="sm"
+                onClick={() => setNamingSeat(null)}
                 className="text-slate-400 hover:text-white text-xs"
               >
                 Cancel
               </Button>
               <Button
                 type="submit"
-                disabled={isLoading || editPriceInput <= 0}
+                size="sm"
                 className="bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-bold rounded-xl text-xs"
               >
-                {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
-                Save New Price
+                Save Name
               </Button>
             </div>
           </form>
@@ -891,85 +897,94 @@ export function BandsClient({
       )}
 
       {/* ─────────────────────────────────────────────────────────────
-          8. MODAL: EARMARK NEW PROTECTED BLOCK
+          5. MODAL: REVIEW & SAVE (Validation checks from Step 3 table)
       ───────────────────────────────────────────────────────────── */}
-      {showBlockModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
-          <form onSubmit={handleCreateBlock} className="w-full max-w-md p-6 bg-[#131F2E] border border-slate-700 rounded-2xl space-y-4 shadow-2xl">
+      {showReviewModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-4">
+          <div className="w-full max-w-lg p-6 bg-[#131F2E] border border-slate-700 rounded-2xl space-y-4 shadow-2xl">
             <div className="flex justify-between items-center pb-2 border-b border-slate-800">
               <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <Shield className="w-4 h-4 text-amber-400" />
-                Earmark Protected Block
+                <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                Review & Commit Layout Plan
               </h3>
               <button
                 type="button"
-                onClick={() => setShowBlockModal(false)}
+                onClick={() => setShowReviewModal(false)}
                 className="text-slate-400 hover:text-white"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <Label className="text-xs font-bold text-slate-300">Category / Label *</Label>
-                <Input
-                  placeholder="e.g. VIP Dignitaries / Police Officers"
-                  value={blockLabel}
-                  onChange={(e) => setBlockLabel(e.target.value)}
-                  className="h-10 bg-[#1A2839] border-slate-700 text-white rounded-xl text-xs"
-                  required
-                />
+            {/* Validation Checklist */}
+            <div className="space-y-3 text-xs">
+              <div className="p-3 bg-[#0E1722] rounded-xl border border-slate-800 flex items-start gap-2.5">
+                <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="text-white">All Seats Accounted For:</strong>
+                  <p className="text-slate-400 mt-0.5">
+                    1,448 total venue seats ({summary.sellableSeats} sellable + {summary.totalHeldBack} reserved + {summary.unassignedCount} unassigned).
+                  </p>
+                  {summary.unassignedCount > 0 && (
+                    <p className="text-amber-400 font-bold mt-1">
+                      ⚠️ Note: {summary.unassignedCount} seat(s) remain unassigned (e.g. Special A).
+                    </p>
+                  )}
+                </div>
               </div>
 
-              <div className="space-y-1">
-                <Label className="text-xs font-bold text-slate-300">Deduct from Price Band *</Label>
-                <select
-                  value={blockBandId}
-                  onChange={(e) => setBlockBandId(e.target.value)}
-                  className="w-full h-10 bg-[#1A2839] border border-slate-700 text-white rounded-xl px-3 text-xs font-bold cursor-pointer"
-                >
-                  {bands.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.label} — {b.remaining_count ?? b.total_allocated} seats available
-                    </option>
-                  ))}
-                </select>
+              <div className="p-3 bg-[#0E1722] rounded-xl border border-slate-800 flex items-start gap-2.5">
+                <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="text-white">No Double-Assignment:</strong>
+                  <p className="text-slate-400 mt-0.5">Each physical seat belongs to exactly one category.</p>
+                </div>
               </div>
 
-              <div className="space-y-1">
-                <Label className="text-xs font-bold text-slate-300">Number of Seats *</Label>
-                <Input
-                  type="number"
-                  min="1"
-                  max={bands.find((b) => b.id === blockBandId)?.total_allocated || 500}
-                  value={blockCount}
-                  onChange={(e) => setBlockCount(Number(e.target.value))}
-                  className="h-10 bg-[#1A2839] border-slate-700 text-white rounded-xl font-mono text-sm"
-                  required
-                />
+              <div className="p-3 bg-[#0E1722] rounded-xl border border-slate-800 flex items-start gap-2.5">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="text-white">Provisional Rows Warning:</strong>
+                  <p className="text-slate-400 mt-0.5">
+                    Balcony rows I–M (286 seats) are provisional. Confirm with physical venue before live sales.
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3 bg-emerald-950/40 rounded-xl border border-emerald-900/60 flex items-start gap-2.5">
+                <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="text-emerald-300">Potential Raise Calculated:</strong>
+                  <p className="text-white font-mono font-bold mt-0.5">
+                    ₹{summary.totalPotentialRaise.toLocaleString('en-IN')}
+                  </p>
+                  <p className="text-slate-400 text-[10px]">
+                    Includes all priced bands (₹5,000, ₹3,500, ₹2,500, ₹1,500) and PP seats × ₹1,000.
+                  </p>
+                </div>
               </div>
             </div>
 
             <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
               <Button
-                type="button"
                 variant="ghost"
-                onClick={() => setShowBlockModal(false)}
+                size="sm"
+                onClick={() => setShowReviewModal(false)}
                 className="text-slate-400 hover:text-white text-xs"
               >
                 Cancel
               </Button>
               <Button
-                type="submit"
-                disabled={isLoading || !blockLabel.trim() || blockCount < 1}
-                className="bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-bold rounded-xl text-xs"
+                size="sm"
+                disabled={isLoading}
+                onClick={handleCommitPlan}
+                className="bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-black rounded-xl text-xs"
               >
-                {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
-                Create Block
+                {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : null}
+                Commit & Update Live Quotas
               </Button>
             </div>
-          </form>
+          </div>
         </div>
       )}
     </div>

@@ -8,7 +8,7 @@ export const SESSION_DURATION_DAYS = 14;
 export interface AuthUser {
   id: string;
   loginId: string;
-  role: 'super_admin' | 'system_admin' | 'group_admin';
+  role: 'super_admin' | 'system_admin' | 'group_admin' | 'tech_coordinator';
   mustChangePassword: boolean;
   memberId: number | null;
   fullName: string;

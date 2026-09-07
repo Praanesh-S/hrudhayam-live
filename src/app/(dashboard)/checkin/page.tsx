@@ -16,10 +16,10 @@ export default async function CheckinPage() {
     <div className="flex flex-col gap-6 max-w-xl mx-auto pb-16">
       <div>
         <h1 className="text-3xl sm:text-4xl font-black tracking-tight text-white">
-          Gate Scanner & Check-in
+          Gate Admission Check-in
         </h1>
         <p className="text-slate-400 text-sm sm:text-base mt-1">
-          Scan donor WhatsApp QR codes or enter pass codes / physical ticket serials for admission.
+          Enter physical pass serial numbers for hall admission. Each serial can only be entered once.
         </p>
       </div>
 

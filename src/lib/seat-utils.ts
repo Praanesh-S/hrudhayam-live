@@ -103,48 +103,61 @@ export function getRowsInRange(
  */
 export function getSeatColor(seat: {
   tier?: number | null;
+  category?: string | null;
   obligation?: string | null;
+  obligation_type?: string | null;
   row_label?: string;
   guest_name?: string | null;
+  name?: string | null;
   payment_status?: string;
   checked_in?: boolean;
   is_blocked?: boolean;
   sponsor_id?: string | null;
   pass_code?: string | null;
 }): string {
-  // 1. SPL VIP Box (Non-editable VIP)
-  if (seat.row_label === "SPL VIP" || seat.obligation === "chief") return "#8B5CF6"; // Royal Purple
-
-  // 2. Exact Blocked / Reserved seats
-  if (seat.is_blocked) return "#BE123C"; // Deep Crimson
-
-  // 3. Sponsor Complimentary Seats
-  if (seat.sponsor_id || seat.obligation === "sponsor") return "#06B6D4"; // Vibrant Cyan
-
-  // 4. Checked In (At Venue)
-  if (seat.checked_in) return "#0284C7"; // Sky Blue
-
-  // 5. Paid Pass (must have active guest or pass code)
-  if ((seat.payment_status || "").toLowerCase() === "received" && (seat.pass_code || seat.guest_name)) {
-    return "#10B981"; // Emerald Green
+  // 1. VIP (SPL VIP Box or Category VIP)
+  if (seat.category === 'vip' || seat.row_label === 'SPL VIP' || seat.obligation === 'chief' || seat.obligation_type === 'vip') {
+    return '#EAB308'; // Gold (VIP)
   }
 
-  // 6. Guest Assigned / Pending
-  if (seat.guest_name && seat.guest_name.trim() !== "") return "#F97316"; // Amber Orange
+  // 2. Blocked
+  if (seat.category === 'blocked' || seat.is_blocked) {
+    return '#475569'; // Dark Slate (Blocked)
+  }
 
-  // 7. Available Tier Seats
+  // 3. Obligation
+  if (seat.category === 'obligation' || seat.obligation === 'police' || seat.obligation_type === 'police' || seat.obligation_type === 'obligation') {
+    return '#EF4444'; // Red (Obligation)
+  }
+
+  // 4. Sponsor Complimentary
+  if (seat.category === 'sponsor_comp' || seat.sponsor_id || seat.obligation === 'sponsor' || seat.obligation_type === 'sponsor') {
+    return '#06B6D4'; // Cyan (Sponsor comp)
+  }
+
+  // 5. Category-based mapping
+  if (seat.category === 'b5000') return '#F59E0B'; // Orange
+  if (seat.category === 'b3500') return '#8B5CF6'; // Purple
+  if (seat.category === 'b2500') return '#0D9488'; // Teal
+  if (seat.category === 'b1500') return '#64748B'; // Slate
+  if (seat.category === 'pp') return '#0284C7';    // Bright Blue (PP)
+  if (seat.category === 'unassigned') return '#1E293B'; // Dark unassigned
+
+  // 6. Fallback based on tier
   switch (seat.tier) {
     case 5000:
-      return "#F59E0B"; // Amber Gold (Band A)
+      return '#F59E0B'; // Orange (Band A)
     case 3500:
     case 3000:
-      return "#A855F7"; // Violet Purple (Band B)
+      return '#8B5CF6'; // Purple (Band B)
     case 2500:
-      return "#0D9488"; // Teal (Band C)
+      return '#0D9488'; // Teal (Band C)
     case 1500:
-      return "#64748B"; // Steel Slate (Band D)
+      return '#64748B'; // Slate (Band D)
+    case 1000:
+      return '#0284C7'; // Bright Blue (PP)
     default:
-      return "#334E68"; // Default slate unassigned
+      return '#1E293B'; // Unassigned
   }
 }
 

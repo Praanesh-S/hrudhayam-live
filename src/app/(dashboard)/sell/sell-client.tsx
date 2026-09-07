@@ -1,18 +1,18 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { Band, TicketType, PaymentMode, PaymentStatus, SeatData } from '@/lib/types';
+import { Band, PaymentMode, PaymentStatus, SeatData } from '@/lib/types';
 import { AuthUser } from '@/lib/auth/session';
-import { issuePass, undoSale, checkDonorPassCount } from './actions';
-import { getWhatsAppUrl, downloadTicketPdf, downloadAllPassPdfs, sharePassPdfViaWhatsApp } from '@/lib/whatsapp';
-import { createClient } from '@/lib/supabase/client';
+import { issuePass, undoSale, checkDonorPassCount, markPendingPaymentReceived, demoSwitchRoleAction } from './actions';
+import { updatePassDonorDetails } from '@/app/(dashboard)/guests/actions';
+import { numberToIndianWords } from '@/lib/format-utils';
+import { getWhatsAppUrl } from '@/lib/whatsapp';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { 
   Ticket, 
-  Smartphone, 
   CheckCircle2, 
   AlertCircle, 
   ArrowLeft, 
@@ -20,14 +20,13 @@ import {
   Loader2, 
   RotateCcw, 
   Send, 
-  Upload, 
   ShieldAlert,
-  UserCheck,
   CreditCard,
-  MapPin,
-  Download,
-  Share2,
-  FileText
+  Plus,
+  Minus,
+  Check,
+  Edit3,
+  UserCheck
 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
@@ -38,6 +37,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { PendingSaleItem } from './page';
+import { cn } from '@/lib/utils';
 
 interface SellClientProps {
   bands: Band[];
@@ -45,17 +46,24 @@ interface SellClientProps {
   seats: SeatData[];
   currentUser: AuthUser;
   initialHolds?: any[];
+  pendingSales: PendingSaleItem[];
 }
 
-export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
-  // Step in wizard: 1 (Band & Quantity) -> 2 (Type) -> 3 (Seller) -> 4 (Donor) -> 5 (Payment) -> 6 (Success)
+export function SellClient({
+  bands,
+  sellers,
+  currentUser,
+  pendingSales: initialPendingSales,
+}: SellClientProps) {
+  // Top level active tab: 'sell' | 'pending'
+  const [activeTab, setActiveTab] = useState<'sell' | 'pending'>('sell');
+
+  // Step in wizard: 1 (Sale details) | 2 (Payment & confirm) | 3 (Success)
   const [step, setStep] = useState<number>(1);
 
   // Form states
-  const [selectedBandId, setSelectedBandId] = useState<string>('');
+  const [selectedBandId, setSelectedBandId] = useState<string>('band_5000');
   const [quantity, setQuantity] = useState<number>(1);
-  const [ticketType, setTicketType] = useState<TicketType>('digital');
-  const [physicalSerial, setPhysicalSerial] = useState<string>('');
   const [physicalSerials, setPhysicalSerials] = useState<string[]>(['']);
   
   // Default seller to logged in user if they are a member, else first in list
@@ -71,13 +79,12 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
 
   // Payment fields
   const [paymentMode, setPaymentMode] = useState<PaymentMode>('upi');
-  const [paymentAmount, setPaymentAmount] = useState<number>(0);
   const [paymentReferenceNo, setPaymentReferenceNo] = useState<string>('');
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>('received');
-  const [proofFile, setProofFile] = useState<File | null>(null);
   const [preferredLanguage, setPreferredLanguage] = useState<'en' | 'ta'>('en');
 
-  // Loading & Submission states
+  // Submission & Confirmation modal states
+  const [showConfirmModal, setShowConfirmModal] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -98,19 +105,31 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
     passId: string;
   } | null>(null);
 
-  // 60-Second Undo Timer State (§19.2)
+  // 60-Second Undo Timer State
   const [undoSecondsLeft, setUndoSecondsLeft] = useState<number>(60);
   const [isUndoing, setIsUndoing] = useState<boolean>(false);
   const [undoMessage, setUndoMessage] = useState<string | null>(null);
 
-  const selectedBand = bands.find((b) => b.id === selectedBandId);
+  // Pending Payments list state
+  const [pendingSales, setPendingSales] = useState<PendingSaleItem[]>(initialPendingSales);
+  const [expandedPaymentSaleId, setExpandedPaymentSaleId] = useState<string | null>(null);
+  const [inlineRefNo, setInlineRefNo] = useState<string>('');
+  const [inlineMode, setInlineMode] = useState<PaymentMode>('upi');
+  const [isMarkingReceived, setIsMarkingReceived] = useState<boolean>(false);
 
-  // Automatically sync amount when band or quantity changes
-  useEffect(() => {
-    if (selectedBand) {
-      setPaymentAmount(selectedBand.price * quantity);
-    }
-  }, [selectedBand, quantity]);
+  // Edit Donor modal state
+  const [editingSale, setEditingSale] = useState<PendingSaleItem | null>(null);
+  const [editDonorName, setEditDonorName] = useState<string>('');
+  const [editDonorPhone, setEditDonorPhone] = useState<string>('');
+  const [isSavingEdit, setIsSavingEdit] = useState<boolean>(false);
+
+  // Demo Switcher Modal
+  const [showDemoModal, setShowDemoModal] = useState<boolean>(false);
+  const [isSwitchingRole, setIsSwitchingRole] = useState<boolean>(false);
+
+  // Ensure default selected band is valid
+  const currentBand = bands.find((b) => b.id === selectedBandId) || bands[0] || null;
+  const totalAmount = (currentBand?.price || 0) * quantity;
 
   // Keep physical serials list matching quantity
   useEffect(() => {
@@ -120,6 +139,18 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
       return updated.slice(0, quantity);
     });
   }, [quantity]);
+
+  // Handle seller fallback toggle
+  useEffect(() => {
+    if (donorIsFallback) {
+      const selectedSeller = sellers.find((s) => s.id === Number(sellerMemberId));
+      if (selectedSeller) {
+        setDonorName(selectedSeller.full_name);
+        const cleanPhone = (selectedSeller.phone_e164 || selectedSeller.phone_raw || '').replace(/\D/g, '').slice(-10);
+        setDonorPhone(cleanPhone);
+      }
+    }
+  }, [donorIsFallback, sellerMemberId, sellers]);
 
   // Check duplicate donor on phone blur (§19.3)
   const handleDonorPhoneBlur = async () => {
@@ -150,81 +181,66 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
     return () => clearInterval(timer);
   }, [successResult, undoSecondsLeft]);
 
+  // Step 1 Validation
+  const canContinueToStep2 = useMemo(() => {
+    if (!selectedBandId || !currentBand) return false;
+    if ((currentBand.remaining_count ?? 0) < quantity) return false;
+    if (quantity < 1 || quantity > 10) return false;
+    if (!sellerMemberId) return false;
+    if (!donorName.trim()) return false;
+    if (!donorPhone.trim() || donorPhone.replace(/\D/g, '').length < 10) return false;
+    return true;
+  }, [selectedBandId, currentBand, quantity, sellerMemberId, donorName, donorPhone]);
+
+  // Step 2 Validation
+  const canSubmitSale = useMemo(() => {
+    if (!paymentReferenceNo.trim()) return false;
+    const emptySerials = physicalSerials.filter((s) => !s || !s.trim());
+    if (emptySerials.length > 0) return false;
+    const uniqueSet = new Set(physicalSerials.map((s) => s.trim().toUpperCase()));
+    if (uniqueSet.size !== physicalSerials.length) return false;
+    return true;
+  }, [paymentReferenceNo, physicalSerials]);
+
   // Handle Form Submission
-  const handleSubmit = async () => {
-    if (!selectedBandId) {
-      setErrorMessage('Please select a price band.');
-      return;
-    }
-
-    if (quantity < 1) {
-      setErrorMessage('Please select at least 1 pass to sell.');
-      return;
-    }
-
-    if (ticketType === 'physical') {
-      const emptySerials = physicalSerials.filter((s) => !s.trim());
-      if (emptySerials.length > 0) {
-        setErrorMessage(`Please enter all ${quantity} physical ticket serial numbers.`);
-        return;
-      }
-    }
-
+  const handleConfirmIssue = async () => {
+    setShowConfirmModal(false);
     setIsSubmitting(true);
     setErrorMessage(null);
 
     try {
-      let uploadedFileKey: string | null = null;
-
-      // Upload payment screenshot if attached
-      if (proofFile) {
-        const supabase = createClient();
-        const fileExt = proofFile.name.split('.').pop();
-        const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
-        const filePath = `receipts/${fileName}`;
-
-        const { error: uploadErr } = await supabase.storage
-          .from('payment-proofs')
-          .upload(filePath, proofFile);
-
-        if (!uploadErr) {
-          uploadedFileKey = filePath;
-        } else {
-          console.warn('Screenshot upload failed, continuing without screenshot:', uploadErr);
-        }
-      }
-
       const res = await issuePass({
         bandId: selectedBandId,
         quantity,
-        ticketType,
-        physicalSerial: ticketType === 'physical' ? physicalSerials[0] || physicalSerial : null,
-        physicalSerials: ticketType === 'physical' ? physicalSerials : null,
+        ticketType: 'physical',
+        physicalSerials: physicalSerials.map((s) => s.trim().toUpperCase()),
         sellerMemberId: Number(sellerMemberId),
-        donorName,
-        donorPhone,
-        donorEmail: donorEmail || null,
+        donorName: donorName.trim(),
+        donorPhone: donorPhone.trim(),
+        donorEmail: donorEmail?.trim() || null,
         donorIsSellerFallback: donorIsFallback,
         paymentMode,
-        paymentAmount,
-        paymentReferenceNo,
+        paymentAmount: totalAmount,
+        paymentReferenceNo: paymentReferenceNo.trim(),
         paymentStatus,
-        proofFileKey: uploadedFileKey,
         preferredLanguage,
       });
 
       if (!res.success) {
-        setErrorMessage(res.error || 'Failed to issue pass.');
+        setErrorMessage(res.error || 'Failed to issue passes.');
+        toast.error(res.error || 'Failed to issue passes.');
         setIsSubmitting(false);
         return;
       }
+
+      toast.success(`${quantity} Pass${quantity > 1 ? 'es' : ''} issued successfully!`);
 
       // Success
       setSuccessResult({
         passCode: res.passCode!,
         passCodes: (res as any).passCodes || [res.passCode!],
         quantity: (res as any).quantity || quantity,
-        totalAmount: (res as any).totalAmount || paymentAmount,
+        totalAmount: (res as any).totalAmount || totalAmount,
         undoToken: res.undoToken!,
         donorMessage: res.donorMessage!,
         donorPhone: res.donorPhone!,
@@ -237,9 +253,10 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
       });
 
       setUndoSecondsLeft(60);
-      setStep(6);
+      setStep(3); // Success view
     } catch (err: any) {
       setErrorMessage(err.message || 'An unexpected error occurred.');
+      toast.error(err.message || 'An unexpected error occurred.');
     } finally {
       setIsSubmitting(false);
     }
@@ -249,78 +266,25 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
   const handleUndo = async () => {
     if (!successResult) return;
     setIsUndoing(true);
-    setUndoMessage(null);
-
     try {
       const res = await undoSale(successResult.passId, successResult.undoToken);
       if (res.success) {
-        setUndoMessage(res.message || 'Sale has been undone and inventory released.');
-        setSuccessResult(null);
-        setStep(1);
+        setUndoMessage(res.message || 'Sale cancelled and seats released.');
+        toast.success('Sale successfully undone.');
       } else {
-        setErrorMessage(res.error || 'Could not undo sale.');
+        toast.error(res.error || 'Failed to undo sale.');
       }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Failed to undo sale.');
+      toast.error(err.message || 'Could not undo sale.');
     } finally {
       setIsUndoing(false);
     }
   };
 
-  // PDF Sharing & Direct Download Handlers for Step 6
-  const [isSharingPdf, setIsSharingPdf] = useState<boolean>(false);
-  const [isDownloadingPdf, setIsDownloadingPdf] = useState<boolean>(false);
-  const [showDesktopAttachGuide, setShowDesktopAttachGuide] = useState<boolean>(false);
-
-  const handleSharePdfViaWhatsApp = async () => {
-    if (!successResult) return;
-    setIsSharingPdf(true);
-    try {
-      const res = await sharePassPdfViaWhatsApp({
-        passCodes: successResult.passCodes,
-        donorName: donorName || 'Valued Donor',
-        donorPhone: successResult.donorPhone,
-        message: successResult.donorMessage,
-      });
-      if (res.method === 'download_and_whatsapp') {
-        setShowDesktopAttachGuide(true);
-        toast.info('Pass PDF downloaded & WhatsApp Web opened! Attach the PDF to the chat.');
-      } else if (res.method === 'native_share') {
-        toast.success('Pass PDF ready to share!');
-      }
-    } catch (err: any) {
-      console.error(err);
-      window.open(getWhatsAppUrl(successResult.donorPhone, successResult.donorMessage), '_blank');
-    } finally {
-      setIsSharingPdf(false);
-    }
-  };
-
-  const handleDownloadAllPdfs = async () => {
-    if (!successResult) return;
-    setIsDownloadingPdf(true);
-    try {
-      await downloadAllPassPdfs(successResult.passCodes);
-      toast.success(
-        successResult.passCodes.length > 1
-          ? `All ${successResult.passCodes.length} Pass PDFs downloaded!`
-          : 'Pass PDF downloaded!'
-      );
-    } catch (err: any) {
-      console.error(err);
-      toast.error('Failed to download pass PDF');
-    } finally {
-      setIsDownloadingPdf(false);
-    }
-  };
-
-  // Reset form for next sale
-  const handleResetForNext = () => {
+  // Reset form to sell another pass
+  const handleResetForm = () => {
     setStep(1);
-    setSelectedBandId('');
     setQuantity(1);
-    setTicketType('digital');
-    setPhysicalSerial('');
     setPhysicalSerials(['']);
     setDonorName('');
     setDonorPhone('');
@@ -328,886 +292,1092 @@ export function SellClient({ bands, sellers, currentUser }: SellClientProps) {
     setDonorIsFallback(false);
     setPaymentReferenceNo('');
     setPaymentStatus('received');
-    setProofFile(null);
+    setPaymentMode('upi');
     setSuccessResult(null);
-    setErrorMessage(null);
     setUndoMessage(null);
-    setIsSharingPdf(false);
-    setIsDownloadingPdf(false);
+    setUndoSecondsLeft(60);
+    setErrorMessage(null);
   };
 
+  // Handle Mark Received inline in Pending Payments tab
+  const handleSaveReceived = async (sale: PendingSaleItem) => {
+    if (!inlineRefNo.trim()) {
+      toast.error('Reference number / UTR is mandatory.');
+      return;
+    }
+    setIsMarkingReceived(true);
+    try {
+      const res = await markPendingPaymentReceived(sale.payment_ids, inlineRefNo.trim(), inlineMode);
+      if (res.success) {
+        toast.success(`Payment of ₹${sale.total_amount.toLocaleString('en-IN')} marked as received!`);
+        setPendingSales((prev) => prev.filter((item) => item.id !== sale.id));
+        setExpandedPaymentSaleId(null);
+        setInlineRefNo('');
+      } else {
+        toast.error(res.error || 'Failed to mark payment received.');
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Error updating payment.');
+    } finally {
+      setIsMarkingReceived(false);
+    }
+  };
+
+  // Handle Save Edited Donor Details
+  const handleSaveDonorEdit = async () => {
+    if (!editingSale) return;
+    if (!editDonorName.trim() || !editDonorPhone.trim()) {
+      toast.error('Donor name and valid 10-digit mobile are required.');
+      return;
+    }
+    setIsSavingEdit(true);
+    try {
+      let allGood = true;
+      for (const passId of editingSale.pass_ids) {
+        const res = await updatePassDonorDetails(passId, {
+          donor_name: editDonorName.trim(),
+          donor_phone: editDonorPhone.trim(),
+        });
+        if (!res.success) {
+          allGood = false;
+          toast.error(res.error || 'Failed to update pass.');
+          break;
+        }
+      }
+      if (allGood) {
+        toast.success('Donor details updated.');
+        setPendingSales((prev) =>
+          prev.map((s) =>
+            s.id === editingSale.id
+              ? { ...s, donor_name: editDonorName.trim(), donor_phone: editDonorPhone.trim() }
+              : s
+          )
+        );
+        setEditingSale(null);
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Could not update details.');
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  // Handle Demo Switch Role
+  const handleDemoSwitch = async (role: 'super_admin' | 'group_admin' | 'tech_coordinator') => {
+    setIsSwitchingRole(true);
+    try {
+      const res = await demoSwitchRoleAction(role);
+      if (res.success) {
+        toast.success(`Switched role to ${role.replace('_', ' ')}! Reloading...`);
+        setShowDemoModal(false);
+        window.location.reload();
+      } else {
+        toast.error(res.error || 'Could not switch demo user.');
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Error switching demo user.');
+    } finally {
+      setIsSwitchingRole(false);
+    }
+  };
+
+  const totalPendingAmount = useMemo(() => {
+    return pendingSales.reduce((acc, curr) => acc + curr.total_amount, 0);
+  }, [pendingSales]);
+
+  // Role subtitle format
+  const roleDisplayTitle = useMemo(() => {
+    if (currentUser.role === 'super_admin' || currentUser.role === 'system_admin') {
+      return `${currentUser.fullName} — Super Admin (sees all teams)`;
+    }
+    const team = currentUser.groupName || `Team ${currentUser.groupId || 1}`;
+    const roleName = currentUser.role === 'tech_coordinator' ? 'Tech Coordinator' : 'Group Admin';
+    return `${currentUser.fullName} — ${roleName}, ${team} (sees ${team} only)`;
+  }, [currentUser]);
+
   return (
-    <div className="bg-[#131F2E] border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl">
-      {/* Error / Undo Alert Banner */}
-      {errorMessage && (
-        <Alert variant="destructive" className="mb-6 bg-red-950/70 border-red-800 text-red-100">
-          <AlertCircle className="h-5 w-5 text-red-400" />
-          <AlertTitle className="text-base font-bold">Error</AlertTitle>
-          <AlertDescription className="text-sm">{errorMessage}</AlertDescription>
-        </Alert>
-      )}
+    <div className="space-y-6">
+      {/* Top Header & Role Information */}
+      <div>
+        <h1 className="text-3xl sm:text-4xl font-black tracking-tight text-white">
+          Sell a Pass
+        </h1>
+        <p className="text-slate-400 text-sm mt-1">
+          {roleDisplayTitle}
+        </p>
+      </div>
 
-      {undoMessage && (
-        <Alert className="mb-6 bg-emerald-950/70 border-emerald-800 text-emerald-100">
-          <CheckCircle2 className="h-5 w-5 text-emerald-400" />
-          <AlertTitle className="text-base font-bold">Pass Undone</AlertTitle>
-          <AlertDescription className="text-sm">{undoMessage}</AlertDescription>
-        </Alert>
-      )}
+      {/* Top Navigation Tabs (matches Image 2 & Image 3) */}
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          onClick={() => setActiveTab('sell')}
+          className={cn(
+            "px-5 py-2.5 rounded-xl font-bold text-sm transition-all shadow-sm",
+            activeTab === 'sell'
+              ? "bg-[#E58327] text-slate-950 shadow-amber-950/40"
+              : "bg-[#102030] text-slate-300 border border-slate-800 hover:bg-slate-800 hover:text-white"
+          )}
+        >
+          Sell a Pass
+        </button>
 
-      {/* Progress Indicator */}
-      {step < 6 && (
-        <div className="mb-8">
-          <div className="flex items-center justify-between text-xs font-semibold text-slate-400 mb-2">
-            <span>STEP {step} OF 5</span>
-            <span>
-              {step === 1 && 'Select Price Band'}
-              {step === 2 && 'Ticket Type'}
-              {step === 3 && 'Seller Attribution'}
-              {step === 4 && 'Donor Information'}
-              {step === 5 && 'Payment Verification'}
-            </span>
-          </div>
-          <div className="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden">
-            <div 
-              className="bg-[#E8913A] h-full transition-all duration-300 ease-out" 
-              style={{ width: `${(step / 5) * 100}%` }}
-            />
-          </div>
-        </div>
-      )}
+        <button
+          onClick={() => setActiveTab('pending')}
+          className={cn(
+            "px-5 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 shadow-sm",
+            activeTab === 'pending'
+              ? "bg-[#E58327] text-slate-950 shadow-amber-950/40"
+              : "bg-[#102030] text-slate-300 border border-slate-800 hover:bg-slate-800 hover:text-white"
+          )}
+        >
+          <span>Pending Payments ({pendingSales.length})</span>
+        </button>
 
-      {/* ────────────────────────────────────────────── */}
-      {/* ────────────────────────────────────────────── */}
-      {/* STEP 1: CHOOSE BAND & QUANTITY                 */}
-      {/* ────────────────────────────────────────────── */}
-      {step === 1 && (
+        <button
+          onClick={() => setShowDemoModal(true)}
+          className="px-4 py-2.5 rounded-xl font-semibold text-xs text-slate-400 bg-[#102030] border border-slate-800 hover:bg-slate-800 hover:text-white transition-all flex items-center gap-1.5 ml-auto"
+        >
+          <RotateCcw className="w-3.5 h-3.5" />
+          <span>Demo: switch role</span>
+        </button>
+      </div>
+
+      {/* TAB 1: SELL A PASS */}
+      {activeTab === 'sell' && (
         <div className="space-y-6">
-          <div>
-            <h2 className="text-2xl font-black text-white">1. Select Price Band & Quantity</h2>
-            <p className="text-slate-400 text-sm mt-1">
-              Choose the seating tier and number of passes to sell. Sold-out tiers cannot be selected (Rule R5).
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {bands.map((band) => {
-              const remaining = band.remaining_count ?? 0;
-              const isSoldOut = remaining <= 0;
-              const isSelected = selectedBandId === band.id;
-
-              return (
-                <button
-                  key={band.id}
-                  type="button"
-                  disabled={isSoldOut}
-                  onClick={() => {
-                    setSelectedBandId(band.id);
-                    if (quantity > remaining) {
-                      setQuantity(Math.max(1, remaining));
-                    }
-                  }}
-                  className={`relative text-left p-6 rounded-2xl border-2 transition-all flex flex-col justify-between min-h-[140px] ${
-                    isSoldOut
-                      ? 'bg-slate-900/40 border-slate-800/80 opacity-50 cursor-not-allowed'
-                      : isSelected
-                      ? 'bg-amber-500/15 border-amber-500 shadow-lg shadow-amber-950/30'
-                      : 'bg-[#1A2839] border-slate-800 hover:border-slate-700'
-                  }`}
+          {/* Step Indicator (matches Image 2) */}
+          {step !== 3 && (
+            <div className="grid grid-cols-2 gap-3">
+              <div
+                onClick={() => setStep(1)}
+                className={cn(
+                  "flex items-center gap-3 px-4 py-3 rounded-xl border transition-all cursor-pointer",
+                  step === 1
+                    ? "border-amber-500/80 bg-[#102030] shadow-sm shadow-amber-950/20"
+                    : "border-slate-800 bg-[#0B1724]/60 opacity-60 hover:opacity-80"
+                )}
+              >
+                <span
+                  className={cn(
+                    "w-6 h-6 rounded-full flex items-center justify-center text-xs font-black",
+                    step === 1 ? "bg-[#E58327] text-slate-950" : "bg-slate-800 text-slate-400"
+                  )}
                 >
-                  <div className="flex justify-between items-start">
-                    <span className="font-bold text-lg text-white">
-                      {band.label}
-                    </span>
-                    <span className="text-2xl font-black text-[#E8913A]">
-                      ₹{band.price.toLocaleString('en-IN')}
-                    </span>
-                  </div>
+                  1
+                </span>
+                <span className="font-bold text-sm text-white">Sale details</span>
+              </div>
 
-                  <div className="mt-4 flex justify-between items-end text-sm">
-                    <span className={`font-semibold ${isSoldOut ? 'text-red-400' : 'text-emerald-400'}`}>
-                      {isSoldOut ? 'Sold Out' : `${remaining} Seats Available`}
-                    </span>
-                    <span className="text-xs text-slate-400">
-                      Capacity: {band.total_allocated}
-                    </span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+              <div
+                onClick={() => {
+                  if (canContinueToStep2) setStep(2);
+                }}
+                className={cn(
+                  "flex items-center gap-3 px-4 py-3 rounded-xl border transition-all",
+                  step === 2
+                    ? "border-amber-500/80 bg-[#102030] shadow-sm shadow-amber-950/20"
+                    : "border-slate-800 bg-[#0B1724]/60 opacity-60",
+                  !canContinueToStep2 && "pointer-events-none"
+                )}
+              >
+                <span
+                  className={cn(
+                    "w-6 h-6 rounded-full flex items-center justify-center text-xs font-black",
+                    step === 2 ? "bg-[#E58327] text-slate-950" : "bg-slate-800 text-slate-400"
+                  )}
+                >
+                  2
+                </span>
+                <span className="font-bold text-sm text-white">Payment & confirm</span>
+              </div>
+            </div>
+          )}
 
-          {/* Interactive Quantity Selector & Real-Time Price Calculation */}
-          {selectedBand && (
-            <div className="p-6 bg-[#172535] border-2 border-amber-500/40 rounded-3xl space-y-5 shadow-xl animate-in fade-in-50">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 pb-4 border-b border-slate-700">
-                <div>
-                  <h3 className="text-lg font-black text-white flex items-center gap-2">
-                    <span>Number of Passes / Seats</span>
-                    <span className="text-xs font-mono font-bold text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-full border border-amber-500/30">
-                      {selectedBand.label}
-                    </span>
-                  </h3>
-                  <p className="text-xs text-slate-400 mt-1">
-                    Sell 1 or multiple passes in this band. Inventory quota will decrement automatically.
-                  </p>
+          {/* STEP 1: SALE DETAILS (matches Image 2) */}
+          {step === 1 && (
+            <div className="bg-[#102030] border border-slate-800 rounded-2xl p-5 sm:p-7 space-y-7 shadow-xl">
+              <div>
+                <h2 className="text-xl font-black text-white">Sale details</h2>
+                <p className="text-sm text-slate-400 mt-0.5">
+                  Fill this page, then continue to payment.
+                </p>
+              </div>
+
+              {/* 1. PRICE BAND */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-black text-amber-500 uppercase tracking-wider">
+                    ① PRICE BAND
+                  </span>
                 </div>
-                <div className="px-3.5 py-1.5 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-xs font-bold text-emerald-400 flex items-center gap-1.5 shadow-xs">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>{selectedBand.remaining_count ?? 0} Seats Available</span>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                  {bands.map((band) => {
+                    const isSelected = selectedBandId === band.id;
+                    const isSoldOut = (band.remaining_count ?? 0) <= 0;
+
+                    let priceColorClass = 'text-white';
+                    if (band.id === 'band_5000') priceColorClass = 'text-[#F59E0B]';
+                    if (band.id === 'band_3500') priceColorClass = 'text-[#A78BFA]';
+                    if (band.id === 'band_2500') priceColorClass = 'text-[#2DD4BF]';
+                    if (band.id === 'band_1500') priceColorClass = 'text-[#94A3B8]';
+                    if (band.id === 'band_pp') priceColorClass = 'text-[#38BDF8]';
+
+                    return (
+                      <button
+                        key={band.id}
+                        type="button"
+                        disabled={isSoldOut}
+                        onClick={() => setSelectedBandId(band.id)}
+                        className={cn(
+                          "relative text-left p-4 rounded-xl border transition-all flex flex-col justify-between h-24",
+                          isSelected
+                            ? "border-amber-500 bg-[#16293D] ring-2 ring-amber-500/20"
+                            : isSoldOut
+                            ? "border-slate-800/60 bg-slate-900/30 opacity-50 cursor-not-allowed"
+                            : "border-slate-800 bg-[#0B1724]/80 hover:border-slate-700 hover:bg-[#122436]"
+                        )}
+                      >
+                        <div className="flex items-start justify-between w-full">
+                          <span className={cn("text-xl font-black tracking-tight", priceColorClass)}>
+                            ₹{band.price.toLocaleString('en-IN')}
+                          </span>
+                          {isSelected && (
+                            <span className="w-5 h-5 rounded-full bg-amber-500 text-slate-950 flex items-center justify-center">
+                              <Check className="w-3.5 h-3.5 stroke-[3]" />
+                            </span>
+                          )}
+                        </div>
+
+                        <div>
+                          {isSoldOut ? (
+                            <span className="text-xs font-semibold text-rose-400">Sold out</span>
+                          ) : (
+                            <span className="text-xs font-semibold text-emerald-400">
+                              {band.remaining_count ?? 0} left
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
-              {/* Quantity Stepper & Quick Chips */}
+              {/* 2. HOW MANY PASSES? */}
               <div className="space-y-3">
-                <Label className="text-xs font-bold text-slate-300">Quantity of Passes to Sell:</Label>
-                <div className="flex items-center gap-4 flex-wrap">
-                  {/* Stepper controls */}
-                  <div className="inline-flex items-center bg-slate-900 border-2 border-slate-700 rounded-2xl p-1 shadow-inner">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-black text-amber-500 uppercase tracking-wider">
+                    ② HOW MANY PASSES? (UP TO 10)
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  {/* Stepper */}
+                  <div className="flex items-center bg-[#0B1724] border border-slate-800 rounded-xl p-1">
                     <button
                       type="button"
+                      onClick={() => setQuantity((q) => Math.max(1, q - 1))}
                       disabled={quantity <= 1}
-                      onClick={() => setQuantity((prev) => Math.max(1, prev - 1))}
-                      className="w-12 h-12 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-2xl flex items-center justify-center transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                      className="w-10 h-10 rounded-lg flex items-center justify-center text-slate-300 hover:bg-slate-800 disabled:opacity-30 transition-colors"
                     >
-                      -
+                      <Minus className="w-4 h-4" />
                     </button>
-                    <span className="w-16 text-center font-mono font-black text-2xl text-white">
+                    <span className="w-12 text-center text-xl font-black text-white">
                       {quantity}
                     </span>
                     <button
                       type="button"
-                      disabled={quantity >= (selectedBand.remaining_count ?? 1)}
-                      onClick={() => setQuantity((prev) => Math.min(selectedBand.remaining_count ?? 1, prev + 1))}
-                      className="w-12 h-12 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-2xl flex items-center justify-center transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                      onClick={() => {
+                        const maxAvail = currentBand ? Math.min(10, currentBand.remaining_count ?? 0) : 10;
+                        setQuantity((q) => Math.min(maxAvail, q + 1));
+                      }}
+                      disabled={currentBand ? quantity >= Math.min(10, currentBand.remaining_count ?? 0) : quantity >= 10}
+                      className="w-10 h-10 rounded-lg flex items-center justify-center text-slate-300 hover:bg-slate-800 disabled:opacity-30 transition-colors"
                     >
-                      +
+                      <Plus className="w-4 h-4" />
                     </button>
                   </div>
 
-                  {/* Quick preset chips */}
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {[1, 2, 3, 4, 5].map((n) => {
-                      const disabled = (selectedBand.remaining_count ?? 0) < n;
-                      const isCurrent = quantity === n;
+                  {/* Quick Pick Pills */}
+                  <div className="flex items-center gap-2">
+                    {[1, 2, 3, 4, 5, 10].map((num) => {
+                      const isAvail = currentBand ? (currentBand.remaining_count ?? 0) >= num : true;
+                      const isQuickSelected = quantity === num;
                       return (
                         <button
-                          key={n}
+                          key={num}
                           type="button"
-                          disabled={disabled}
-                          onClick={() => setQuantity(n)}
-                          className={`px-4 py-3 rounded-xl text-sm font-bold transition-all ${
-                            isCurrent
-                              ? 'bg-[#E8913A] text-slate-950 shadow-md font-black ring-2 ring-white scale-105'
-                              : disabled
-                              ? 'bg-slate-900 text-slate-600 border border-slate-800 cursor-not-allowed opacity-50'
-                              : 'bg-slate-800 text-slate-200 hover:bg-slate-700 border border-slate-700'
-                          }`}
+                          disabled={!isAvail}
+                          onClick={() => setQuantity(num)}
+                          className={cn(
+                            "w-10 h-10 rounded-xl font-bold text-sm transition-all border",
+                            isQuickSelected
+                              ? "bg-[#E58327] text-slate-950 border-amber-500"
+                              : !isAvail
+                              ? "bg-slate-900/40 text-slate-600 border-slate-800/40 cursor-not-allowed"
+                              : "bg-[#0B1724] text-slate-300 border-slate-800 hover:border-slate-700 hover:text-white"
+                          )}
                         >
-                          {n} {n === 1 ? 'Pass' : 'Passes'}
+                          {num}
                         </button>
                       );
                     })}
                   </div>
                 </div>
-              </div>
 
-              {/* Real-time price breakdown */}
-              <div className="p-4 bg-slate-950/70 border border-slate-800 rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-                <div className="text-xs text-slate-400">
-                  Total Donation for <span className="text-white font-bold">{quantity} {quantity === 1 ? 'seat' : 'seats'}</span> in {selectedBand.label}:
+                {/* Green Summary Banner (matches Image 2) */}
+                <div className="bg-[#0D281E] border border-emerald-800/60 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-inner">
+                  <div>
+                    <span className="text-base sm:text-lg font-medium text-emerald-300">
+                      {quantity} pass{quantity > 1 ? 'es' : ''} at ₹{(currentBand?.price || 0).toLocaleString('en-IN')}
+                    </span>
+                    <p className="text-xs text-emerald-400/80 mt-0.5 font-mono">
+                      {numberToIndianWords(totalAmount)}
+                    </p>
+                  </div>
+                  <span className="text-2xl sm:text-3xl font-black text-emerald-400 tracking-tight">
+                    ₹{totalAmount.toLocaleString('en-IN')}
+                  </span>
                 </div>
-                <div className="text-2xl font-black text-[#E8913A] font-mono">
-                  {quantity} × ₹{selectedBand.price.toLocaleString('en-IN')} = ₹{(quantity * selectedBand.price).toLocaleString('en-IN')}
+
+                {/* Orange Left Border Info Box (matches Image 2) */}
+                <div className="border-l-4 border-amber-500 bg-[#0B1724]/90 p-4 rounded-r-xl space-y-2 text-xs sm:text-sm text-slate-300">
+                  <p>
+                    <strong className="text-white">Buying for one family or a group of friends?</strong> You can block up to 10 passes together — they all go to one person, in one confirmation message.
+                  </p>
+                  <p>
+                    <strong className="text-white">Buying for different individuals?</strong> Please enter them as separate sales, so each person's pass and credit is recorded correctly.
+                  </p>
                 </div>
-              </div>
-            </div>
-          )}
 
-          <div className="flex justify-end pt-4">
-            <Button
-              size="lg"
-              className="h-14 px-8 bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-black text-lg rounded-xl shadow-lg"
-              disabled={!selectedBandId || quantity < 1 || quantity > (selectedBand?.remaining_count ?? 0)}
-              onClick={() => setStep(2)}
-            >
-              Continue to Ticket Type <ArrowRight className="ml-2 w-5 h-5" />
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* ────────────────────────────────────────────── */}
-      {/* STEP 2: TICKET TYPE (§6.2, Rule R4)             */}
-      {/* ────────────────────────────────────────────── */}
-      {step === 2 && (
-        <div className="space-y-6">
-          <div>
-            <h2 className="text-2xl font-black text-white">2. Choose Ticket Type</h2>
-            <p className="text-slate-400 text-sm mt-1">
-              Golden Rule (R4): Each pass is issued once only — Digital QR or Physical serial, never both.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <button
-              type="button"
-              onClick={() => setTicketType('digital')}
-              className={`p-6 rounded-2xl border-2 text-left transition-all ${
-                ticketType === 'digital'
-                  ? 'bg-amber-500/15 border-amber-500 shadow-lg'
-                  : 'bg-[#1A2839] border-slate-800 hover:border-slate-700'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <Smartphone className="w-8 h-8 text-[#E8913A]" />
-                <div>
-                  <h3 className="text-xl font-black text-white">Digital Pass</h3>
-                  <p className="text-xs text-slate-400 mt-0.5">Instant WhatsApp delivery with QR barcode</p>
+                {/* Row allocation verbatim helper text */}
+                <div className="p-3 bg-slate-900/60 border border-slate-800 rounded-xl text-xs text-slate-400">
+                  <span className="text-slate-300 font-medium">Automatic Seating:</span> You are reserving passes by price band. Seats will be allocated row-wise automatically — donors do not pick individual seat numbers.
                 </div>
               </div>
-            </button>
 
-            <button
-              type="button"
-              onClick={() => setTicketType('physical')}
-              className={`p-6 rounded-2xl border-2 text-left transition-all ${
-                ticketType === 'physical'
-                  ? 'bg-amber-500/15 border-amber-500 shadow-lg'
-                  : 'bg-[#1A2839] border-slate-800 hover:border-slate-700'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <Ticket className="w-8 h-8 text-[#E8913A]" />
-                <div>
-                  <h3 className="text-xl font-black text-white">Physical Ticket</h3>
-                  <p className="text-xs text-slate-400 mt-0.5">Pre-printed ticket with serial number</p>
+              {/* 3. WHO SOLD THIS PASS? (matches Image 2) */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-black text-amber-500 uppercase tracking-wider">
+                    ③ WHO SOLD THIS PASS?
+                  </span>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="sellerSelect" className="text-sm font-semibold text-slate-200">
+                    Seller — gets competition credit <span className="text-red-400">*</span>
+                  </Label>
+                  <select
+                    id="sellerSelect"
+                    value={sellerMemberId}
+                    onChange={(e) => setSellerMemberId(Number(e.target.value))}
+                    className="w-full h-12 px-3 bg-[#0B1724] border border-slate-800 rounded-xl text-white font-medium text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+                  >
+                    {sellers.map((s) => {
+                      const roleTag = s.is_group_admin
+                        ? 'Group Admin'
+                        : s.is_tech_coord
+                        ? 'Tech Coordinator'
+                        : 'Member';
+                      return (
+                        <option key={s.id} value={s.id}>
+                          {s.full_name} [T{s.group_id}] — {roleTag}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  <p className="text-[11px] text-slate-400">
+                    {currentUser.role === 'super_admin' || currentUser.role === 'system_admin'
+                      ? 'Super Admin: all members across all 8 teams are listed.'
+                      : `${currentUser.role === 'tech_coordinator' ? 'Tech Coordinator' : 'Group Admin'}: only your ${currentUser.groupName || 'Team'} members — and your own name — are listed.`}
+                  </p>
                 </div>
               </div>
-            </button>
-          </div>
 
-          {ticketType === 'physical' && (
-            <div className="space-y-4 p-5 bg-[#1A2839] border border-amber-500/30 rounded-2xl">
-              <div>
-                <Label className="text-base font-bold text-white">
-                  Physical Ticket Serial Numbers ({quantity} required) <span className="text-red-400">*</span>
-                </Label>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Enter the exact serial number printed on each physical ticket slip.
-                </p>
-              </div>
+              {/* 4. DONOR DETAILS */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black text-amber-500 uppercase tracking-wider">
+                    ④ DONOR DETAILS
+                  </span>
+                  <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300 hover:text-white">
+                    <input
+                      type="checkbox"
+                      checked={donorIsFallback}
+                      onChange={(e) => setDonorIsFallback(e.target.checked)}
+                      className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-amber-500"
+                    />
+                    <span>Donor details same as seller</span>
+                  </label>
+                </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {physicalSerials.map((serial, idx) => (
-                  <div key={idx} className="space-y-1">
-                    <Label className="text-xs font-bold text-slate-300">
-                      Ticket #{idx + 1} Serial Number
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="donorName" className="text-sm font-semibold text-slate-200">
+                      Donor Name <span className="text-red-400">*</span>
                     </Label>
                     <Input
-                      type="text"
-                      placeholder={`e.g. T-045${idx + 1}`}
-                      value={serial}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setPhysicalSerials((prev) => {
-                          const copy = [...prev];
-                          copy[idx] = val;
-                          return copy;
-                        });
-                        if (idx === 0) setPhysicalSerial(val);
-                      }}
-                      className="h-12 bg-slate-900 border-slate-700 text-white text-base font-mono rounded-xl"
-                      required
+                      id="donorName"
+                      placeholder="e.g. Mr. S. Ramanathan"
+                      value={donorName}
+                      disabled={donorIsFallback}
+                      onChange={(e) => setDonorName(e.target.value)}
+                      className="h-12 bg-[#0B1724] border-slate-800 rounded-xl text-white"
                     />
                   </div>
-                ))}
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="donorPhone" className="text-sm font-semibold text-slate-200">
+                      Donor WhatsApp Mobile <span className="text-red-400">*</span>
+                    </Label>
+                    <Input
+                      id="donorPhone"
+                      placeholder="e.g. 98410 11111 or +1 415 555 0134"
+                      value={donorPhone}
+                      disabled={donorIsFallback}
+                      onChange={(e) => setDonorPhone(e.target.value)}
+                      onBlur={handleDonorPhoneBlur}
+                      className="h-12 bg-[#0B1724] border-slate-800 rounded-xl text-white"
+                    />
+                  </div>
+                </div>
+
+                {duplicateWarning && (
+                  <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-300 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span>{duplicateWarning}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Step 1 Continue CTA */}
+              <div className="pt-2">
+                <Button
+                  type="button"
+                  disabled={!canContinueToStep2}
+                  onClick={() => setStep(2)}
+                  className="w-full h-14 bg-[#E58327] hover:bg-amber-600 text-slate-950 font-black text-base rounded-xl transition-colors shadow-lg shadow-amber-950/40"
+                >
+                  <span>Continue to Payment & Serials →</span>
+                </Button>
               </div>
             </div>
           )}
 
-          <div className="flex justify-between pt-4">
-            <Button
-              variant="outline"
-              size="lg"
-              className="h-14 px-6 bg-[#1A2839] border-slate-800 text-white text-base rounded-xl"
-              onClick={() => setStep(1)}
-            >
-              <ArrowLeft className="mr-2 w-5 h-5" /> Back
-            </Button>
-            <Button
-              size="lg"
-              className="h-14 px-8 bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-black text-lg rounded-xl shadow-lg"
-              disabled={ticketType === 'physical' && physicalSerials.some((s) => !s.trim())}
-              onClick={() => setStep(3)}
-            >
-              Continue to Seller <ArrowRight className="ml-2 w-5 h-5" />
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* ────────────────────────────────────────────── */}
-      {/* STEP 3: WHO SOLD IT (§6.4, Rule R2)            */}
-      {/* ────────────────────────────────────────────── */}
-      {step === 3 && (
-        <div className="space-y-6">
-          <div>
-            <h2 className="text-2xl font-black text-white">3. Who Sold This Pass?</h2>
-            <p className="text-slate-400 text-sm mt-1">
-              Select the member to receive competition credit.
-              {currentUser.role === 'group_admin' && ' (Scoped to your team members only, Rule R2)'}
-            </p>
-          </div>
-
-          <div className="space-y-3">
-            <Label htmlFor="sellerSelect" className="text-base font-bold text-white">
-              Seller Name (for Friendly Competition Credit)
-            </Label>
-            <select
-              id="sellerSelect"
-              value={sellerMemberId}
-              onChange={(e) => setSellerMemberId(Number(e.target.value))}
-              className="w-full h-14 bg-[#1A2839] border-2 border-slate-700 text-white text-lg rounded-2xl px-4 font-medium focus:border-amber-500 focus:outline-none"
-            >
-              {sellers.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.full_name} {s.is_group_admin ? '★ (Coordinator)' : ''} {s.groups?.name ? `[${s.groups.name}]` : ''}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex justify-between pt-4">
-            <Button
-              variant="outline"
-              size="lg"
-              className="h-14 px-6 bg-[#1A2839] border-slate-800 text-white text-base rounded-xl"
-              onClick={() => setStep(2)}
-            >
-              <ArrowLeft className="mr-2 w-5 h-5" /> Back
-            </Button>
-            <Button
-              size="lg"
-              className="h-14 px-8 bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-black text-lg rounded-xl shadow-lg"
-              disabled={!sellerMemberId}
-              onClick={() => setStep(4)}
-            >
-              Continue to Donor Details <ArrowRight className="ml-2 w-5 h-5" />
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* ────────────────────────────────────────────── */}
-      {/* STEP 4: DONOR DETAILS (§6.5, Rule R6, §19.3)   */}
-      {/* ────────────────────────────────────────────── */}
-      {step === 4 && (
-        <div className="space-y-6">
-          <div>
-            <h2 className="text-2xl font-black text-white">4. Donor Details</h2>
-            <p className="text-slate-400 text-sm mt-1">
-              Who is attending or contributing? WhatsApp pass will be sent to this number.
-            </p>
-          </div>
-
-          {/* Rule R6: Seller fallback toggle */}
-          <div className="p-4 bg-[#1A2839] border border-slate-700 rounded-2xl flex items-center justify-between">
-            <div className="space-y-0.5">
-              <span className="text-base font-bold text-white flex items-center gap-2">
-                <UserCheck className="w-5 h-5 text-[#E8913A]" />
-                Donor details not available — send to seller
-              </span>
-              <p className="text-xs text-slate-400">
-                Copies seller's contact and flags record for audit transparency (Rule R6).
-              </p>
-            </div>
-            <input
-              type="checkbox"
-              id="fallbackToggle"
-              checked={donorIsFallback}
-              onChange={(e) => {
-                setDonorIsFallback(e.target.checked);
-                if (e.target.checked) setDuplicateWarning(null);
-              }}
-              className="w-6 h-6 rounded text-amber-500 focus:ring-amber-500 bg-slate-900 border-slate-700"
-            />
-          </div>
-
-          {!donorIsFallback ? (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="donorName" className="text-base font-bold text-white">
-                  Donor Full Name <span className="text-red-400">*</span>
-                </Label>
-                <Input
-                  id="donorName"
-                  type="text"
-                  placeholder="e.g. Mr. S. Ramanathan"
-                  value={donorName}
-                  onChange={(e) => setDonorName(e.target.value)}
-                  className="h-12 bg-[#1A2839] border-slate-700 text-white text-lg rounded-xl"
-                  required
-                />
+          {/* STEP 2: PAYMENT & CONFIRM */}
+          {step === 2 && (
+            <div className="bg-[#102030] border border-slate-800 rounded-2xl p-5 sm:p-7 space-y-7 shadow-xl">
+              <div>
+                <h2 className="text-xl font-black text-white">Step 2 of 2: Physical Pass Serials & Payment</h2>
+                <p className="text-sm text-slate-400 mt-0.5">
+                  Enter physical serial numbers and payment details to complete sale.
+                </p>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="donorPhone" className="text-base font-bold text-white">
-                  Donor WhatsApp Mobile Number <span className="text-red-400">*</span>
-                </Label>
-                <Input
-                  id="donorPhone"
-                  type="tel"
-                  placeholder="10-digit mobile (e.g. 9841012345)"
-                  value={donorPhone}
-                  onChange={(e) => setDonorPhone(e.target.value)}
-                  onBlur={handleDonorPhoneBlur}
-                  className="h-12 bg-[#1A2839] border-slate-700 text-white text-lg rounded-xl font-mono"
-                  required
-                />
+              {/* Summary Chip */}
+              <div className="p-4 bg-[#0B1724] border border-slate-800 rounded-xl flex flex-wrap items-center justify-between gap-3 text-sm">
+                <div>
+                  <span className="font-bold text-white">
+                    Selected: {quantity} × {currentBand?.label} = ₹{totalAmount.toLocaleString('en-IN')}
+                  </span>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Donor: {donorName} ({donorPhone})
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setStep(1)}
+                  className="text-xs font-semibold text-amber-400 hover:text-amber-300 underline"
+                >
+                  Edit details
+                </button>
               </div>
 
-              {duplicateWarning && (
-                <div className="p-3 bg-amber-500/15 border border-amber-500/30 rounded-xl text-amber-300 text-xs flex items-center gap-2">
-                  <ShieldAlert className="w-4 h-4 flex-shrink-0" />
-                  <span>{duplicateWarning} (Multiple passes per family are welcome)</span>
+              {/* Payment Mode Selector */}
+              <div className="space-y-3">
+                <Label className="text-sm font-semibold text-slate-200">
+                  Payment Mode <span className="text-red-400">*</span>
+                </Label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  {[
+                    { id: 'upi', label: 'UPI' },
+                    { id: 'cash', label: 'Cash' },
+                    { id: 'bank_transfer', label: 'Cheque / Bank' },
+                    ...(currentUser.role === 'super_admin' || currentUser.role === 'system_admin'
+                      ? [{ id: 'sponsor_comp', label: 'Complementary' }]
+                      : []),
+                  ].map((mode) => (
+                    <button
+                      key={mode.id}
+                      type="button"
+                      onClick={() => setPaymentMode(mode.id as PaymentMode)}
+                      className={cn(
+                        "h-12 rounded-xl font-bold text-sm border transition-all flex items-center justify-center gap-2",
+                        paymentMode === mode.id
+                          ? "bg-[#E58327] text-slate-950 border-amber-500 shadow-md shadow-amber-950/20"
+                          : "bg-[#0B1724] text-slate-300 border-slate-800 hover:border-slate-700 hover:text-white"
+                      )}
+                    >
+                      {mode.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Payment Reference / UTR (MANDATORY) */}
+              <div className="space-y-1.5">
+                <Label htmlFor="paymentRef" className="text-sm font-semibold text-slate-200">
+                  Payment reference / UTR / Cash voucher no. <span className="text-red-400">*</span>
+                </Label>
+                <Input
+                  id="paymentRef"
+                  placeholder="Enter UPI ref / UTR / Cash voucher now"
+                  value={paymentReferenceNo}
+                  onChange={(e) => setPaymentReferenceNo(e.target.value)}
+                  className="h-12 bg-[#0B1724] border-slate-800 rounded-xl text-white font-mono"
+                  required
+                />
+                <p className="text-[11px] text-slate-400">
+                  Required for audit trail and financial reconciliation.
+                </p>
+              </div>
+
+              {/* Payment Status Toggle */}
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold text-slate-200">
+                  Payment Status
+                </Label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setPaymentStatus('received')}
+                    className={cn(
+                      "h-12 rounded-xl font-bold text-sm border transition-all flex items-center justify-center gap-2",
+                      paymentStatus === 'received'
+                        ? "bg-emerald-600 text-white border-emerald-500 shadow-md shadow-emerald-950/20"
+                        : "bg-[#0B1724] text-slate-300 border-slate-800 hover:border-slate-700"
+                    )}
+                  >
+                    <Check className="w-4 h-4" />
+                    <span>Received (Money in hand/bank)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPaymentStatus('pending')}
+                    className={cn(
+                      "h-12 rounded-xl font-bold text-sm border transition-all flex items-center justify-center gap-2",
+                      paymentStatus === 'pending'
+                        ? "bg-amber-600 text-white border-amber-500 shadow-md shadow-amber-950/20"
+                        : "bg-[#0B1724] text-slate-300 border-slate-800 hover:border-slate-700"
+                    )}
+                  >
+                    <span>Pending (Awaiting money)</span>
+                  </button>
+                </div>
+
+                {paymentStatus === 'pending' && (
+                  <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-300 flex items-start gap-2.5">
+                    <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                    <span>
+                      Passes will be issued immediately so the donor gets their physical serials, but the amount will <strong>NOT</strong> count towards your group's competition total until marked received in the Pending Payments tab.
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Physical Pass Serial Numbers (N Inputs) */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-semibold text-slate-200">
+                    Physical Pass Serial Numbers <span className="text-red-400">*</span>
+                  </Label>
+                  <span className="text-xs text-slate-400 font-mono">
+                    {physicalSerials.filter((s) => s.trim()).length} of {quantity} entered
+                  </span>
+                </div>
+
+                <div className="space-y-2.5">
+                  {Array.from({ length: quantity }).map((_, index) => (
+                    <div key={index} className="flex items-center gap-3">
+                      <span className="w-24 text-xs font-bold text-slate-400 shrink-0">
+                        Pass {index + 1} of {quantity}
+                      </span>
+                      <Input
+                        placeholder={`e.g. HL-${currentBand?.id === 'band_5000' ? 'A' : currentBand?.id === 'band_3500' ? 'B' : currentBand?.id === 'band_2500' ? 'C' : currentBand?.id === 'band_1500' ? 'D' : 'PP'}-${String(index + 1).padStart(4, '0')}`}
+                        value={physicalSerials[index] || ''}
+                        onChange={(e) => {
+                          const updated = [...physicalSerials];
+                          updated[index] = e.target.value.toUpperCase();
+                          setPhysicalSerials(updated);
+                        }}
+                        className="h-11 bg-[#0B1724] border-slate-800 rounded-xl text-white font-mono uppercase"
+                        required
+                      />
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Every pass is physical and serial-numbered. Each serial must be unique across all issued passes.
+                </p>
+              </div>
+
+              {errorMessage && (
+                <div className="p-3 bg-red-950/40 border border-red-800 rounded-xl text-xs text-red-300 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                  <span>{errorMessage}</span>
                 </div>
               )}
 
-              <div className="space-y-2">
-                <Label htmlFor="donorEmail" className="text-sm font-medium text-slate-300">
-                  Donor Email (Optional)
-                </Label>
-                <Input
-                  id="donorEmail"
-                  type="email"
-                  placeholder="name@example.com"
-                  value={donorEmail}
-                  onChange={(e) => setDonorEmail(e.target.value)}
-                  className="h-11 bg-[#1A2839] border-slate-700 text-white text-base rounded-xl"
-                />
-              </div>
-            </div>
-          ) : (
-            <div className="p-5 bg-slate-900/60 border border-slate-800 rounded-2xl text-slate-300 text-sm">
-              Pass will be delivered to the selected seller's registered phone number.
-            </div>
-          )}
-
-          <div className="flex justify-between pt-4">
-            <Button
-              variant="outline"
-              size="lg"
-              className="h-14 px-6 bg-[#1A2839] border-slate-800 text-white text-base rounded-xl"
-              onClick={() => setStep(3)}
-            >
-              <ArrowLeft className="mr-2 w-5 h-5" /> Back
-            </Button>
-            <Button
-              size="lg"
-              className="h-14 px-8 bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-black text-lg rounded-xl shadow-lg"
-              disabled={!donorIsFallback && (!donorName.trim() || donorPhone.length < 10)}
-              onClick={() => setStep(5)}
-            >
-              Continue to Payment <ArrowRight className="ml-2 w-5 h-5" />
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* ────────────────────────────────────────────── */}
-      {/* STEP 5: PAYMENT (§6.6, §12)                    */}
-      {/* ────────────────────────────────────────────── */}
-      {step === 5 && (
-        <div className="space-y-6">
-          <div>
-            <h2 className="text-2xl font-black text-white">5. Payment Details</h2>
-            <p className="text-slate-400 text-sm mt-1">
-              Record the payment mode, amount, and mandatory reference number.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label className="text-base font-bold text-white">Payment Mode</Label>
-              <select
-                value={paymentMode}
-                onChange={(e) => setPaymentMode(e.target.value as PaymentMode)}
-                className="w-full h-12 bg-[#1A2839] border border-slate-700 text-white text-base rounded-xl px-3"
-              >
-                <option value="upi">UPI (GPay, PhonePe, Paytm)</option>
-                <option value="bank_transfer">Bank Transfer (IMPS / NEFT)</option>
-                <option value="cash">Cash</option>
-                <option value="cheque">Cheque</option>
-                <option value="card">Debit / Credit Card</option>
-                <option value="complimentary">Complimentary / Trust Approved</option>
-              </select>
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-base font-bold text-white">Payment Status</Label>
-              <select
-                value={paymentStatus}
-                onChange={(e) => setPaymentStatus(e.target.value as PaymentStatus)}
-                className="w-full h-12 bg-[#1A2839] border border-slate-700 text-white text-base rounded-xl px-3"
-              >
-                <option value="received">✓ Payment Received</option>
-                <option value="pending">⏳ Payment Pending</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label className="text-base font-bold text-white">Amount (₹)</Label>
-              <Input
-                type="number"
-                value={paymentAmount}
-                onChange={(e) => setPaymentAmount(Number(e.target.value))}
-                className="h-12 bg-[#1A2839] border-slate-700 text-white text-xl font-bold font-mono rounded-xl"
-                required
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-base font-bold text-white">
-                Reference Number / UTR <span className="text-red-400">*</span>
-              </Label>
-              <Input
-                type="text"
-                placeholder='e.g. UPI Ref / UTR / "CASH"'
-                value={paymentReferenceNo}
-                onChange={(e) => setPaymentReferenceNo(e.target.value)}
-                className="h-12 bg-[#1A2839] border-slate-700 text-white text-base rounded-xl font-mono"
-                required
-              />
-            </div>
-          </div>
-
-          {/* Screenshot upload */}
-          <div className="space-y-2 p-4 bg-[#1A2839] border border-slate-700 rounded-2xl">
-            <Label className="text-sm font-bold text-white flex items-center gap-2">
-              <Upload className="w-4 h-4 text-amber-500" />
-              Upload Payment Screenshot / Voucher (Optional)
-            </Label>
-            <input
-              type="file"
-              accept="image/*,application/pdf"
-              onChange={(e) => {
-                if (e.target.files && e.target.files[0]) {
-                  setProofFile(e.target.files[0]);
-                }
-              }}
-              className="text-xs text-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-amber-500/20 file:text-amber-400 hover:file:bg-amber-500/30"
-            />
-          </div>
-
-          {/* Language Selection (§19.10) */}
-          <div className="space-y-2">
-            <Label className="text-sm font-bold text-white">WhatsApp Message Language</Label>
-            <div className="flex gap-4">
-              <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
-                <input
-                  type="radio"
-                  name="lang"
-                  checked={preferredLanguage === 'en'}
-                  onChange={() => setPreferredLanguage('en')}
-                  className="text-amber-500 focus:ring-amber-500"
-                />
-                English
-              </label>
-              <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
-                <input
-                  type="radio"
-                  name="lang"
-                  checked={preferredLanguage === 'ta'}
-                  onChange={() => setPreferredLanguage('ta')}
-                  className="text-amber-500 focus:ring-amber-500"
-                />
-                தமிழ் (Tamil)
-              </label>
-            </div>
-          </div>
-
-          {/* Summary Box */}
-          <div className="p-4 bg-slate-900/80 border border-slate-800 rounded-2xl space-y-1.5 text-sm">
-            <div className="flex justify-between text-slate-300">
-              <span>Price Band:</span>
-              <span className="font-bold text-white">{selectedBand?.label}</span>
-            </div>
-            <div className="flex justify-between text-slate-300">
-              <span>Quantity:</span>
-              <span className="font-bold text-emerald-400 font-mono font-black">
-                {quantity} Pass{quantity > 1 ? 'es' : ''}
-              </span>
-            </div>
-            <div className="flex justify-between text-slate-300">
-              <span>Type:</span>
-              <span className="font-bold text-white">
-                {ticketType === 'digital' ? 'Digital QR' : `Physical (${physicalSerials.join(', ')})`}
-              </span>
-            </div>
-            <div className="flex justify-between text-slate-300">
-              <span>Total Amount:</span>
-              <span className="font-bold text-[#E8913A]">₹{paymentAmount.toLocaleString('en-IN')}</span>
-            </div>
-          </div>
-
-          <div className="flex justify-between pt-4">
-            <Button
-              variant="outline"
-              size="lg"
-              className="h-14 px-6 bg-[#1A2839] border-slate-800 text-white text-base rounded-xl"
-              onClick={() => setStep(4)}
-              disabled={isSubmitting}
-            >
-              <ArrowLeft className="mr-2 w-5 h-5" /> Back
-            </Button>
-            <Button
-              size="lg"
-              className="h-14 px-8 bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-black text-lg rounded-xl shadow-lg"
-              disabled={isSubmitting || !paymentReferenceNo.trim()}
-              onClick={handleSubmit}
-            >
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="mr-2 w-5 h-5 animate-spin" /> Issuing {quantity} Pass{quantity > 1 ? 'es' : ''}...
-                </>
-              ) : (
-                `Confirm & Issue ${quantity} Pass${quantity > 1 ? 'es' : ''}`
-              )}
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* ────────────────────────────────────────────── */}
-      {/* STEP 6: SUCCESS & WHATSAPP DELIVERY (§6.7)     */}
-      {/* ────────────────────────────────────────────── */}
-      {step === 6 && successResult && (
-        <div className="space-y-6 text-center py-4">
-          <div className="w-20 h-20 mx-auto bg-emerald-500/15 border-2 border-emerald-500 rounded-full flex items-center justify-center">
-            <CheckCircle2 className="w-10 h-10 text-emerald-400" />
-          </div>
-
-          <div>
-            <h2 className="text-3xl font-black text-white">
-              {successResult.quantity > 1 ? `${successResult.quantity} Passes Issued Successfully!` : 'Pass Issued Successfully!'}
-            </h2>
-            <p className="text-sm text-slate-400 mt-1">
-              {successResult.bandLabel} • Total Donation: <strong className="text-emerald-400 font-mono">₹{successResult.totalAmount.toLocaleString('en-IN')}</strong>
-            </p>
-
-            <div className="mt-4 space-y-2">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
-                Issued Pass Code{successResult.passCodes.length > 1 ? 's' : ''}:
-              </span>
-              <div className="flex flex-wrap items-center justify-center gap-2 max-w-lg mx-auto">
-                {successResult.passCodes.map((code) => (
-                  <span
-                    key={code}
-                    className="px-3.5 py-1.5 rounded-xl bg-amber-500/15 border-2 border-amber-500/50 text-[#E8913A] font-mono font-black text-base shadow-sm"
-                  >
-                    {code}
-                  </span>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* 60-Second Undo Window Card (§19.2) */}
-          {undoSecondsLeft > 0 ? (
-            <div className="p-4 bg-amber-500/10 border-2 border-amber-500/40 rounded-2xl max-w-md mx-auto space-y-2">
-              <div className="flex items-center justify-between text-amber-300 font-bold text-sm">
-                <span>Mistake? 60-Second Undo Active:</span>
-                <span className="font-mono text-base">{undoSecondsLeft}s left</span>
-              </div>
-              <Button
-                variant="destructive"
-                className="w-full h-11 bg-red-600 hover:bg-red-700 text-white font-bold text-sm rounded-xl"
-                onClick={handleUndo}
-                disabled={isUndoing}
-              >
-                {isUndoing ? (
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                ) : (
-                  <RotateCcw className="w-4 h-4 mr-2" />
-                )}
-                Undo This Sale & Return Seat
-              </Button>
-            </div>
-          ) : (
-            <p className="text-xs text-slate-500">
-              The 60-second undo window has closed. Any corrections now require System Admin approval.
-            </p>
-          )}
-
-          {/* Action Buttons: Pass Delivery & WhatsApp */}
-          <div className="max-w-xl mx-auto space-y-3 pt-2">
-            {ticketType === 'digital' ? (
-              <>
-                {/* 1. Primary: Share Pass PDF to WhatsApp (Direct attachment via native share or download+open) */}
-                <button
+              {/* Actions */}
+              <div className="flex items-center gap-3 pt-2">
+                <Button
                   type="button"
-                  onClick={handleSharePdfViaWhatsApp}
-                  disabled={isSharingPdf}
-                  className="w-full flex items-center justify-center gap-2.5 h-14 bg-[#25D366] hover:bg-[#20bd5a] text-slate-950 font-black text-base rounded-2xl shadow-lg shadow-emerald-950/40 transition-all cursor-pointer"
+                  variant="outline"
+                  onClick={() => setStep(1)}
+                  className="h-14 px-6 border-slate-800 bg-[#0B1724] hover:bg-slate-800 text-slate-300 rounded-xl"
                 >
-                  {isSharingPdf ? (
+                  <ArrowLeft className="w-4 h-4 mr-2" />
+                  <span>Back</span>
+                </Button>
+
+                <Button
+                  type="button"
+                  disabled={!canSubmitSale || isSubmitting}
+                  onClick={() => setShowConfirmModal(true)}
+                  className="flex-1 h-14 bg-[#E58327] hover:bg-amber-600 text-slate-950 font-black text-base rounded-xl transition-colors shadow-lg shadow-amber-950/40"
+                >
+                  {isSubmitting ? (
                     <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      Preparing Pass PDF...
+                      <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                      <span>Issuing Passes...</span>
                     </>
                   ) : (
-                    <>
-                      <Send className="w-5 h-5" />
-                      Attach & Share Pass PDF via WhatsApp
-                    </>
+                    <span>Issue {quantity} Physical Pass{quantity > 1 ? 'es' : ''} (₹{totalAmount.toLocaleString('en-IN')})</span>
                   )}
-                </button>
+                </Button>
+              </div>
+            </div>
+          )}
 
-                <p className="text-[11px] text-slate-400 text-center">
-                  Mobile: Attaches PDF directly in WhatsApp • Desktop: Downloads PDF & opens WhatsApp Web ready to attach
+          {/* STEP 3: SUCCESS VIEW */}
+          {step === 3 && successResult && (
+            <div className="bg-[#102030] border border-emerald-800/60 rounded-2xl p-6 sm:p-8 space-y-6 shadow-2xl text-center">
+              <div className="w-16 h-16 rounded-full bg-emerald-500/20 border-2 border-emerald-500 mx-auto flex items-center justify-center">
+                <CheckCircle2 className="w-10 h-10 text-emerald-400" />
+              </div>
+
+              <div>
+                <h2 className="text-2xl sm:text-3xl font-black text-white">
+                  {successResult.quantity} Pass{successResult.quantity > 1 ? 'es' : ''} Issued Successfully!
+                </h2>
+                <p className="text-sm text-slate-300 mt-1">
+                  Issued to <strong className="text-white">{successResult.donorPhone} ({successResult.donorMessage ? successResult.sellerName : ''})</strong> for ₹{successResult.totalAmount.toLocaleString('en-IN')}.
                 </p>
+              </div>
 
-                {/* 2. Secondary Row: Download PDF & WhatsApp Text */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Physical Serial Badges */}
+              <div className="bg-[#0B1724] border border-slate-800 rounded-xl p-4 text-left space-y-2">
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                  Physical Serials & Row Allocation
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  {physicalSerials.map((s, idx) => (
+                    <span
+                      key={idx}
+                      className="px-3 py-1 bg-amber-500/10 border border-amber-500/30 text-amber-300 font-mono text-xs font-bold rounded-lg"
+                    >
+                      {s}
+                    </span>
+                  ))}
+                </div>
+                <p className="text-xs text-slate-400 pt-1">
+                  {successResult.seatDetails}
+                </p>
+              </div>
+
+              {/* WhatsApp CTA */}
+              <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
+                <a
+                  href={`https://wa.me/${successResult.donorPhone.replace(/\D/g, '')}?text=${encodeURIComponent(successResult.donorMessage)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full sm:w-auto h-12 px-6 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/40 transition-colors"
+                >
+                  <Send className="w-4 h-4" />
+                  <span>Send WhatsApp Confirmation</span>
+                </a>
+
+                {/* 60s Undo Window */}
+                {undoSecondsLeft > 0 && !undoMessage && (
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={handleDownloadAllPdfs}
-                    disabled={isDownloadingPdf}
-                    className="h-12 bg-[#1A2839] hover:bg-[#223345] border-2 border-slate-700 text-white font-bold text-sm rounded-xl flex items-center justify-center gap-2"
+                    disabled={isUndoing}
+                    onClick={handleUndo}
+                    className="w-full sm:w-auto h-12 px-5 border-red-800/80 bg-red-950/40 hover:bg-red-900/60 text-red-200 text-xs font-bold rounded-xl"
                   >
-                    {isDownloadingPdf ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
+                    {isUndoing ? (
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
                     ) : (
-                      <Download className="w-4 h-4 text-amber-400" />
+                      <RotateCcw className="w-4 h-4 mr-2" />
                     )}
-                    {successResult.passCodes.length > 1
-                      ? `Download All ${successResult.passCodes.length} PDFs`
-                      : 'Download Pass PDF'}
+                    <span>Undo Sale ({undoSecondsLeft}s left)</span>
                   </Button>
+                )}
 
-                  <a
-                    href={getWhatsAppUrl(successResult.donorPhone, successResult.donorMessage)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="h-12 bg-[#1A2839] hover:bg-[#223345] border-2 border-slate-700 text-slate-200 hover:text-white font-bold text-sm rounded-xl flex items-center justify-center gap-2 transition-all no-underline"
-                  >
-                    <Send className="w-4 h-4 text-emerald-400" />
-                    Open WhatsApp Chat
-                  </a>
-                </div>
-
-                {/* If multiple passes, individual download buttons for convenience */}
-                {successResult.passCodes.length > 1 && (
-                  <div className="p-3 bg-slate-900/60 rounded-xl border border-slate-800 space-y-2">
-                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-                      Download Individual Pass PDFs:
-                    </span>
-                    <div className="flex flex-wrap items-center justify-center gap-2">
-                      {successResult.passCodes.map((c, i) => (
-                        <Button
-                          key={c}
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => downloadTicketPdf(c)}
-                          className="h-8 px-2.5 bg-[#131F2E] border border-slate-700 text-xs font-mono text-amber-400 hover:text-amber-300"
-                        >
-                          <Download className="w-3 h-3 mr-1" />
-                          Pass {i + 1} ({c})
-                        </Button>
-                      ))}
-                    </div>
+                {undoMessage && (
+                  <div className="text-xs font-semibold text-red-400">
+                    {undoMessage}
                   </div>
                 )}
-              </>
-            ) : (
-              /* Physical Ticket Actions */
-              <div className="space-y-3">
-                <a
-                  href={getWhatsAppUrl(successResult.donorPhone, successResult.donorMessage)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full flex items-center justify-center gap-2.5 h-14 bg-[#25D366] hover:bg-[#20bd5a] text-slate-950 font-black text-base rounded-2xl shadow-lg transition-all"
+              </div>
+
+              <div className="pt-4 border-t border-slate-800">
+                <Button
+                  type="button"
+                  onClick={handleResetForm}
+                  className="h-11 px-6 bg-slate-800 hover:bg-slate-700 text-white text-sm font-semibold rounded-xl"
                 >
-                  <Send className="w-5 h-5" />
-                  Send Confirmation to Donor WhatsApp
-                </a>
+                  Sell Another Pass
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB 2: PENDING PAYMENTS (matches Image 3) */}
+      {activeTab === 'pending' && (
+        <div className="space-y-6">
+          <div className="bg-[#102030] border border-slate-800 rounded-2xl p-5 sm:p-7 space-y-5 shadow-xl">
+            <div>
+              <h2 className="text-xl font-black text-white">Pending Payments</h2>
+              <p className="text-sm text-slate-400 mt-0.5">
+                {currentUser.role === 'super_admin' || currentUser.role === 'system_admin'
+                  ? 'All teams pending sales.'
+                  : `Your ${currentUser.groupName || 'Team 1'} pending sales only.`}
+              </p>
+            </div>
+
+            {/* Top Pending Banner */}
+            <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-bold text-amber-300">
+                  Pending Payments ({pendingSales.length} total — ₹{totalPendingAmount.toLocaleString('en-IN')} to be collected)
+                </span>
+              </div>
+              <p className="text-xs text-slate-300">
+                These passes have been issued with physical serials, but payment is not yet confirmed. Once money is in hand/bank, click <strong>"Mark received"</strong> to credit your group's competition total.
+              </p>
+            </div>
+
+            {/* Pending Sales Cards List */}
+            {pendingSales.length === 0 ? (
+              <div className="p-12 text-center border border-dashed border-slate-800 rounded-xl text-slate-400 text-sm">
+                No pending payments found. All issued passes have confirmed payments!
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {pendingSales.map((sale) => {
+                  const isExpanded = expandedPaymentSaleId === sale.id;
+                  return (
+                    <div
+                      key={sale.id}
+                      className="border-2 border-amber-500/40 bg-[#0B1724] rounded-xl p-5 space-y-4 transition-all"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                        <div className="space-y-1">
+                          <h3 className="text-base sm:text-lg font-black text-white">
+                            {sale.donor_name}
+                          </h3>
+                          <p className="text-xs text-slate-400">
+                            {sale.band_label} · {sale.quantity} pass{sale.quantity > 1 ? 'es' : ''} · Serial{sale.serials.length > 1 ? 's' : ''} {sale.serials.join(', ')} · Seller: {sale.seller_name} [{sale.seller_group_name || 'Team'}]
+                          </p>
+                          <div className="pt-1">
+                            <span className="inline-block px-2.5 py-0.5 rounded bg-amber-950/80 border border-amber-700/60 text-amber-400 font-bold text-[11px] uppercase tracking-wider">
+                              PENDING · seat{sale.quantity > 1 ? 's' : ''} held
+                            </span>
+                          </div>
+                        </div>
+
+                        <span className="text-2xl font-black text-amber-400 tracking-tight shrink-0">
+                          ₹{sale.total_amount.toLocaleString('en-IN')}
+                        </span>
+                      </div>
+
+                      {/* Card Action Buttons */}
+                      {!isExpanded && (
+                        <div className="flex items-center gap-3 pt-1">
+                          <Button
+                            type="button"
+                            onClick={() => {
+                              setExpandedPaymentSaleId(sale.id);
+                              setInlineRefNo(sale.reference_no || '');
+                              setInlineMode(sale.mode as PaymentMode || 'upi');
+                            }}
+                            className="h-10 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md shadow-emerald-950/30"
+                          >
+                            Mark received
+                          </Button>
+
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => {
+                              setEditingSale(sale);
+                              setEditDonorName(sale.donor_name);
+                              setEditDonorPhone(sale.donor_phone);
+                            }}
+                            className="h-10 px-4 border-slate-800 bg-[#102030] hover:bg-slate-800 text-slate-300 text-xs font-semibold rounded-xl"
+                          >
+                            <Edit3 className="w-3.5 h-3.5 mr-1.5" />
+                            <span>Edit details</span>
+                          </Button>
+                        </div>
+                      )}
+
+                      {/* Inline Expanded Mark Received Form (matches Image 3) */}
+                      {isExpanded && (
+                        <div className="pt-3 border-t border-slate-800/80 space-y-3">
+                          <div className="space-y-1">
+                            <Label className="text-xs font-semibold text-slate-200">
+                              Reference number / UTR <span className="text-red-400">*</span>
+                            </Label>
+                            <Input
+                              placeholder="Enter UPI ref / UTR now"
+                              value={inlineRefNo}
+                              onChange={(e) => setInlineRefNo(e.target.value)}
+                              className="h-11 bg-[#102030] border-slate-700 text-white font-mono text-sm rounded-xl"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <Label className="text-xs font-semibold text-slate-200">
+                              Payment mode
+                            </Label>
+                            <select
+                              value={inlineMode}
+                              onChange={(e) => setInlineMode(e.target.value as PaymentMode)}
+                              className="w-full h-11 px-3 bg-[#102030] border border-slate-700 rounded-xl text-white font-medium text-sm"
+                            >
+                              <option value="upi">UPI</option>
+                              <option value="cash">Cash</option>
+                              <option value="bank_transfer">Bank Transfer / Cheque</option>
+                            </select>
+                          </div>
+
+                          <div className="flex items-center gap-3 pt-1">
+                            <Button
+                              type="button"
+                              disabled={isMarkingReceived || !inlineRefNo.trim()}
+                              onClick={() => handleSaveReceived(sale)}
+                              className="h-10 px-5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md shadow-emerald-950/30"
+                            >
+                              {isMarkingReceived ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                              ) : (
+                                <Check className="w-3.5 h-3.5 mr-1.5" />
+                              )}
+                              <span>✓ Save as received</span>
+                            </Button>
+
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              onClick={() => setExpandedPaymentSaleId(null)}
+                              className="h-10 text-xs text-slate-400 hover:text-white"
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
 
-            {/* Seller Credit Message */}
-            <a
-              href={getWhatsAppUrl(successResult.sellerPhone, successResult.sellerMessage)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="w-full flex items-center justify-center gap-2 h-11 bg-slate-900/80 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white font-medium text-xs rounded-xl transition-all"
-            >
-              <Send className="w-3.5 h-3.5 text-amber-400" />
-              Send Seller Credit Acknowledgment WhatsApp
-            </a>
-          </div>
-
-          <div className="pt-4">
-            <Button
-              variant="outline"
-              size="lg"
-              className="h-12 px-8 bg-slate-900 border-slate-700 text-white font-bold text-base rounded-xl"
-              onClick={handleResetForNext}
-            >
-              Sell Another Pass
-            </Button>
+            {/* Explanatory Bottom Note (matches Image 3) */}
+            <div className="p-4 bg-slate-900/60 border border-slate-800 rounded-xl text-xs text-slate-400 leading-relaxed">
+              A pending sale still <strong>holds its seats</strong> — pending means "booked, money awaited", not available. Marking received only updates the payment; it does not re-book the seat. Group Admins see only their group's pending sales; Super Admin sees all.
+            </div>
           </div>
         </div>
       )}
 
-      {/* Desktop WhatsApp PDF Attachment Guide Dialog */}
-      <Dialog open={showDesktopAttachGuide} onOpenChange={setShowDesktopAttachGuide}>
-        <DialogContent className="bg-[#0D1926] border-[#1D3249] text-white max-w-md">
+      {/* Confirmation Dialog on Issue */}
+      <Dialog open={showConfirmModal} onOpenChange={setShowConfirmModal}>
+        <DialogContent className="bg-[#102030] border border-slate-800 text-white max-w-md rounded-2xl">
           <DialogHeader>
-            <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mb-2">
-              <FileText className="w-6 h-6" />
-            </div>
             <DialogTitle className="text-lg font-black text-white">
-              Pass PDF Ready to Attach
+              Confirm Pass Issuance
             </DialogTitle>
-            <DialogDescription className="text-slate-300 text-xs">
-              WhatsApp Web has opened in a new tab, and your donor&apos;s official pass PDF has been downloaded to your computer.
+            <DialogDescription className="text-slate-400 text-xs mt-1">
+              Please double check details before issuing physical passes.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-3 py-2 text-xs">
-            <div className="p-3.5 bg-slate-900/80 rounded-xl border border-slate-800 space-y-2">
-              <p className="font-bold text-amber-400 flex items-center gap-1.5">
-                <span>📎</span> How to attach the PDF in WhatsApp Web:
-              </p>
-              <ol className="list-decimal list-inside space-y-1.5 text-slate-300 text-[11px] leading-relaxed">
-                <li>
-                  Switch to the newly opened <strong>WhatsApp Web</strong> tab.
-                </li>
-                <li>
-                  Click the <strong>Paperclip (📎)</strong> icon next to the chat bar and select <strong>Document</strong> (or drag &amp; drop the downloaded PDF into the chat).
-                </li>
-                <li>
-                  Select the downloaded file: <span className="font-mono text-white bg-slate-800 px-1 py-0.5 rounded">{successResult ? `Hrudhayam-Pass-${successResult.passCode}.pdf` : 'Pass.pdf'}</span>
-                </li>
-                <li>
-                  Hit <strong>Send</strong>! The donor receives the authentic PDF admission pass without needing any login or app.
-                </li>
-              </ol>
+          <div className="py-3 space-y-2 text-xs sm:text-sm text-slate-200">
+            <p>
+              You are about to issue <strong>{quantity} physical pass{quantity > 1 ? 'es' : ''}</strong> for <strong>{currentBand?.label}</strong> to <strong>{donorName}</strong> ({donorPhone}).
+            </p>
+            <p>
+              Reference / UTR: <span className="font-mono text-amber-400">{paymentReferenceNo}</span>
+            </p>
+            <p>
+              Serial numbers: <span className="font-mono text-emerald-400">{physicalSerials.filter(Boolean).join(', ')}</span>
+            </p>
+            <p>
+              Total Amount: <strong className="text-white">₹{totalAmount.toLocaleString('en-IN')}</strong> ({paymentStatus === 'received' ? 'Received' : 'Pending'})
+            </p>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowConfirmModal(false)}
+              className="border-slate-800 bg-[#0B1724] text-slate-300 hover:bg-slate-800 rounded-xl text-xs"
+            >
+              Back & Edit
+            </Button>
+            <Button
+              type="button"
+              onClick={handleConfirmIssue}
+              className="bg-[#E58327] hover:bg-amber-600 text-slate-950 font-black rounded-xl text-xs"
+            >
+              Yes, Issue Passes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Donor Details Dialog */}
+      <Dialog open={!!editingSale} onOpenChange={(open) => !open && setEditingSale(null)}>
+        <DialogContent className="bg-[#102030] border border-slate-800 text-white max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-black text-white">
+              Edit Donor Details
+            </DialogTitle>
+            <DialogDescription className="text-slate-400 text-xs mt-1">
+              Update name and mobile number for this pending sale.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-slate-200">Donor Name</Label>
+              <Input
+                value={editDonorName}
+                onChange={(e) => setEditDonorName(e.target.value)}
+                className="h-11 bg-[#0B1724] border-slate-800 text-white rounded-xl"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-slate-200">Donor WhatsApp Mobile</Label>
+              <Input
+                value={editDonorPhone}
+                onChange={(e) => setEditDonorPhone(e.target.value)}
+                className="h-11 bg-[#0B1724] border-slate-800 text-white rounded-xl"
+              />
             </div>
           </div>
 
-          <DialogFooter className="gap-2 sm:gap-0 border-t border-slate-800 pt-3">
+          <DialogFooter>
             <Button
               type="button"
-              className="w-full bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-black text-xs h-10 rounded-xl"
-              onClick={() => setShowDesktopAttachGuide(false)}
+              variant="outline"
+              onClick={() => setEditingSale(null)}
+              className="border-slate-800 bg-[#0B1724] text-slate-300 hover:bg-slate-800 rounded-xl text-xs"
             >
-              Got it, I will attach it in WhatsApp!
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={isSavingEdit}
+              onClick={handleSaveDonorEdit}
+              className="bg-[#E58327] hover:bg-amber-600 text-slate-950 font-bold rounded-xl text-xs"
+            >
+              {isSavingEdit ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
+              Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Demo Switch Role Modal */}
+      <Dialog open={showDemoModal} onOpenChange={setShowDemoModal}>
+        <DialogContent className="bg-[#102030] border border-slate-800 text-white max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-black text-white flex items-center gap-2">
+              <RotateCcw className="w-5 h-5 text-amber-500" />
+              Demo: Switch User Role
+            </DialogTitle>
+            <DialogDescription className="text-slate-400 text-xs mt-1">
+              Select a persona to test role scoping, competition credit, and permissions.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2.5 py-3">
+            <button
+              type="button"
+              disabled={isSwitchingRole}
+              onClick={() => handleDemoSwitch('super_admin')}
+              className="w-full text-left p-3.5 rounded-xl border border-slate-800 bg-[#0B1724] hover:border-amber-500/50 hover:bg-[#122436] transition-all flex items-center justify-between"
+            >
+              <div>
+                <span className="font-bold text-sm text-white block">Kiru / Admin (Super Admin)</span>
+                <span className="text-xs text-slate-400">All 8 teams · all 88 members · full planning & sales</span>
+              </div>
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-400">
+                SUPER ADMIN
+              </span>
+            </button>
+
+            <button
+              type="button"
+              disabled={isSwitchingRole}
+              onClick={() => handleDemoSwitch('group_admin')}
+              className="w-full text-left p-3.5 rounded-xl border border-slate-800 bg-[#0B1724] hover:border-amber-500/50 hover:bg-[#122436] transition-all flex items-center justify-between"
+            >
+              <div>
+                <span className="font-bold text-sm text-white block">Buvana (Group Admin — Team 1)</span>
+                <span className="text-xs text-slate-400">Team 1 only · credits to Team 1 sellers</span>
+              </div>
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-400">
+                GROUP ADMIN
+              </span>
+            </button>
+
+            <button
+              type="button"
+              disabled={isSwitchingRole}
+              onClick={() => handleDemoSwitch('tech_coordinator')}
+              className="w-full text-left p-3.5 rounded-xl border border-slate-800 bg-[#0B1724] hover:border-teal-500/50 hover:bg-[#122436] transition-all flex items-center justify-between"
+            >
+              <div>
+                <span className="font-bold text-sm text-white block">Ganesh R (Tech Coordinator — Team 1)</span>
+                <span className="text-xs text-slate-400">Enters sales on behalf of Team 1 members</span>
+              </div>
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-500/20 text-teal-400">
+                TECH COORD
+              </span>
+            </button>
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowDemoModal(false)}
+              className="border-slate-800 bg-[#0B1724] text-slate-300 hover:bg-slate-800 rounded-xl text-xs"
+            >
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

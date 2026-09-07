@@ -3,8 +3,9 @@
 // Reconciled Developer Specification v1.0
 // ──────────────────────────────────────────────
 
-export type AppRole = 'super_admin' | 'system_admin' | 'group_admin';
-export type TicketType = 'digital' | 'physical';
+export type AppRole = 'super_admin' | 'system_admin' | 'group_admin' | 'tech_coordinator';
+export type TicketType = 'physical';
+export type SeatCategory = 'b5000' | 'b3500' | 'b2500' | 'b1500' | 'pp' | 'vip' | 'obligation' | 'sponsor_comp' | 'blocked' | 'unassigned';
 export type PassStatus = 'issued' | 'used' | 'cancelled';
 export type PaymentStatus = 'received' | 'pending';
 export type PaymentMode = 'upi' | 'bank_transfer' | 'cash' | 'cheque' | 'card' | 'complimentary' | 'legacy';
@@ -44,6 +45,8 @@ export interface Member {
   phone_status: PhoneStatus;
   group_id: number;
   is_group_admin: boolean;
+  is_tech_coord?: boolean;
+  has_login?: boolean;
   is_active: boolean;
   created_at?: string;
   updated_at?: string;
@@ -102,9 +105,12 @@ export interface ProtectedBlock {
 export interface Pass {
   id: string;
   pass_code: string;
+  serial_no: string;
+  row_label?: string | null;
+  price?: number | null;
   band_id: string;
-  ticket_type: TicketType;
-  physical_serial: string | null;
+  ticket_type?: TicketType;
+  physical_serial?: string | null;
   seller_member_id: number | null;
   issued_by_user_id: string | null;
   donor_name: string;
@@ -115,10 +121,11 @@ export interface Pass {
   participating_club_id: string | null;
   status: PassStatus;
   used_at: string | null;
+  entered_at?: string | null;
   cancelled_at: string | null;
   cancelled_by: string | null;
   cancel_reason: string | null;
-  qr_token: string | null;
+  qr_token?: string | null;
   undo_token: string | null;
   undo_expires_at: string | null;
   needs_seller_reconciliation: boolean;
@@ -278,6 +285,13 @@ export interface SeatData {
   row_label: string;
   seat_no: number;
   tier: number | null;
+  category: SeatCategory;
+  price?: number | null;
+  counts_to_raise?: boolean;
+  name?: string | null;
+  obligation_type?: string | null;
+  provisional?: boolean;
+  sold?: boolean;
   obligation: string | null;
   guest_name: string | null;
   guest_phone?: string | null;
@@ -291,3 +305,27 @@ export interface SeatData {
   blocked_reason?: string | null;
   sponsor_id?: string | null;
 }
+
+export interface MessageTemplate {
+  id: string;
+  label: string;
+  category: string;
+  body: string;
+  status: 'active' | 'archived';
+  created_by?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface Campaign {
+  id: string;
+  template_id?: string | null;
+  adhoc_body?: string | null;
+  audience_type: string;
+  audience_filter?: string | null;
+  recipient_count: number;
+  method: 'broadcast' | 'click_to_send';
+  sent_by: string;
+  sent_at: string;
+}
+

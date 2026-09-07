@@ -1,10 +1,11 @@
 export const dynamic = 'force-dynamic';
+
 import { requireUser } from '@/lib/auth/guards';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { EmailClient } from './email-client';
+import { WhatsAppHubClient } from './email-client';
 
 export const metadata = {
-  title: 'Broadcast & Communication | Hrudhayam LIVE',
+  title: 'WhatsApp Communications Hub | Hrudhayam LIVE',
 };
 
 export default async function EmailPage() {
@@ -13,60 +14,88 @@ export default async function EmailPage() {
 
   const isSuperAdmin = user.role === 'super_admin' || user.role === 'system_admin';
 
-  let teamMembers = null;
-  if (isSuperAdmin) {
-    const { data } = await adminClient
-      .from('members')
-      .select('id, full_name, phone_raw')
-      .eq('is_active', true)
-      .order('full_name');
-    teamMembers = data?.map(m => ({ id: String(m.id), full_name: m.full_name, email: m.phone_raw })) || [];
-  }
+  // 1. Fetch message templates
+  const { data: templates } = await adminClient
+    .from('message_templates')
+    .select('*')
+    .order('created_at', { ascending: true });
 
-  // Fetch all active donor passes for broadcast
-  let query = adminClient
+  // 2. Fetch all members with group
+  const { data: members } = await adminClient
+    .from('members')
+    .select('id, full_name, phone_raw, phone_e164, group_id, groups(id, name)')
+    .eq('is_active', true)
+    .order('group_id')
+    .order('full_name');
+
+  // 3. Fetch groups
+  const { data: groups } = await adminClient
+    .from('groups')
+    .select('*')
+    .order('id', { ascending: true });
+
+  // 4. Fetch bands
+  const { data: bands } = await adminClient
+    .from('bands')
+    .select('*')
+    .order('sort_order', { ascending: true });
+
+  // 5. Fetch all passes with donor details
+  let passesQuery = adminClient
     .from('passes')
-    .select('*, band:bands(label, price, name, standard_price), payment:payments(*)')
+    .select(`
+      id,
+      pass_code,
+      physical_serial,
+      serial_no,
+      donor_name,
+      donor_phone,
+      donor_email,
+      band_id,
+      row_label,
+      created_at,
+      bands (
+        id,
+        label,
+        price
+      ),
+      seller:members (
+        id,
+        full_name,
+        group_id,
+        groups (
+          id,
+          name
+        )
+      )
+    `)
     .neq('status', 'cancelled')
     .order('created_at', { ascending: false });
 
-  if (!isSuperAdmin && user.memberId) {
-    query = query.eq('seller_member_id', user.memberId);
+  if (!isSuperAdmin && user.groupId) {
+    passesQuery = passesQuery.eq('seller.group_id', user.groupId);
   }
 
-  const { data: passes } = await query;
+  const { data: passes } = await passesQuery;
 
-  const guests = (passes || []).map((p: any) => ({
-    id: p.id,
-    section: p.band?.label || p.band?.name || 'General',
-    row_label: p.band?.label || p.band?.name || '',
-    seat_no: 1,
-    tier: p.band?.price || p.band?.standard_price || 5000,
-    owner_id: p.seller_member_id ? String(p.seller_member_id) : p.issued_by_user_id,
-    guest_name: p.donor_name,
-    guest_phone: p.donor_phone,
-    guest_email: p.donor_email,
-    pass_code: p.pass_code,
-    qr_token: p.qr_token || p.pass_code,
-    payment_status: p.payment?.status || 'received',
-    ticket_sent: true,
-    ticket_sent_at: p.created_at,
-  }));
+  // 6. Fetch recent logged campaigns
+  const { data: recentCampaigns } = await adminClient
+    .from('campaigns')
+    .select('*')
+    .order('sent_at', { ascending: false })
+    .limit(10);
 
   return (
-    <div className="flex flex-col gap-6 max-w-7xl mx-auto pb-16">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight text-white">Broadcast & Communication Hub</h1>
-        <p className="text-xs text-slate-400 mt-1">
-          Send announcements or 1-Click WhatsApp messages with digital pass links to donors.
-        </p>
-      </div>
-      
-      <EmailClient 
-        isSuperAdmin={isSuperAdmin} 
-        teamMembers={teamMembers || []} 
-        userId={user.id}
-        initialGuests={guests}
+    <div className="max-w-6xl mx-auto pb-16 space-y-6">
+      <WhatsAppHubClient
+        templates={templates || []}
+        members={members || []}
+        groups={groups || []}
+        bands={bands || []}
+        passes={passes || []}
+        recentCampaigns={recentCampaigns || []}
+        currentUser={user}
+        isSuperAdmin={isSuperAdmin}
       />
     </div>
   );
