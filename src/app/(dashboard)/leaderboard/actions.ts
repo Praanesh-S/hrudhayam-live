@@ -20,13 +20,28 @@ export async function takePrizeSnapshot(name: string) {
 
     // 1. Fetch live members & groups
     const [{ data: members }, { data: groups }, { data: passes }, { data: sponsors }] = await Promise.all([
-      adminClient.from('members').select('id, full_name, group_id, is_active').eq('is_active', true),
+      adminClient.from('members').select('id, full_name, group_id, is_group_admin, is_active').eq('is_active', true),
       adminClient.from('groups').select('id, name'),
       adminClient.from('passes').select('seller_member_id, status, source, payments(amount, status)').neq('status', 'cancelled'),
       adminClient.from('sponsors').select('brought_by_member_id, amount, status'),
     ]);
 
     const groupMap = new Map((groups || []).map((g) => [g.id, g.name]));
+
+    const captainMap = new Map<number, string>();
+    (members || []).forEach((m) => {
+      if (m.is_group_admin) {
+        captainMap.set(m.group_id, m.full_name);
+      }
+    });
+
+    const getTeamDisplayName = (groupId: number, fallbackName?: string) => {
+      const captain = captainMap.get(groupId);
+      if (captain) {
+        return `Team ${groupId} — ${captain}`;
+      }
+      return fallbackName || `Team ${groupId}`;
+    };
 
     // 2. Aggregate per member (exclude participating clubs per R7)
     const memberStats = new Map<number, { ticketsCount: number; ticketsAmount: number; sponsorsAmount: number }>();
@@ -62,7 +77,7 @@ export async function takePrizeSnapshot(name: string) {
         member_id: m.id,
         member_name: m.full_name,
         group_id: m.group_id,
-        group_name: groupMap.get(m.group_id) || `Team ${m.group_id}`,
+        group_name: getTeamDisplayName(m.group_id, groupMap.get(m.group_id)),
         tickets_count: stats.ticketsCount,
         tickets_amount: stats.ticketsAmount,
         sponsors_amount: stats.sponsorsAmount,
@@ -93,7 +108,8 @@ export async function takePrizeSnapshot(name: string) {
       const totalRaised = stats.ticketsAmount + stats.sponsorsAmount;
       return {
         group_id: g.id,
-        group_name: g.name,
+        group_name: getTeamDisplayName(g.id, g.name),
+        captain_name: captainMap.get(g.id) || null,
         tickets_count: stats.ticketsCount,
         tickets_amount: stats.ticketsAmount,
         sponsors_amount: stats.sponsorsAmount,

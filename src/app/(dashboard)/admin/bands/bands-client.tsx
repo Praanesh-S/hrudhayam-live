@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { StatusDialog } from '@/components/ui/status-dialog';
+import { cn } from '@/lib/utils';
 
 interface BandsClientProps {
   bands: Band[];
@@ -180,6 +181,55 @@ export function BandsClient({
     };
   }, [stagedSeats]);
 
+  // Map of sequentially sold seats per band
+  const soldSeatMap = useMemo(() => {
+    const map = new Map<string, { soldIndex: number; totalSold: number; bandName: string }>();
+
+    const categoryToBandPrice: Record<string, number> = {
+      b5000: 5000,
+      b3500: 3500,
+      b2500: 2500,
+      b1500: 1500,
+      pp: 1000,
+    };
+
+    for (const [cat, price] of Object.entries(categoryToBandPrice)) {
+      const band = bands.find((b) => b.price === price || b.id.includes(cat));
+      const soldCount = band?.sold_count || 0;
+      if (soldCount <= 0) continue;
+
+      const catSeats = stagedSeats.filter((s) => s.category === cat);
+
+      // Orderly sequential sort:
+      // 1. Section: Ground Floor first, then Balcony
+      // 2. Row: based on standard row list index
+      // 3. Seat number: ascending
+      catSeats.sort((a, b) => {
+        if (a.section !== b.section) {
+          return a.section === 'Ground Floor' ? -1 : 1;
+        }
+        const rowList = a.section === 'Ground Floor' ? groundRowsList : balconyRowsList;
+        const aRowIdx = rowList.indexOf(a.row_label);
+        const bRowIdx = rowList.indexOf(b.row_label);
+        if (aRowIdx !== bRowIdx) {
+          return aRowIdx - bRowIdx;
+        }
+        return a.seat_no - b.seat_no;
+      });
+
+      const soldSlice = catSeats.slice(0, soldCount);
+      soldSlice.forEach((seat, idx) => {
+        map.set(seat.id, {
+          soldIndex: idx + 1,
+          totalSold: soldCount,
+          bandName: (band as any)?.name || band?.label || CATEGORY_META[cat as SeatCategory]?.label || `Band ${cat}`,
+        });
+      });
+    }
+
+    return map;
+  }, [bands, stagedSeats, groundRowsList, balconyRowsList]);
+
   // Handle Apply to Rows
   const handleApplyRows = (e: React.FormEvent) => {
     e.preventDefault();
@@ -299,6 +349,18 @@ export function BandsClient({
 
   // Seat Click Handler
   const handleSeatClick = (seat: SeatData) => {
+    const soldInfo = soldSeatMap.get(seat.id);
+    if (soldInfo) {
+      setDialogState({
+        open: true,
+        type: 'info',
+        title: 'Sold Pass Allocation',
+        message: `This seat (Row ${seat.row_label}, Seat ${seat.seat_no}) represents Sold Pass #${soldInfo.soldIndex} of ${soldInfo.totalSold} sold in ${soldInfo.bandName}. Passes are issued by price band and sequentially shaded in Emerald Green on the venue blueprint.`,
+        actionText: 'OK, Got It',
+      });
+      return;
+    }
+
     if (['vip', 'obligation', 'sponsor_comp'].includes(seat.category)) {
       setNamingSeat(seat);
       setGuestNameInput(seat.name || seat.guest_name || '');
@@ -608,6 +670,32 @@ export function BandsClient({
                 const centerBlock = rowSeats.slice(leftCount, leftCount + centerCount);
                 const rightBlock = rowSeats.slice(leftCount + centerCount);
 
+                // Helper to render individual seat with unique Sold shading
+                const renderSeat = (s: SeatData) => {
+                  const soldInfo = soldSeatMap.get(s.id);
+                  const isSold = !!soldInfo;
+                  const baseColor = CATEGORY_META[s.category]?.color || '#1E293B';
+                  const seatColor = isSold ? '#10B981' : baseColor;
+
+                  const tooltip = isSold
+                    ? `SOLD PASS (#${soldInfo.soldIndex} of ${soldInfo.totalSold} sold in ${soldInfo.bandName}) · Row ${s.row_label} Seat ${s.seat_no}`
+                    : `${s.id}: ${CATEGORY_META[s.category]?.label}${s.name ? ` (${s.name})` : ''}`;
+
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => handleSeatClick(s)}
+                      title={tooltip}
+                      className={cn(
+                        "w-2.5 h-3.5 rounded-xs transition-transform hover:scale-125 cursor-pointer",
+                        isSold && "ring-1 ring-emerald-300 shadow-xs shadow-emerald-500/50"
+                      )}
+                      style={{ backgroundColor: seatColor }}
+                    />
+                  );
+                };
+
                 return (
                   <div key={rLabel} className="flex items-center gap-3">
                     {/* Row Label */}
@@ -623,42 +711,15 @@ export function BandsClient({
                     {/* Physical Seats in 3 blocks */}
                     <div className="flex-1 flex items-center gap-2">
                       <div className="flex items-center gap-0.5">
-                        {leftBlock.map((s) => (
-                          <button
-                            key={s.id}
-                            type="button"
-                            onClick={() => handleSeatClick(s)}
-                            title={`${s.id}: ${CATEGORY_META[s.category]?.label} ${s.name ? `(${s.name})` : ''}`}
-                            className="w-2.5 h-3.5 rounded-xs transition-transform hover:scale-125"
-                            style={{ backgroundColor: CATEGORY_META[s.category]?.color || '#1E293B' }}
-                          />
-                        ))}
+                        {leftBlock.map(renderSeat)}
                       </div>
 
                       <div className="flex items-center gap-0.5">
-                        {centerBlock.map((s) => (
-                          <button
-                            key={s.id}
-                            type="button"
-                            onClick={() => handleSeatClick(s)}
-                            title={`${s.id}: ${CATEGORY_META[s.category]?.label} ${s.name ? `(${s.name})` : ''}`}
-                            className="w-2.5 h-3.5 rounded-xs transition-transform hover:scale-125"
-                            style={{ backgroundColor: CATEGORY_META[s.category]?.color || '#1E293B' }}
-                          />
-                        ))}
+                        {centerBlock.map(renderSeat)}
                       </div>
 
                       <div className="flex items-center gap-0.5">
-                        {rightBlock.map((s) => (
-                          <button
-                            key={s.id}
-                            type="button"
-                            onClick={() => handleSeatClick(s)}
-                            title={`${s.id}: ${CATEGORY_META[s.category]?.label} ${s.name ? `(${s.name})` : ''}`}
-                            className="w-2.5 h-3.5 rounded-xs transition-transform hover:scale-125"
-                            style={{ backgroundColor: CATEGORY_META[s.category]?.color || '#1E293B' }}
-                          />
-                        ))}
+                        {rightBlock.map(renderSeat)}
                       </div>
                     </div>
 
@@ -675,6 +736,10 @@ export function BandsClient({
           {/* Legend */}
           <div className="pt-3 border-t border-slate-800 space-y-2">
             <div className="flex flex-wrap items-center gap-3 text-[11px] font-bold">
+              <span className="flex items-center gap-1.5 text-emerald-400 font-extrabold bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-500/30">
+                <span className="w-3 h-3 rounded-xs bg-[#10B981] ring-1 ring-emerald-300" />
+                Sold Pass ({Array.from(soldSeatMap.values()).length} filled)
+              </span>
               <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#F59E0B]" /> ₹5,000</span>
               <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#8B5CF6]" /> ₹3,500</span>
               <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#0D9488]" /> ₹2,500</span>
@@ -686,8 +751,8 @@ export function BandsClient({
               <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#475569]" /> Blocked</span>
               <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#1E293B]" /> Unassigned</span>
             </div>
-            <p className="text-[10px] text-slate-500">
-              Dashed = reserved (VIP / obligation / sponsor comp / blocked). Priced bands + PP are sold. Click a VIP, obligation or sponsor seat to name who sits there (optional).
+            <p className="text-[10px] text-slate-400">
+              <strong className="text-emerald-400">Emerald Green (■)</strong> seats represent actual passes sold so far, sequentially allocated across each price band from front to back. Click any seat for details.
             </p>
           </div>
         </div>
@@ -722,55 +787,149 @@ export function BandsClient({
             </p>
 
             <div className="space-y-2 text-xs">
-              <div className="flex justify-between items-center">
-                <span className="flex items-center gap-1.5 font-bold text-white">
-                  <span className="w-2.5 h-2.5 rounded-xs bg-[#F59E0B]" /> ₹5,000
-                </span>
-                <div className="text-right">
-                  <span className="font-mono font-bold text-white">{summary.soldCounts.b5000}</span>
-                  <p className="text-[10px] text-slate-500">= ₹{(summary.soldCounts.b5000 * 5000).toLocaleString('en-IN')} if sold</p>
-                </div>
-              </div>
+              {/* Band A */}
+              {(() => {
+                const b = bands.find((x) => x.price === 5000 || x.id.includes('5000'));
+                const sold = b?.sold_count || 0;
+                return (
+                  <div className="flex justify-between items-center">
+                    <span className="flex items-center gap-1.5 font-bold text-white">
+                      <span className="w-2.5 h-2.5 rounded-xs bg-[#F59E0B]" /> ₹5,000
+                    </span>
+                    <div className="text-right">
+                      <div className="flex items-center gap-1.5 justify-end">
+                        <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold text-[10px]">
+                          {sold} sold
+                        </span>
+                        <span className="font-mono font-bold text-white">/ {summary.soldCounts.b5000}</span>
+                      </div>
+                      <p className="text-[10px] text-slate-400">
+                        {sold > 0 ? (
+                          <span className="text-emerald-400 font-mono">₹{(sold * 5000).toLocaleString('en-IN')} raised</span>
+                        ) : (
+                          `= ₹${(summary.soldCounts.b5000 * 5000).toLocaleString('en-IN')} if sold`
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
 
-              <div className="flex justify-between items-center">
-                <span className="flex items-center gap-1.5 font-bold text-white">
-                  <span className="w-2.5 h-2.5 rounded-xs bg-[#8B5CF6]" /> ₹3,500
-                </span>
-                <div className="text-right">
-                  <span className="font-mono font-bold text-white">{summary.soldCounts.b3500}</span>
-                  <p className="text-[10px] text-slate-500">= ₹{(summary.soldCounts.b3500 * 3500).toLocaleString('en-IN')} if sold</p>
-                </div>
-              </div>
+              {/* Band B */}
+              {(() => {
+                const b = bands.find((x) => x.price === 3500 || x.id.includes('3500'));
+                const sold = b?.sold_count || 0;
+                return (
+                  <div className="flex justify-between items-center">
+                    <span className="flex items-center gap-1.5 font-bold text-white">
+                      <span className="w-2.5 h-2.5 rounded-xs bg-[#8B5CF6]" /> ₹3,500
+                    </span>
+                    <div className="text-right">
+                      <div className="flex items-center gap-1.5 justify-end">
+                        <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold text-[10px]">
+                          {sold} sold
+                        </span>
+                        <span className="font-mono font-bold text-white">/ {summary.soldCounts.b3500}</span>
+                      </div>
+                      <p className="text-[10px] text-slate-400">
+                        {sold > 0 ? (
+                          <span className="text-emerald-400 font-mono">₹{(sold * 3500).toLocaleString('en-IN')} raised</span>
+                        ) : (
+                          `= ₹${(summary.soldCounts.b3500 * 3500).toLocaleString('en-IN')} if sold`
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
 
-              <div className="flex justify-between items-center">
-                <span className="flex items-center gap-1.5 font-bold text-white">
-                  <span className="w-2.5 h-2.5 rounded-xs bg-[#0D9488]" /> ₹2,500
-                </span>
-                <div className="text-right">
-                  <span className="font-mono font-bold text-white">{summary.soldCounts.b2500}</span>
-                  <p className="text-[10px] text-slate-500">= ₹{(summary.soldCounts.b2500 * 2500).toLocaleString('en-IN')} if sold</p>
-                </div>
-              </div>
+              {/* Band C */}
+              {(() => {
+                const b = bands.find((x) => x.price === 2500 || x.id.includes('2500'));
+                const sold = b?.sold_count || 0;
+                return (
+                  <div className="flex justify-between items-center">
+                    <span className="flex items-center gap-1.5 font-bold text-white">
+                      <span className="w-2.5 h-2.5 rounded-xs bg-[#0D9488]" /> ₹2,500
+                    </span>
+                    <div className="text-right">
+                      <div className="flex items-center gap-1.5 justify-end">
+                        {sold > 0 && (
+                          <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold text-[10px]">
+                            {sold} sold
+                          </span>
+                        )}
+                        <span className="font-mono font-bold text-white">{sold > 0 ? `/ ${summary.soldCounts.b2500}` : summary.soldCounts.b2500}</span>
+                      </div>
+                      <p className="text-[10px] text-slate-400">
+                        {sold > 0 ? (
+                          <span className="text-emerald-400 font-mono">₹{(sold * 2500).toLocaleString('en-IN')} raised</span>
+                        ) : (
+                          `= ₹${(summary.soldCounts.b2500 * 2500).toLocaleString('en-IN')} if sold`
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
 
-              <div className="flex justify-between items-center">
-                <span className="flex items-center gap-1.5 font-bold text-white">
-                  <span className="w-2.5 h-2.5 rounded-xs bg-[#64748B]" /> ₹1,500
-                </span>
-                <div className="text-right">
-                  <span className="font-mono font-bold text-white">{summary.soldCounts.b1500}</span>
-                  <p className="text-[10px] text-slate-500">= ₹{(summary.soldCounts.b1500 * 1500).toLocaleString('en-IN')} if sold</p>
-                </div>
-              </div>
+              {/* Band D */}
+              {(() => {
+                const b = bands.find((x) => x.price === 1500 || x.id.includes('1500'));
+                const sold = b?.sold_count || 0;
+                return (
+                  <div className="flex justify-between items-center">
+                    <span className="flex items-center gap-1.5 font-bold text-white">
+                      <span className="w-2.5 h-2.5 rounded-xs bg-[#64748B]" /> ₹1,500
+                    </span>
+                    <div className="text-right">
+                      <div className="flex items-center gap-1.5 justify-end">
+                        {sold > 0 && (
+                          <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold text-[10px]">
+                            {sold} sold
+                          </span>
+                        )}
+                        <span className="font-mono font-bold text-white">{sold > 0 ? `/ ${summary.soldCounts.b1500}` : summary.soldCounts.b1500}</span>
+                      </div>
+                      <p className="text-[10px] text-slate-400">
+                        {sold > 0 ? (
+                          <span className="text-emerald-400 font-mono">₹{(sold * 1500).toLocaleString('en-IN')} raised</span>
+                        ) : (
+                          `= ₹${(summary.soldCounts.b1500 * 1500).toLocaleString('en-IN')} if sold`
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
 
-              <div className="flex justify-between items-center">
-                <span className="flex items-center gap-1.5 font-bold text-white">
-                  <span className="w-2.5 h-2.5 rounded-xs bg-[#0284C7]" /> ₹1,000 PP
-                </span>
-                <div className="text-right">
-                  <span className="font-mono font-bold text-white">{summary.soldCounts.pp}</span>
-                  <p className="text-[10px] text-slate-500">= ₹{(summary.soldCounts.pp * 1000).toLocaleString('en-IN')} if sold</p>
-                </div>
-              </div>
+              {/* PP */}
+              {(() => {
+                const b = bands.find((x) => x.price === 1000 || x.id.includes('pp'));
+                const sold = b?.sold_count || 0;
+                return (
+                  <div className="flex justify-between items-center">
+                    <span className="flex items-center gap-1.5 font-bold text-white">
+                      <span className="w-2.5 h-2.5 rounded-xs bg-[#0284C7]" /> ₹1,000 PP
+                    </span>
+                    <div className="text-right">
+                      <div className="flex items-center gap-1.5 justify-end">
+                        <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold text-[10px]">
+                          {sold} sold
+                        </span>
+                        <span className="font-mono font-bold text-white">/ {summary.soldCounts.pp}</span>
+                      </div>
+                      <p className="text-[10px] text-slate-400">
+                        {sold > 0 ? (
+                          <span className="text-emerald-400 font-mono">₹{(sold * 1000).toLocaleString('en-IN')} raised</span>
+                        ) : (
+                          `= ₹${(summary.soldCounts.pp * 1000).toLocaleString('en-IN')} if sold`
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
 

@@ -52,6 +52,22 @@ export default async function LeaderboardPage() {
     memberStats.set(s.brought_by_member_id, current);
   }
 
+  // Find captain for each group
+  const captainMap = new Map<number, string>();
+  (members || []).forEach((m) => {
+    if (m.is_group_admin) {
+      captainMap.set(m.group_id, m.full_name);
+    }
+  });
+
+  const getTeamDisplayName = (groupId: number, fallbackName?: string) => {
+    const captain = captainMap.get(groupId);
+    if (captain) {
+      return `Team ${groupId} — ${captain}`;
+    }
+    return fallbackName || `Team ${groupId}`;
+  };
+
   // Individual standings
   const individual = (members || []).map((m) => {
     const stats = memberStats.get(m.id) || { ticketsCount: 0, ticketsAmount: 0, sponsorsAmount: 0 };
@@ -61,7 +77,7 @@ export default async function LeaderboardPage() {
       member_name: m.full_name,
       is_group_admin: m.is_group_admin,
       group_id: m.group_id,
-      group_name: groupMap.get(m.group_id) || `Team ${m.group_id}`,
+      group_name: getTeamDisplayName(m.group_id, groupMap.get(m.group_id)),
       tickets_count: stats.ticketsCount,
       tickets_amount: stats.ticketsAmount,
       sponsors_amount: stats.sponsorsAmount,
@@ -92,7 +108,8 @@ export default async function LeaderboardPage() {
     const totalRaised = stats.ticketsAmount + stats.sponsorsAmount;
     return {
       group_id: g.id,
-      group_name: g.name,
+      group_name: getTeamDisplayName(g.id, g.name),
+      captain_name: captainMap.get(g.id) || null,
       tickets_count: stats.ticketsCount,
       tickets_amount: stats.ticketsAmount,
       sponsors_amount: stats.sponsorsAmount,

@@ -1070,13 +1070,14 @@ export async function reassignSuperAdmin(targetUserId: string) {
 // ──────────────────────────────────────────────
 
 /**
- * Create a new user login account (Sub-Admin / Coordinator / Staff).
+ * Create a new user login account (Members or Non-Members: Sub-Admin / Coordinator / Staff).
  */
 export async function createUserAccount(data: {
   loginId: string;
   password: string;
-  role: 'super_admin' | 'system_admin' | 'group_admin';
+  role: 'super_admin' | 'system_admin' | 'group_admin' | 'tech_coordinator';
   memberId?: number | null;
+  fullName?: string | null;
   mustChangePassword?: boolean;
 }) {
   try {
@@ -1128,6 +1129,7 @@ export async function createUserAccount(data: {
         password_hash: passwordHash,
         role: data.role || 'group_admin',
         member_id: data.memberId || null,
+        full_name: data.fullName?.trim() || null,
         must_change_password: data.mustChangePassword !== false,
         is_active: true,
       })
@@ -1136,17 +1138,137 @@ export async function createUserAccount(data: {
 
     if (insertError) throw insertError;
 
+    // If linked to member, update member login status
+    if (data.memberId) {
+      const memberUpdates: any = {
+        has_login: true,
+        updated_at: new Date().toISOString(),
+      };
+      if (data.role === 'tech_coordinator') {
+        memberUpdates.is_tech_coord = true;
+      }
+      await adminClient.from('members').update(memberUpdates).eq('id', data.memberId);
+    }
+
     await logAudit(user.id, 'USER_ACCOUNT_CREATE', 'users', newUser.id, {
       login_id: cleanLoginId,
       role: data.role,
       member_id: data.memberId,
+      full_name: data.fullName,
       created_by: user.fullName,
     });
 
+    revalidatePath('/admin/users');
     revalidatePath('/admin/members');
     return { success: true, user: newUser };
   } catch (err: any) {
     return { success: false, error: err.message || 'Failed to create user account.' };
+  }
+}
+
+/**
+ * Update an existing user account (Login ID, Full Name, Role, Active Status, or Password).
+ */
+export async function updateUserAccount(data: {
+  userId: string;
+  loginId?: string;
+  fullName?: string | null;
+  role?: 'super_admin' | 'system_admin' | 'group_admin' | 'tech_coordinator';
+  password?: string;
+  isActive?: boolean;
+  mustChangePassword?: boolean;
+}) {
+  try {
+    const user = await requireSuperOrSystemAdmin();
+    const adminClient = createAdminClient();
+
+    const { data: existingUser } = await adminClient
+      .from('users')
+      .select('id, login_id, member_id, role')
+      .eq('id', data.userId)
+      .single();
+
+    if (!existingUser) return { success: false, error: 'User account not found.' };
+
+    const updatePayload: any = {
+      updated_at: new Date().toISOString(),
+    };
+
+    if (data.loginId) {
+      const cleanLogin = data.loginId.trim();
+      if (cleanLogin.length < 3) {
+        return { success: false, error: 'Login ID must be at least 3 characters.' };
+      }
+      // Check collision
+      const { data: collision } = await adminClient
+        .from('users')
+        .select('id')
+        .eq('login_id', cleanLogin)
+        .neq('id', data.userId)
+        .maybeSingle();
+
+      if (collision) {
+        return { success: false, error: `Login ID "${cleanLogin}" is already taken by another account.` };
+      }
+      updatePayload.login_id = cleanLogin;
+    }
+
+    if (data.fullName !== undefined) {
+      updatePayload.full_name = data.fullName ? data.fullName.trim() : null;
+    }
+
+    if (data.role) {
+      updatePayload.role = data.role;
+    }
+
+    if (data.isActive !== undefined) {
+      updatePayload.is_active = data.isActive;
+      if (!data.isActive) {
+        // Kill session immediately
+        await adminClient.from('user_sessions').delete().eq('user_id', data.userId);
+      }
+    }
+
+    if (data.mustChangePassword !== undefined) {
+      updatePayload.must_change_password = data.mustChangePassword;
+    }
+
+    if (data.password && data.password.trim()) {
+      if (data.password.length < 6) {
+        return { success: false, error: 'Password must be at least 6 characters long.' };
+      }
+      updatePayload.password_hash = await hashPassword(data.password);
+      // Kill previous sessions on password change
+      await adminClient.from('user_sessions').delete().eq('user_id', data.userId);
+    }
+
+    const { error: updateErr } = await adminClient
+      .from('users')
+      .update(updatePayload)
+      .eq('id', data.userId);
+
+    if (updateErr) throw updateErr;
+
+    // If role changed for a member, sync tech coordinator flag
+    if (existingUser.member_id && data.role) {
+      if (data.role === 'tech_coordinator') {
+        await adminClient.from('members').update({ is_tech_coord: true }).eq('id', existingUser.member_id);
+      } else if ((existingUser.role as any) === 'tech_coordinator' && (data.role as any) !== 'tech_coordinator') {
+        await adminClient.from('members').update({ is_tech_coord: false }).eq('id', existingUser.member_id);
+      }
+    }
+
+    await logAudit(user.id, 'USER_ACCOUNT_UPDATE', 'users', data.userId, {
+      login_id: data.loginId || existingUser.login_id,
+      updated_fields: Object.keys(updatePayload),
+      updated_by: user.fullName,
+    });
+
+    revalidatePath('/admin/users');
+    revalidatePath('/admin/members');
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to update user account.' };
   }
 }
 
@@ -1275,6 +1397,7 @@ export async function resetUserPassword(userId: string, newPassword: string, for
       must_change_password: forceChange,
     });
 
+    revalidatePath('/admin/users');
     revalidatePath('/admin/members');
     return { success: true };
   } catch (err: any) {
@@ -1322,6 +1445,7 @@ export async function toggleUserActive(userId: string, isActive: boolean) {
       modified_by: user.fullName,
     });
 
+    revalidatePath('/admin/users');
     revalidatePath('/admin/members');
     return { success: true };
   } catch (err: any) {
@@ -1343,7 +1467,7 @@ export async function deleteUserAccount(userId: string) {
 
     const { data: targetUser } = await adminClient
       .from('users')
-      .select('id, login_id')
+      .select('id, login_id, member_id')
       .eq('id', userId)
       .single();
 
@@ -1366,6 +1490,7 @@ export async function deleteUserAccount(userId: string) {
         login_id: targetUser.login_id,
         reason: 'User has recorded passes/payments. Deactivated instead of deleted to protect audit history.',
       });
+      revalidatePath('/admin/users');
       revalidatePath('/admin/members');
       return {
         success: true,
@@ -1379,11 +1504,20 @@ export async function deleteUserAccount(userId: string) {
     const { error: delErr } = await adminClient.from('users').delete().eq('id', userId);
     if (delErr) throw delErr;
 
+    // Reset member has_login if this user was linked to a member
+    if (targetUser.member_id) {
+      await adminClient
+        .from('members')
+        .update({ has_login: false, is_tech_coord: false, updated_at: new Date().toISOString() })
+        .eq('id', targetUser.member_id);
+    }
+
     await logAudit(user.id, 'USER_ACCOUNT_DELETE', 'users', userId, {
       login_id: targetUser.login_id,
       deleted_by: user.fullName,
     });
 
+    revalidatePath('/admin/users');
     revalidatePath('/admin/members');
     return { success: true };
   } catch (err: any) {

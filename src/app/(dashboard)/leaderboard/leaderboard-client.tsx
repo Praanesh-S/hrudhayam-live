@@ -284,7 +284,13 @@ export function LeaderboardClient({
                     <div key={g.group_id} className="p-4 bg-[#131F2E] border border-slate-800 rounded-xl flex justify-between items-center">
                       <div className="flex items-center gap-3">
                         <span className="font-mono font-bold text-white text-base">#{g.rank}</span>
-                        <span className="font-bold text-white">{g.group_name}</span>
+                        <span className="font-bold text-white">
+                          {g.group_name?.includes('—')
+                            ? g.group_name
+                            : g.captain_name
+                            ? `Team ${g.group_id} — ${g.captain_name}`
+                            : g.group_name}
+                        </span>
                       </div>
                       <span className="font-mono font-black text-[#E8913A]">
                         ₹{g.total_raised?.toLocaleString('en-IN')}
