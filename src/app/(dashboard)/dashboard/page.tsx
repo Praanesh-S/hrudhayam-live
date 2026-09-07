@@ -161,7 +161,7 @@ export default async function DashboardPage() {
           <Layers className="w-5 h-5 text-[#E8913A]" /> Seating Band Capacities & Remaining
         </h3>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           {metrics.bands.map((band) => {
             const sold = band.sold_count ?? 0;
             const cap = band.total_allocated ?? 0;

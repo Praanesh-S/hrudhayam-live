@@ -66,6 +66,10 @@ export async function addParticipatingClub(input: AddClubInput) {
 
     for (const item of passesMix) {
       if (item.count > 0) {
+        if (item.bandId === 'band_pp') {
+          return { success: false, error: 'Programme Pass (PP) is not available for participating club complimentary passes.' };
+        }
+
         const band = bandMap.get(item.bandId);
         if (!band) {
           return { success: false, error: `Invalid band ID: ${item.bandId}` };
@@ -87,10 +91,17 @@ export async function addParticipatingClub(input: AddClubInput) {
       }
     }
 
-    if (totalPassesValue !== 15000) {
+    if (totalPassesValue <= 0) {
       return {
         success: false,
-        error: `Passes must total ₹15,000. Currently selected passes total ₹${totalPassesValue.toLocaleString('en-IN')}.`,
+        error: 'Please select at least 1 complimentary pass for the club.',
+      };
+    }
+
+    if (totalPassesValue > 15000) {
+      return {
+        success: false,
+        error: `Passes total cannot exceed ₹15,000. Currently selected passes total ₹${totalPassesValue.toLocaleString('en-IN')}. Please adjust ticket quantities.`,
       };
     }
 
@@ -102,8 +113,8 @@ export async function addParticipatingClub(input: AddClubInput) {
         contact_name: contactName.trim(),
         contact_phone: contactPhone.trim(),
         entry_fee: 25000,
-        passes_value: 15000,
-        net_contribution: 10000,
+        passes_value: totalPassesValue,
+        net_contribution: 25000 - totalPassesValue,
         brought_by_member_id: broughtByMemberId || null,
         entered_by_user_id: user.id,
       })

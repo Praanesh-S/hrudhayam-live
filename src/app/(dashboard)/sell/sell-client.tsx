@@ -39,6 +39,8 @@ import {
 } from '@/components/ui/dialog';
 import { PendingSaleItem } from './page';
 import { cn } from '@/lib/utils';
+import { StatusDialog } from '@/components/ui/status-dialog';
+import { scrollToMainTop } from '@/components/layout/ScrollToTop';
 
 interface SellClientProps {
   bands: Band[];
@@ -87,6 +89,15 @@ export function SellClient({
   const [showConfirmModal, setShowConfirmModal] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Unmissable status dialog
+  const [dialogState, setDialogState] = useState<{
+    open: boolean;
+    type: 'success' | 'error' | 'warning' | 'info';
+    title: string;
+    message: string | React.ReactNode;
+    actionText?: string;
+  } | null>(null);
 
   // Success state
   const [successResult, setSuccessResult] = useState<{
@@ -202,6 +213,139 @@ export function SellClient({
     return true;
   }, [paymentReferenceNo, physicalSerials]);
 
+  // Step 1: Handle Continue with validation & scrolling
+  const handleContinueToStep2 = () => {
+    if (!selectedBandId || !currentBand) {
+      setDialogState({
+        open: true,
+        type: 'warning',
+        title: 'Select Price Band',
+        message: 'Please select a price band to continue.',
+      });
+      return;
+    }
+
+    if ((currentBand.remaining_count ?? 0) < quantity) {
+      setDialogState({
+        open: true,
+        type: 'warning',
+        title: 'Not Enough Passes Remaining',
+        message: `Only ${currentBand.remaining_count ?? 0} passes remain in ${currentBand.label}. Please choose a lower quantity.`,
+      });
+      return;
+    }
+
+    if (!sellerMemberId) {
+      const el = document.getElementById('sellerSelect');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.focus();
+      }
+      setDialogState({
+        open: true,
+        type: 'warning',
+        title: 'Missing Seller Member',
+        message: 'Please select who sold this pass so competition points can be attributed correctly.',
+      });
+      return;
+    }
+
+    if (!donorName.trim()) {
+      const el = document.getElementById('donorName');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.focus();
+      }
+      setDialogState({
+        open: true,
+        type: 'warning',
+        title: 'Missing Donor Name',
+        message: 'Please enter the Donor’s full name.',
+      });
+      return;
+    }
+
+    const cleanPhone = donorPhone.replace(/\D/g, '');
+    if (cleanPhone.length < 10) {
+      const el = document.getElementById('donorPhone');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.focus();
+      }
+      setDialogState({
+        open: true,
+        type: 'warning',
+        title: 'Invalid Mobile Number',
+        message: 'Please enter a valid 10-digit mobile number for the donor so WhatsApp confirmations can be delivered.',
+      });
+      return;
+    }
+
+    setStep(2);
+    scrollToMainTop(true);
+  };
+
+  // Step 2: Handle Finalize / Issue Passes with validation & scrolling
+  const handleAttemptSubmitSale = () => {
+    // 1. Check physical pass serials
+    for (let i = 0; i < quantity; i++) {
+      const serial = (physicalSerials[i] || '').trim();
+      if (!serial) {
+        const el = document.getElementById(`physicalSerial_${i}`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.focus();
+        }
+        setDialogState({
+          open: true,
+          type: 'warning',
+          title: `Missing Serial for Pass #${i + 1}`,
+          message: `Please enter the physical pass serial number for Pass ${i + 1} of ${quantity}.`,
+        });
+        return;
+      }
+    }
+
+    // 2. Check duplicate serials
+    const uniqueSet = new Set<string>();
+    for (let i = 0; i < quantity; i++) {
+      const upper = (physicalSerials[i] || '').trim().toUpperCase();
+      if (uniqueSet.has(upper)) {
+        const el = document.getElementById(`physicalSerial_${i}`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.focus();
+        }
+        setDialogState({
+          open: true,
+          type: 'error',
+          title: 'Duplicate Pass Serial',
+          message: `Serial number "${upper}" was entered more than once. Every physical pass must have a unique serial number.`,
+        });
+        return;
+      }
+      uniqueSet.add(upper);
+    }
+
+    // 3. Check payment reference
+    if (!paymentReferenceNo.trim()) {
+      const el = document.getElementById('paymentRef');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.focus();
+      }
+      setDialogState({
+        open: true,
+        type: 'warning',
+        title: 'Missing Payment Reference',
+        message: 'Please enter the transaction reference number, UPI UTR, cheque number, or cash voucher reference.',
+      });
+      return;
+    }
+
+    setShowConfirmModal(true);
+  };
+
   // Handle Form Submission
   const handleConfirmIssue = async () => {
     setShowConfirmModal(false);
@@ -228,7 +372,12 @@ export function SellClient({
 
       if (!res.success) {
         setErrorMessage(res.error || 'Failed to issue passes.');
-        toast.error(res.error || 'Failed to issue passes.');
+        setDialogState({
+          open: true,
+          type: 'error',
+          title: 'Failed to Issue Passes',
+          message: res.error || 'Failed to issue passes. Please verify the serial numbers and try again.',
+        });
         setIsSubmitting(false);
         return;
       }
@@ -254,9 +403,15 @@ export function SellClient({
 
       setUndoSecondsLeft(60);
       setStep(3); // Success view
+      scrollToMainTop(true);
     } catch (err: any) {
       setErrorMessage(err.message || 'An unexpected error occurred.');
-      toast.error(err.message || 'An unexpected error occurred.');
+      setDialogState({
+        open: true,
+        type: 'error',
+        title: 'Unexpected Error',
+        message: err.message || 'An unexpected error occurred while issuing passes.',
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -410,7 +565,10 @@ export function SellClient({
       {/* Top Navigation Tabs (matches Image 2 & Image 3) */}
       <div className="flex flex-wrap items-center gap-3">
         <button
-          onClick={() => setActiveTab('sell')}
+          onClick={() => {
+            setActiveTab('sell');
+            scrollToMainTop(true);
+          }}
           className={cn(
             "px-5 py-2.5 rounded-xl font-bold text-sm transition-all shadow-sm",
             activeTab === 'sell'
@@ -422,7 +580,10 @@ export function SellClient({
         </button>
 
         <button
-          onClick={() => setActiveTab('pending')}
+          onClick={() => {
+            setActiveTab('pending');
+            scrollToMainTop(true);
+          }}
           className={cn(
             "px-5 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 shadow-sm",
             activeTab === 'pending'
@@ -756,8 +917,7 @@ export function SellClient({
               <div className="pt-2">
                 <Button
                   type="button"
-                  disabled={!canContinueToStep2}
-                  onClick={() => setStep(2)}
+                  onClick={handleContinueToStep2}
                   className="w-full h-14 bg-[#E58327] hover:bg-amber-600 text-slate-950 font-black text-base rounded-xl transition-colors shadow-lg shadow-amber-950/40"
                 >
                   <span>Continue to Payment & Serials →</span>
@@ -906,6 +1066,7 @@ export function SellClient({
                         Pass {index + 1} of {quantity}
                       </span>
                       <Input
+                        id={`physicalSerial_${index}`}
                         placeholder={`e.g. HL-${currentBand?.id === 'band_5000' ? 'A' : currentBand?.id === 'band_3500' ? 'B' : currentBand?.id === 'band_2500' ? 'C' : currentBand?.id === 'band_1500' ? 'D' : 'PP'}-${String(index + 1).padStart(4, '0')}`}
                         value={physicalSerials[index] || ''}
                         onChange={(e) => {
@@ -945,8 +1106,8 @@ export function SellClient({
 
                 <Button
                   type="button"
-                  disabled={!canSubmitSale || isSubmitting}
-                  onClick={() => setShowConfirmModal(true)}
+                  disabled={isSubmitting}
+                  onClick={handleAttemptSubmitSale}
                   className="flex-1 h-14 bg-[#E58327] hover:bg-amber-600 text-slate-950 font-black text-base rounded-xl transition-colors shadow-lg shadow-amber-950/40"
                 >
                   {isSubmitting ? (
@@ -1382,6 +1543,18 @@ export function SellClient({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Unmissable Status Dialog */}
+      {dialogState && (
+        <StatusDialog
+          open={dialogState.open}
+          onOpenChange={(open) => setDialogState(open ? dialogState : null)}
+          type={dialogState.type}
+          title={dialogState.title}
+          message={dialogState.message}
+          actionText={dialogState.actionText}
+        />
+      )}
     </div>
   );
 }

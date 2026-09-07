@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { getSessionUser } from '@/lib/auth/session';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Header } from '@/components/layout/Header';
+import { ScrollToTop } from '@/components/layout/ScrollToTop';
 
 export default async function DashboardLayout({
   children,
@@ -25,7 +26,8 @@ export default async function DashboardLayout({
       <div className="flex flex-col flex-1 w-0 overflow-hidden">
         <Header user={user} />
         
-        <main className="flex-1 relative overflow-y-auto focus:outline-none bg-background">
+        <main id="main-scroll-container" className="flex-1 relative overflow-y-auto focus:outline-none bg-background">
+          <ScrollToTop />
           <div className="py-6 px-4 sm:px-6 md:px-8">
             {children}
           </div>

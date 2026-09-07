@@ -15,6 +15,7 @@ import {
   Ticket,
   AlertTriangle
 } from 'lucide-react';
+import { StatusDialog } from '@/components/ui/status-dialog';
 
 type CheckinResult = {
   success: boolean;
@@ -41,10 +42,31 @@ export function CheckinClient({
   const [result, setResult] = useState<CheckinResult | null>(null);
   const [recentAdmissions, setRecentAdmissions] = useState<Array<{ serial: string; name: string; band: string; time: string }>>([]);
 
+  // Unmissable status dialog
+  const [dialogState, setDialogState] = useState<{
+    open: boolean;
+    type: 'success' | 'error' | 'warning' | 'info';
+    title: string;
+    message: string | React.ReactNode;
+  } | null>(null);
+
   const handleCheckin = async (e?: React.FormEvent, override = false) => {
     if (e) e.preventDefault();
     const query = serialInput.trim();
-    if (!query) return;
+    if (!query) {
+      const el = document.getElementById('checkinSerialInput');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.focus();
+      }
+      setDialogState({
+        open: true,
+        type: 'warning',
+        title: 'Missing Pass Serial',
+        message: 'Please enter the serial number printed on the physical pass (e.g. HL-A-0001).',
+      });
+      return;
+    }
 
     setIsLoading(true);
 
@@ -122,6 +144,7 @@ export function CheckinClient({
           <form onSubmit={(e) => handleCheckin(e)} className="space-y-3">
             <div className="relative">
               <Input
+                id="checkinSerialInput"
                 type="text"
                 autoFocus
                 placeholder="Enter Physical Serial No..."
@@ -142,7 +165,7 @@ export function CheckinClient({
 
             <Button
               type="submit"
-              disabled={isLoading || !serialInput.trim()}
+              disabled={isLoading}
               className="w-full h-12 bg-amber-500 hover:bg-[#D97706] text-slate-950 font-black text-base rounded-xl transition-all shadow-md"
             >
               {isLoading ? (
@@ -274,6 +297,17 @@ export function CheckinClient({
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {/* Unmissable Status Dialog */}
+      {dialogState && (
+        <StatusDialog
+          open={dialogState.open}
+          onOpenChange={(open) => setDialogState(open ? dialogState : null)}
+          type={dialogState.type}
+          title={dialogState.title}
+          message={dialogState.message}
+        />
       )}
     </div>
   );

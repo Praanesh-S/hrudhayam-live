@@ -21,6 +21,7 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { StatusDialog } from '@/components/ui/status-dialog';
 
 interface BandsClientProps {
   bands: Band[];
@@ -55,13 +56,22 @@ export function BandsClient({
 
   // Form controls for Assign Rows
   const [assignFloor, setAssignFloor] = useState<SeatSection>('Ground Floor');
-  const [fromRow, setFromRow] = useState<string>('A');
+  const [fromRow, setFromRow] = useState<string>('Special A');
   const [toRow, setToRow] = useState<string>('C');
   const [selectedCategory, setSelectedCategory] = useState<SeatCategory>('b5000');
 
   // Interactive seat naming modal
   const [namingSeat, setNamingSeat] = useState<SeatData | null>(null);
   const [guestNameInput, setGuestNameInput] = useState('');
+
+  // Unmissable status dialog
+  const [dialogState, setDialogState] = useState<{
+    open: boolean;
+    type: 'success' | 'error' | 'warning' | 'info';
+    title: string;
+    message: string | React.ReactNode;
+    actionText?: string;
+  } | null>(null);
 
   // Reassignment confirmation modal for rows with sales
   const [pendingReassignment, setPendingReassignment] = useState<{
@@ -177,7 +187,15 @@ export function BandsClient({
     const fromIdx = rowsList.indexOf(fromRow);
     const toIdx = rowsList.indexOf(toRow);
 
-    if (fromIdx === -1 || toIdx === -1) return;
+    if (fromIdx === -1 || toIdx === -1) {
+      setDialogState({
+        open: true,
+        type: 'warning',
+        title: 'Invalid Row Range',
+        message: `Please select valid starting and ending rows for ${assignFloor}.`,
+      });
+      return;
+    }
 
     const startIdx = Math.min(fromIdx, toIdx);
     const endIdx = Math.max(fromIdx, toIdx);
@@ -232,9 +250,20 @@ export function BandsClient({
       })
     );
 
+    // Auto-switch visual tab to the floor being assigned
+    setActiveFloor(assignFloor);
+
     setStatusMessage({
       type: 'success',
       text: `Staged: Rows ${fromRow} to ${toRow} in ${assignFloor} assigned as ${targetCategoryMeta.label}. Click "Review & Save" to commit.`,
+    });
+
+    setDialogState({
+      open: true,
+      type: 'success',
+      title: 'Rows Reallocated in Layout',
+      message: `Rows ${fromRow} to ${toRow} on ${assignFloor} are now assigned to ${targetCategoryMeta.label}. Click "Save Layout to Database" to publish changes.`,
+      actionText: 'OK, View Layout',
     });
   };
 
@@ -314,17 +343,33 @@ export function BandsClient({
         text: `Layout saved · ${timeStr}. Real-time quotas and capacities updated.`,
       });
       setShowReviewModal(false);
+      setDialogState({
+        open: true,
+        type: 'success',
+        title: 'Hall Layout Saved!',
+        message: `The hall blueprint and seat price band capacities have been saved to the database at ${timeStr}. Real-time quotas are live.`,
+      });
     } else {
       setStatusMessage({ type: 'error', text: res.error || 'Failed to save layout plan.' });
+      setDialogState({
+        open: true,
+        type: 'error',
+        title: 'Failed to Save Layout',
+        message: res.error || 'Failed to save layout plan.',
+      });
     }
   };
 
   // Discard staged changes
   const handleDiscard = () => {
-    if (confirm('Discard all unsaved staged changes and revert to current database layout?')) {
-      setStagedSeats(initialSeats);
-      setStatusMessage(null);
-    }
+    setStagedSeats(initialSeats);
+    setStatusMessage(null);
+    setDialogState({
+      open: true,
+      type: 'info',
+      title: 'Staged Changes Discarded',
+      message: 'Reverted all unsaved changes to the current database layout.',
+    });
   };
 
   return (
@@ -367,7 +412,7 @@ export function BandsClient({
               onChange={(e) => {
                 const floor = e.target.value as SeatSection;
                 setAssignFloor(floor);
-                setFromRow(floor === 'Ground Floor' ? 'A' : 'A');
+                setFromRow(floor === 'Ground Floor' ? 'Special A' : 'A');
                 setToRow(floor === 'Ground Floor' ? 'C' : 'C');
               }}
               className="w-full h-10 bg-[#1A2839] border border-slate-700 text-white rounded-xl px-3 text-xs font-bold"
@@ -436,6 +481,32 @@ export function BandsClient({
         <p className="text-[11px] text-slate-500">
           Reassigning a row that already has sales opens a confirmation: sold seats keep their original price, only unsold seats take the new band. VIP Box is fixed.
         </p>
+
+        {hasStagedChanges && (
+          <div className="p-3 bg-amber-500/10 border border-amber-500/40 rounded-xl flex flex-wrap items-center justify-between gap-3 pt-2">
+            <span className="text-xs text-amber-300 font-bold flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" />
+              Unsaved changes staged in the layout map!
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={handleDiscard}
+                className="h-8 text-xs text-slate-400 hover:text-white"
+              >
+                Discard
+              </Button>
+              <Button
+                type="button"
+                onClick={() => setShowReviewModal(true)}
+                className="h-9 px-4 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black text-xs rounded-xl shadow-md"
+              >
+                💾 Review & Save Layout Plan
+              </Button>
+            </div>
+          </div>
+        )}
       </form>
 
       {/* ─────────────────────────────────────────────────────────────
@@ -986,6 +1057,18 @@ export function BandsClient({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Unmissable Status Dialog */}
+      {dialogState && (
+        <StatusDialog
+          open={dialogState.open}
+          onOpenChange={(open) => setDialogState(open ? dialogState : null)}
+          type={dialogState.type}
+          title={dialogState.title}
+          message={dialogState.message}
+          actionText={dialogState.actionText}
+        />
       )}
     </div>
   );

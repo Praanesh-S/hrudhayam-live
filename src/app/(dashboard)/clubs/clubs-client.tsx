@@ -20,6 +20,9 @@ import {
 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
+import { StatusDialog } from '@/components/ui/status-dialog';
+import { scrollToMainTop } from '@/components/layout/ScrollToTop';
+
 interface ClubsClientProps {
   clubs: any[];
   bands: Band[];
@@ -29,6 +32,9 @@ interface ClubsClientProps {
 
 export function ClubsClient({ clubs, bands, members }: ClubsClientProps) {
   const [showAddForm, setShowAddForm] = useState(false);
+
+  // Exclude PP from participating club complimentary passes per specification
+  const eligibleBands = bands.filter((b) => b.id !== 'band_pp');
 
   // Form fields
   const [clubName, setClubName] = useState('');
@@ -41,21 +47,25 @@ export function ClubsClient({ clubs, bands, members }: ClubsClientProps) {
   // Pass quantities map: { [bandId]: count }
   const [passCounts, setPassCounts] = useState<Record<string, number>>(() => {
     const initial: Record<string, number> = {};
-    bands.forEach((b) => (initial[b.id] = 0));
+    eligibleBands.forEach((b) => (initial[b.id] = 0));
     return initial;
   });
 
   const [isLoading, setIsLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [dialogState, setDialogState] = useState<{
+    open: boolean;
+    type: 'success' | 'error' | 'warning' | 'info';
+    title: string;
+    message: string | React.ReactNode;
+  } | null>(null);
 
-  // Calculate total pass value
-  const totalPassValue = bands.reduce((sum, b) => {
+  // Calculate total pass value across eligible bands
+  const totalPassValue = eligibleBands.reduce((sum, b) => {
     const count = passCounts[b.id] || 0;
     return sum + b.price * count;
   }, 0);
 
-  const isValidValue = totalPassValue === 15000;
+  const isValidValue = totalPassValue > 0 && totalPassValue <= 15000;
 
   const handleCountChange = (bandId: string, delta: number) => {
     setPassCounts((prev) => {
@@ -67,14 +77,97 @@ export function ClubsClient({ clubs, bands, members }: ClubsClientProps) {
 
   const handleAddClub = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isValidValue) {
-      setErrorMessage(`Passes must total ₹15,000. Currently: ₹${totalPassValue.toLocaleString('en-IN')}`);
+
+    if (!clubName.trim()) {
+      const el = document.getElementById('clubNameInput');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.focus();
+      }
+      setDialogState({
+        open: true,
+        type: 'warning',
+        title: 'Missing Club Name',
+        message: 'Please enter the name of the participating Rotary Club.',
+      });
+      return;
+    }
+
+    if (!contactName.trim()) {
+      const el = document.getElementById('contactNameInput');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.focus();
+      }
+      setDialogState({
+        open: true,
+        type: 'warning',
+        title: 'Missing Contact Person',
+        message: 'Please enter the contact person’s name for this club.',
+      });
+      return;
+    }
+
+    const cleanPhone = contactPhone.replace(/\D/g, '');
+    if (cleanPhone.length < 10) {
+      const el = document.getElementById('contactPhoneInput');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.focus();
+      }
+      setDialogState({
+        open: true,
+        type: 'warning',
+        title: 'Invalid Contact Mobile',
+        message: 'Please enter a valid 10-digit mobile number for WhatsApp pass delivery.',
+      });
+      return;
+    }
+
+    if (totalPassValue <= 0) {
+      const el = document.getElementById('passBuilderSection');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      setDialogState({
+        open: true,
+        type: 'warning',
+        title: 'Select Complimentary Passes',
+        message: 'Please select at least 1 complimentary pass for this club (up to ₹15,000 value).',
+      });
+      return;
+    }
+
+    if (totalPassValue > 15000) {
+      const el = document.getElementById('passBuilderSection');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      setDialogState({
+        open: true,
+        type: 'warning',
+        title: 'Pass Value Exceeded',
+        message: `Pass total cannot exceed ₹15,000. Currently selected passes total ₹${totalPassValue.toLocaleString('en-IN')}. Please reduce the number of tickets.`,
+      });
+      return;
+    }
+
+    if (!paymentReferenceNo.trim()) {
+      const el = document.getElementById('paymentRefInput');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.focus();
+      }
+      setDialogState({
+        open: true,
+        type: 'warning',
+        title: 'Missing Payment Reference',
+        message: 'Please enter the Payment Reference Number / UTR / Cheque No.',
+      });
       return;
     }
 
     setIsLoading(true);
-    setErrorMessage(null);
-    setSuccessMessage(null);
 
     const passesMix = Object.entries(passCounts)
       .filter(([_, count]) => count > 0)
@@ -93,9 +186,19 @@ export function ClubsClient({ clubs, bands, members }: ClubsClientProps) {
     setIsLoading(false);
 
     if (!res.success) {
-      setErrorMessage(res.error || 'Failed to add participating club.');
+      setDialogState({
+        open: true,
+        type: 'error',
+        title: 'Failed to Add Club',
+        message: res.error || 'Failed to add participating club.',
+      });
     } else {
-      setSuccessMessage(`Club "${clubName}" added successfully with ${res.passesCount} passes issued!`);
+      setDialogState({
+        open: true,
+        type: 'success',
+        title: 'Club Added Successfully!',
+        message: `Club "${clubName}" recorded with ${res.passesCount} complimentary passes issued (Passes value: ₹${totalPassValue.toLocaleString('en-IN')}).`,
+      });
       // Reset form
       setClubName('');
       setContactName('');
@@ -103,9 +206,10 @@ export function ClubsClient({ clubs, bands, members }: ClubsClientProps) {
       setBroughtByMemberId('');
       setPaymentReferenceNo('');
       const resetCounts: Record<string, number> = {};
-      bands.forEach((b) => (resetCounts[b.id] = 0));
+      eligibleBands.forEach((b) => (resetCounts[b.id] = 0));
       setPassCounts(resetCounts);
       setShowAddForm(false);
+      scrollToMainTop(true);
     }
   };
 
@@ -147,23 +251,6 @@ export function ClubsClient({ clubs, bands, members }: ClubsClientProps) {
         </div>
       </div>
 
-      {/* Messages */}
-      {errorMessage && (
-        <Alert variant="destructive" className="bg-red-950/70 border-red-800 text-red-100">
-          <AlertCircle className="h-5 w-5 text-red-400" />
-          <AlertTitle className="text-base font-bold">Error</AlertTitle>
-          <AlertDescription className="text-sm">{errorMessage}</AlertDescription>
-        </Alert>
-      )}
-
-      {successMessage && (
-        <Alert className="bg-emerald-950/70 border-emerald-800 text-emerald-100">
-          <CheckCircle2 className="h-5 w-5 text-emerald-400" />
-          <AlertTitle className="text-base font-bold">Success</AlertTitle>
-          <AlertDescription className="text-sm">{successMessage}</AlertDescription>
-        </Alert>
-      )}
-
       {/* Header action button */}
       <div className="flex justify-between items-center">
         <h2 className="text-xl font-bold text-white">Registered Clubs</h2>
@@ -184,43 +271,43 @@ export function ClubsClient({ clubs, bands, members }: ClubsClientProps) {
               New Participating Rotary Club
             </h3>
             <p className="text-slate-400 text-sm mt-1">
-              ₹25,000 fee includes ₹15,000 in donor passes. Compose the passes below to match ₹15,000 exactly.
+              ₹25,000 fee includes complimentary passes up to ₹15,000. Compose the passes below.
             </p>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label className="text-sm font-bold text-white">Club Name *</Label>
+              <Label htmlFor="clubNameInput" className="text-sm font-bold text-white">Club Name *</Label>
               <Input
+                id="clubNameInput"
                 placeholder="e.g. Rotary Club of Madras East"
                 value={clubName}
                 onChange={(e) => setClubName(e.target.value)}
                 className="h-12 bg-[#1A2839] border-slate-700 text-white rounded-xl"
-                required
               />
             </div>
 
             <div className="space-y-2">
-              <Label className="text-sm font-bold text-white">Contact Person Name *</Label>
+              <Label htmlFor="contactNameInput" className="text-sm font-bold text-white">Contact Person Name *</Label>
               <Input
+                id="contactNameInput"
                 placeholder="e.g. Rtn. President Name"
                 value={contactName}
                 onChange={(e) => setContactName(e.target.value)}
                 className="h-12 bg-[#1A2839] border-slate-700 text-white rounded-xl"
-                required
               />
             </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label className="text-sm font-bold text-white">Contact WhatsApp Number *</Label>
+              <Label htmlFor="contactPhoneInput" className="text-sm font-bold text-white">Contact WhatsApp Number *</Label>
               <Input
+                id="contactPhoneInput"
                 placeholder="10-digit mobile number"
                 value={contactPhone}
                 onChange={(e) => setContactPhone(e.target.value)}
                 className="h-12 bg-[#1A2839] border-slate-700 text-white rounded-xl font-mono"
-                required
               />
             </div>
 
@@ -241,28 +328,30 @@ export function ClubsClient({ clubs, bands, members }: ClubsClientProps) {
             </div>
           </div>
 
-          {/* ₹15,000 Pass Composition Builder (§8.2, §8.3) */}
-          <div className="space-y-3 p-5 bg-slate-900/80 border border-slate-800 rounded-2xl">
-            <div className="flex justify-between items-center">
+          {/* Complimentary Pass Composition Builder (Excludes PP, up to ₹15,000) */}
+          <div id="passBuilderSection" className="space-y-3 p-5 bg-slate-900/80 border border-slate-800 rounded-2xl">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
                 <Label className="text-base font-bold text-white">
-                  Compose ₹15,000 in Passes *
+                  Select Complimentary Passes (Up to ₹15,000) *
                 </Label>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Select pass quantities across price bands. Total must equal exactly ₹15,000.
+                  Choose any combination of seating passes. Standard club entitlement is up to ₹15,000.
                 </p>
               </div>
               <div className={`px-4 py-2 rounded-xl text-base font-black font-mono ${
-                isValidValue 
+                totalPassValue > 15000
+                  ? 'bg-red-500/20 text-red-400 border border-red-500/40'
+                  : totalPassValue > 0
                   ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                  : 'bg-red-500/20 text-red-400 border border-red-500/40'
+                  : 'bg-slate-800 text-slate-300 border border-slate-700'
               }`}>
-                Total: ₹{totalPassValue.toLocaleString('en-IN')} / ₹15,000
+                Total: ₹{totalPassValue.toLocaleString('en-IN')} / ₹15,000 max
               </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-              {bands.map((b) => {
+              {eligibleBands.map((b) => {
                 const count = passCounts[b.id] || 0;
                 const subtotal = count * b.price;
 
@@ -298,9 +387,17 @@ export function ClubsClient({ clubs, bands, members }: ClubsClientProps) {
               })}
             </div>
 
-            {!isValidValue && (
+            {totalPassValue > 15000 ? (
               <p className="text-xs font-semibold text-red-400 pt-1">
-                ⚠️ Selection does not equal ₹15,000. Please adjust the pass quantities.
+                ⚠️ Pass total exceeds the ₹15,000 entitlement by ₹{(totalPassValue - 15000).toLocaleString('en-IN')}. Please reduce pass counts.
+              </p>
+            ) : totalPassValue === 0 ? (
+              <p className="text-xs text-slate-400 pt-1">
+                ℹ️ Select passes for the club above (total can be up to ₹15,000).
+              </p>
+            ) : (
+              <p className="text-xs font-semibold text-emerald-400 pt-1">
+                ✓ Valid complimentary pass allocation (₹{totalPassValue.toLocaleString('en-IN')}).
               </p>
             )}
           </div>
@@ -322,15 +419,15 @@ export function ClubsClient({ clubs, bands, members }: ClubsClientProps) {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-sm font-bold text-white">
+              <Label htmlFor="paymentRefInput" className="text-sm font-bold text-white">
                 Payment Reference Number / Cheque No *
               </Label>
               <Input
+                id="paymentRefInput"
                 placeholder="UTR / Cheque No / Reference"
                 value={paymentReferenceNo}
                 onChange={(e) => setPaymentReferenceNo(e.target.value)}
                 className="h-12 bg-[#1A2839] border-slate-700 text-white rounded-xl font-mono"
-                required
               />
             </div>
           </div>
@@ -346,7 +443,7 @@ export function ClubsClient({ clubs, bands, members }: ClubsClientProps) {
             </Button>
             <Button
               type="submit"
-              disabled={isLoading || !isValidValue || !paymentReferenceNo.trim()}
+              disabled={isLoading}
               className="bg-[#E8913A] hover:bg-[#D97706] text-slate-950 font-black h-12 px-8 rounded-xl shadow-lg"
             >
               {isLoading ? (
@@ -359,6 +456,17 @@ export function ClubsClient({ clubs, bands, members }: ClubsClientProps) {
             </Button>
           </div>
         </form>
+      )}
+
+      {/* Unmissable Status Dialog */}
+      {dialogState && (
+        <StatusDialog
+          open={dialogState.open}
+          onOpenChange={(open) => setDialogState(open ? dialogState : null)}
+          type={dialogState.type}
+          title={dialogState.title}
+          message={dialogState.message}
+        />
       )}
 
       {/* Clubs List */}
