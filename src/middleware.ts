@@ -7,8 +7,6 @@ export async function middleware(request: NextRequest) {
   const isPublicRoute =
     pathname === '/login' ||
     pathname.startsWith('/pass/') ||
-    pathname.startsWith('/api/checkin/verify') ||
-    pathname.startsWith('/api/manifest') ||
     pathname.startsWith('/api/digest');
 
   const isProtectedRoute =
@@ -18,7 +16,6 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/setup') ||
     pathname.startsWith('/guests') ||
     pathname.startsWith('/reports') ||
-    pathname.startsWith('/checkin') ||
     pathname.startsWith('/admin') ||
     pathname.startsWith('/clubs') ||
     pathname.startsWith('/leaderboard') ||

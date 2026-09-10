@@ -24,6 +24,7 @@ export async function fetchBandsWithMetrics(supabase: SupabaseClient): Promise<B
     .select(`
       id,
       band_id,
+      price,
       status,
       payments (
         amount,
@@ -96,8 +97,8 @@ export async function fetchBandsWithMetrics(supabase: SupabaseClient): Promise<B
           }
         }
       } else {
-        // Fallback to band price if payment record not joined
-        collectedAmount += b.price;
+        // Fallback to stored pass price if payment record not joined
+        collectedAmount += (p.price ?? b.price);
         paidCount++;
       }
     }

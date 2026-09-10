@@ -17,7 +17,6 @@ interface HeaderProps {
 const getPageTitle = (pathname: string) => {
   if (pathname.startsWith('/dashboard')) return { title: 'Fill & Goal Dashboard', subtitle: 'Live Band Allocations & AED Stations' };
   if (pathname.startsWith('/sell')) return { title: 'Sell a Pass', subtitle: 'Step-by-step Pass Issuance & WhatsApp Delivery' };
-  if (pathname.startsWith('/checkin')) return { title: 'Gate Check-in', subtitle: 'Physical Pass Serial Verification & Hall Admission' };
   if (pathname.startsWith('/leaderboard')) return { title: 'Competition Leaderboards', subtitle: 'Team & Individual Standings • Prize Freeze' };
   if (pathname.startsWith('/clubs')) return { title: 'Participating Rotary Clubs', subtitle: '₹25,000 Entry Fee & ₹15,000 Pass Allotments' };
   if (pathname.startsWith('/payments')) return { title: 'Structured Payments', subtitle: 'Collection Verification & WhatsApp Reminders' };

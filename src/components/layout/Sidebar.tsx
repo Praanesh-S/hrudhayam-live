@@ -32,7 +32,6 @@ export function SidebarContent({ user, onNavigate }: { user: AuthUser; onNavigat
   const mainNavItems = [
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: ['super_admin', 'group_admin', 'system_admin', 'tech_coordinator'] },
     { name: 'Sell a Pass', href: '/sell', icon: PlusCircle, roles: ['super_admin', 'group_admin', 'system_admin', 'tech_coordinator'] },
-    { name: 'Gate Check-in', href: '/checkin', icon: Ticket, roles: ['super_admin', 'group_admin', 'system_admin', 'tech_coordinator'] },
     { name: 'WhatsApp Comms', href: '/email', icon: MessageSquare, roles: ['super_admin', 'group_admin', 'system_admin', 'tech_coordinator'] },
     { name: 'Leaderboards', href: '/leaderboard', icon: Trophy, roles: ['super_admin', 'group_admin', 'system_admin', 'tech_coordinator'] },
     { name: 'Participating Clubs', href: '/clubs', icon: Building2, roles: ['super_admin', 'group_admin', 'system_admin', 'tech_coordinator'] },

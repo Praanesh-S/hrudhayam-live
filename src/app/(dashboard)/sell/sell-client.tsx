@@ -205,13 +205,13 @@ export function SellClient({
 
   // Step 2 Validation
   const canSubmitSale = useMemo(() => {
-    if (!paymentReferenceNo.trim()) return false;
+    if (paymentStatus === 'received' && !paymentReferenceNo.trim()) return false;
     const emptySerials = physicalSerials.filter((s) => !s || !s.trim());
     if (emptySerials.length > 0) return false;
     const uniqueSet = new Set(physicalSerials.map((s) => s.trim().toUpperCase()));
     if (uniqueSet.size !== physicalSerials.length) return false;
     return true;
-  }, [paymentReferenceNo, physicalSerials]);
+  }, [paymentStatus, paymentReferenceNo, physicalSerials]);
 
   // Step 1: Handle Continue with validation & scrolling
   const handleContinueToStep2 = () => {
@@ -327,8 +327,8 @@ export function SellClient({
       uniqueSet.add(upper);
     }
 
-    // 3. Check payment reference
-    if (!paymentReferenceNo.trim()) {
+    // 3. Check payment reference (only mandatory when paymentStatus === 'received')
+    if (paymentStatus === 'received' && !paymentReferenceNo.trim()) {
       const el = document.getElementById('paymentRef');
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -338,7 +338,7 @@ export function SellClient({
         open: true,
         type: 'warning',
         title: 'Missing Payment Reference',
-        message: 'Please enter the transaction reference number, UPI UTR, cheque number, or cash voucher reference.',
+        message: 'Payment reference number / UTR / Cash voucher is mandatory when payment is marked as Received. For cash sales, you may enter "CASH".',
       });
       return;
     }
@@ -365,7 +365,7 @@ export function SellClient({
         donorIsSellerFallback: donorIsFallback,
         paymentMode,
         paymentAmount: totalAmount,
-        paymentReferenceNo: paymentReferenceNo.trim(),
+        paymentReferenceNo: paymentReferenceNo.trim() || null,
         paymentStatus,
         preferredLanguage,
       });
@@ -986,21 +986,28 @@ export function SellClient({
                 </div>
               </div>
 
-              {/* Payment Reference / UTR (MANDATORY) */}
+              {/* Payment Reference / UTR */}
               <div className="space-y-1.5">
                 <Label htmlFor="paymentRef" className="text-sm font-semibold text-slate-200">
-                  Payment reference / UTR / Cash voucher no. <span className="text-red-400">*</span>
+                  Payment reference / UTR / Cash voucher no.{' '}
+                  {paymentStatus === 'received' ? (
+                    <span className="text-red-400">*</span>
+                  ) : (
+                    <span className="text-slate-400 font-normal text-xs">(Optional for pending)</span>
+                  )}
                 </Label>
                 <Input
                   id="paymentRef"
-                  placeholder="Enter UPI ref / UTR / Cash voucher now"
+                  placeholder={paymentStatus === 'received' ? "Enter UPI ref / UTR / Cash voucher now *" : "Optional (can be collected and added later)"}
                   value={paymentReferenceNo}
                   onChange={(e) => setPaymentReferenceNo(e.target.value)}
                   className="h-12 bg-[#0B1724] border-slate-800 rounded-xl text-white font-mono"
-                  required
+                  required={paymentStatus === 'received'}
                 />
                 <p className="text-[11px] text-slate-400">
-                  Required for audit trail and financial reconciliation.
+                  {paymentStatus === 'received'
+                    ? "Required for audit trail and financial reconciliation."
+                    : "Optional for pending sales. Can be recorded later upon collection."}
                 </p>
               </div>
 
@@ -1039,11 +1046,14 @@ export function SellClient({
                 </div>
 
                 {paymentStatus === 'pending' && (
-                  <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-300 flex items-start gap-2.5">
-                    <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                    <span>
-                      Passes will be issued immediately so the donor gets their physical serials, but the amount will <strong>NOT</strong> count towards your group's competition total until marked received in the Pending Payments tab.
-                    </span>
+                  <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-300 space-y-1">
+                    <div className="flex items-center gap-2 font-bold text-amber-400 text-sm">
+                      <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>Payment is PENDING. Please collect as soon as possible. Tickets have been issued and seats are held.</span>
+                    </div>
+                    <p className="text-slate-400 text-[11px] pl-6">
+                      Passes are issued immediately so the donor gets their physical serials. The amount will count towards competition totals once marked received in Pending Payments.
+                    </p>
                   </div>
                 )}
               </div>
@@ -1387,7 +1397,7 @@ export function SellClient({
               You are about to issue <strong>{quantity} physical pass{quantity > 1 ? 'es' : ''}</strong> for <strong>{currentBand?.label}</strong> to <strong>{donorName}</strong> ({donorPhone}).
             </p>
             <p>
-              Reference / UTR: <span className="font-mono text-amber-400">{paymentReferenceNo}</span>
+              Reference / UTR: <span className="font-mono text-amber-400">{paymentReferenceNo || 'None (Pending)'}</span>
             </p>
             <p>
               Serial numbers: <span className="font-mono text-emerald-400">{physicalSerials.filter(Boolean).join(', ')}</span>
@@ -1395,6 +1405,11 @@ export function SellClient({
             <p>
               Total Amount: <strong className="text-white">₹{totalAmount.toLocaleString('en-IN')}</strong> ({paymentStatus === 'received' ? 'Received' : 'Pending'})
             </p>
+            {paymentStatus === 'pending' && (
+              <div className="p-2.5 bg-amber-500/20 border border-amber-500/40 rounded-xl text-amber-300 text-xs font-medium">
+                ⚠️ Payment is PENDING. Please collect as soon as possible. Tickets have been issued and seats are held.
+              </div>
+            )}
           </div>
 
           <DialogFooter className="gap-2 sm:gap-0">

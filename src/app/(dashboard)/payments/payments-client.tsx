@@ -32,17 +32,18 @@ export function PaymentsClient({ payments, upiVpa }: PaymentsClientProps) {
   // Confirm payment modal
   const [confirmingPayment, setConfirmingPayment] = useState<any | null>(null);
   const [referenceNo, setReferenceNo] = useState('');
+  const [selectedMode, setSelectedMode] = useState<string>('upi');
   const [isLoading, setIsLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const handleConfirm = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!confirmingPayment || !referenceNo.trim()) return;
+    if (!confirmingPayment || !referenceNo.trim() || !selectedMode) return;
 
     setIsLoading(true);
     setStatusMessage(null);
 
-    const res = await markPaymentReceived(confirmingPayment.id, referenceNo);
+    const res = await markPaymentReceived(confirmingPayment.id, referenceNo.trim(), selectedMode);
     setIsLoading(false);
 
     if (res.success) {
@@ -177,6 +178,34 @@ export function PaymentsClient({ payments, upiVpa }: PaymentsClientProps) {
             Amount: <strong className="text-emerald-400 font-mono">₹{confirmingPayment.amount?.toLocaleString('en-IN')}</strong> • Mode: {confirmingPayment.mode.toUpperCase()}
           </p>
 
+          <div className="space-y-1.5">
+            <Label className="text-xs font-bold text-slate-300">
+              Payment Mode *
+            </Label>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              {[
+                { id: 'upi', label: 'UPI' },
+                { id: 'cheque', label: 'Cheque' },
+                { id: 'cash', label: 'Cash' },
+                { id: 'bank_transfer', label: 'Bank Transfer' },
+                { id: 'card', label: 'Card' },
+              ].map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setSelectedMode(m.id)}
+                  className={`py-2 px-2.5 rounded-xl text-xs font-bold border transition-all ${
+                    selectedMode === m.id
+                      ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-md font-black'
+                      : 'bg-[#1A2839] text-slate-300 border-slate-700 hover:border-slate-600'
+                  }`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="space-y-1">
             <Label className="text-xs font-bold text-slate-300">
               Bank Transaction Reference / UTR Number *
@@ -286,6 +315,7 @@ export function PaymentsClient({ payments, upiVpa }: PaymentsClientProps) {
                           onClick={() => {
                             setConfirmingPayment(p);
                             setReferenceNo(p.reference_no && p.reference_no !== 'MIGRATED' ? p.reference_no : '');
+                            setSelectedMode(p.mode || 'upi');
                           }}
                           className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-9 px-3 rounded-xl"
                         >

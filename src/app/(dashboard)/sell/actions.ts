@@ -24,7 +24,7 @@ export interface IssuePassInput {
   donorIsSellerFallback?: boolean;
   paymentMode: PaymentMode;
   paymentAmount: number;
-  paymentReferenceNo: string;
+  paymentReferenceNo?: string | null;
   paymentStatus: PaymentStatus;
   proofFileKey?: string | null;
   preferredLanguage?: 'en' | 'ta';
@@ -92,8 +92,8 @@ export async function issuePass(input: IssuePassInput) {
       return { success: false, error: 'Please fill in all required fields.' };
     }
 
-    if (!paymentReferenceNo || !paymentReferenceNo.trim()) {
-      return { success: false, error: 'Payment reference number / UTR / Cash voucher is mandatory.' };
+    if (paymentStatus === 'received' && (!paymentReferenceNo || !paymentReferenceNo.trim())) {
+      return { success: false, error: 'Payment reference number / UTR / Cash voucher is mandatory when payment is received.' };
     }
 
     // 1b. Physical ticket serials validation
@@ -309,7 +309,7 @@ export async function issuePass(input: IssuePassInput) {
       pass_id: pass.id,
       mode: paymentMode,
       amount: idx === 0 ? baseAmount + remainder : baseAmount,
-      reference_no: paymentReferenceNo.trim(),
+      reference_no: paymentReferenceNo && paymentReferenceNo.trim() ? paymentReferenceNo.trim() : null,
       proof_file_key: proofFileKey || null,
       status: paymentStatus,
       collected_by_user_id: user.id,
@@ -369,7 +369,7 @@ export async function issuePass(input: IssuePassInput) {
           seller_name: seller.full_name,
           payment_mode: paymentMode,
           payment_amount: totalAmount,
-          payment_reference_no: paymentReferenceNo,
+          payment_reference_no: paymentReferenceNo && paymentReferenceNo.trim() ? paymentReferenceNo.trim() : null,
         }
       );
     }

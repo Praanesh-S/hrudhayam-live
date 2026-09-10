@@ -23,6 +23,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { StatusDialog } from '@/components/ui/status-dialog';
 import { cn } from '@/lib/utils';
+import { HallLayoutMap } from '@/components/hall/HallLayoutMap';
 
 interface BandsClientProps {
   bands: Band[];
@@ -84,6 +85,15 @@ export function BandsClient({
     newCategory: SeatCategory;
     affectedSeatIds: string[];
   } | null>(null);
+
+  // Confirmed row reassignments for audit logging and row tier sync
+  const [stagedReassignments, setStagedReassignments] = useState<Array<{
+    row: string;
+    section: string;
+    salesCount: number;
+    oldPrice: number;
+    newPrice: number;
+  }>>([]);
 
   // Review & Save dialog
   const [showReviewModal, setShowReviewModal] = useState(false);
@@ -340,6 +350,17 @@ export function BandsClient({
       })
     );
 
+    setStagedReassignments((prev) => [
+      ...prev.filter((r) => !(r.row === pendingReassignment.row && r.section === pendingReassignment.section)),
+      {
+        row: pendingReassignment.row,
+        section: pendingReassignment.section,
+        salesCount: pendingReassignment.salesCount,
+        oldPrice: pendingReassignment.oldPrice,
+        newPrice: pendingReassignment.newPrice,
+      },
+    ]);
+
     setStatusMessage({
       type: 'success',
       text: `Row ${pendingReassignment.row} unsold seats updated to ${targetCategoryMeta.label}. Sold seats retain ₹${pendingReassignment.oldPrice.toLocaleString('en-IN')}.`,
@@ -394,10 +415,11 @@ export function BandsClient({
       name: s.name || null,
     }));
 
-    const res = await saveLayoutPlan(updates);
+    const res = await saveLayoutPlan(updates, stagedReassignments);
     setIsLoading(false);
 
     if (res.success) {
+      setStagedReassignments([]);
       const timeStr = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       setLastSavedTime(timeStr);
       setStatusMessage({
@@ -425,6 +447,7 @@ export function BandsClient({
   // Discard staged changes
   const handleDiscard = () => {
     setStagedSeats(initialSeats);
+    setStagedReassignments([]);
     setStatusMessage(null);
     setDialogState({
       open: true,
@@ -576,185 +599,15 @@ export function BandsClient({
       ───────────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left Section (8 cols): Interactive Seating Map */}
-        <div className="lg:col-span-8 bg-[#131F2E] border border-slate-800 rounded-3xl p-5 space-y-4 shadow-xl">
-          {/* Floor tabs */}
-          <div className="flex justify-between items-center pb-2 border-b border-slate-800">
-            <div className="inline-flex p-1 bg-[#0E1722] rounded-xl border border-slate-800">
-              <button
-                type="button"
-                onClick={() => setActiveFloor('Ground Floor')}
-                className={`px-4 py-1.5 rounded-lg text-xs font-black transition-all ${
-                  activeFloor === 'Ground Floor'
-                    ? 'bg-[#E8913A] text-slate-950 shadow-md'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                Ground Floor <span className="text-[10px] font-normal opacity-80">648 + 50 VIP</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveFloor('Balcony')}
-                className={`px-4 py-1.5 rounded-lg text-xs font-black transition-all ${
-                  activeFloor === 'Balcony'
-                    ? 'bg-[#E8913A] text-slate-950 shadow-md'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                Balcony <span className="text-[10px] font-normal opacity-80">750</span>
-              </button>
-            </div>
-
-            <span className="text-xs text-slate-400 font-mono">
-              {activeFloor === 'Ground Floor' ? 'Rows A–N · nearest stage first' : 'Rows A–O · nearest stage first'}
-            </span>
-          </div>
-
-          {/* Stage Area */}
-          <div className="w-full py-2 bg-[#0E1722] border border-slate-800 text-center rounded-xl text-slate-500 font-black tracking-widest text-xs uppercase">
-            STAGE & PERFORMANCE AREA
-          </div>
-
-          {/* Layout Map: Ground Floor vs Balcony */}
-          <div className="flex gap-4 items-start overflow-x-auto pb-4">
-            {/* SPL VIP Box (Visible on Ground Floor) */}
-            {activeFloor === 'Ground Floor' && (
-              <div className="w-36 p-3 bg-[#0E1722] border-2 border-amber-500/40 rounded-2xl space-y-2 shrink-0">
-                <div className="text-center">
-                  <div className="text-xs font-black text-amber-400 flex items-center justify-center gap-1">
-                    <Crown className="w-3 h-3 text-amber-400" /> SPL VIP
-                  </div>
-                  <div className="text-[10px] text-slate-400">50 · reserved</div>
-                </div>
-
-                <div className="grid grid-cols-5 gap-1 pt-1">
-                  {stagedSeats
-                    .filter((s) => s.row_label === 'SPL VIP')
-                    .sort((a, b) => a.seat_no - b.seat_no)
-                    .map((s) => {
-                      const isNamed = !!(s.name || s.guest_name);
-                      return (
-                        <button
-                          key={s.id}
-                          type="button"
-                          onClick={() => handleSeatClick(s)}
-                          title={`${s.id}: ${s.name || 'VIP Chief Guest'}`}
-                          className={`w-5 h-5 rounded text-[9px] font-black flex items-center justify-center transition-all ${
-                            isNamed ? 'bg-amber-400 text-slate-950 ring-1 ring-white' : 'bg-amber-500/30 text-amber-300 hover:bg-amber-500 hover:text-slate-950'
-                          }`}
-                        >
-                          {s.seat_no}
-                        </button>
-                      );
-                    })}
-                </div>
-
-                <div className="text-[9px] text-slate-500 text-center pt-1 border-t border-slate-800">
-                  ← VIP ENTRANCE
-                </div>
-              </div>
-            )}
-
-            {/* Rows List */}
-            <div className="flex-1 space-y-2 min-w-[500px]">
-              {(activeFloor === 'Ground Floor' ? groundRowsList : balconyRowsList).map((rLabel) => {
-                const rowSeats = stagedSeats.filter((s) => s.section === activeFloor && s.row_label === rLabel);
-                const isProvisional = rowSeats.some((s) => s.provisional);
-                const firstSeat = rowSeats[0];
-                const categoryMeta = firstSeat ? CATEGORY_META[firstSeat.category] : CATEGORY_META.unassigned;
-
-                // Split row into 3 blocks (left, center, right)
-                const total = rowSeats.length;
-                const leftCount = Math.floor(total * 0.25);
-                const centerCount = Math.floor(total * 0.5);
-                const leftBlock = rowSeats.slice(0, leftCount);
-                const centerBlock = rowSeats.slice(leftCount, leftCount + centerCount);
-                const rightBlock = rowSeats.slice(leftCount + centerCount);
-
-                // Helper to render individual seat with unique Sold shading
-                const renderSeat = (s: SeatData) => {
-                  const soldInfo = soldSeatMap.get(s.id);
-                  const isSold = !!soldInfo;
-                  const baseColor = CATEGORY_META[s.category]?.color || '#1E293B';
-                  const seatColor = isSold ? '#10B981' : baseColor;
-
-                  const tooltip = isSold
-                    ? `SOLD PASS (#${soldInfo.soldIndex} of ${soldInfo.totalSold} sold in ${soldInfo.bandName}) · Row ${s.row_label} Seat ${s.seat_no}`
-                    : `${s.id}: ${CATEGORY_META[s.category]?.label}${s.name ? ` (${s.name})` : ''}`;
-
-                  return (
-                    <button
-                      key={s.id}
-                      type="button"
-                      onClick={() => handleSeatClick(s)}
-                      title={tooltip}
-                      className={cn(
-                        "w-2.5 h-3.5 rounded-xs transition-transform hover:scale-125 cursor-pointer",
-                        isSold && "ring-1 ring-emerald-300 shadow-xs shadow-emerald-500/50"
-                      )}
-                      style={{ backgroundColor: seatColor }}
-                    />
-                  );
-                };
-
-                return (
-                  <div key={rLabel} className="flex items-center gap-3">
-                    {/* Row Label */}
-                    <div className="w-16 text-xs font-mono font-black text-slate-300 flex items-center gap-1 shrink-0">
-                      <span>{rLabel}</span>
-                      {isProvisional && (
-                        <span className="text-[8px] px-1 bg-amber-500/20 text-amber-400 rounded border border-amber-500/30">
-                          Prov
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Physical Seats in 3 blocks */}
-                    <div className="flex-1 flex items-center gap-2">
-                      <div className="flex items-center gap-0.5">
-                        {leftBlock.map(renderSeat)}
-                      </div>
-
-                      <div className="flex items-center gap-0.5">
-                        {centerBlock.map(renderSeat)}
-                      </div>
-
-                      <div className="flex items-center gap-0.5">
-                        {rightBlock.map(renderSeat)}
-                      </div>
-                    </div>
-
-                    {/* Row Price / Category label on right */}
-                    <div className="w-24 text-right text-xs font-mono font-bold shrink-0" style={{ color: categoryMeta.color }}>
-                      {categoryMeta.label.split('—')[0].trim()}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Legend */}
-          <div className="pt-3 border-t border-slate-800 space-y-2">
-            <div className="flex flex-wrap items-center gap-3 text-[11px] font-bold">
-              <span className="flex items-center gap-1.5 text-emerald-400 font-extrabold bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-500/30">
-                <span className="w-3 h-3 rounded-xs bg-[#10B981] ring-1 ring-emerald-300" />
-                Sold Pass ({Array.from(soldSeatMap.values()).length} filled)
-              </span>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#F59E0B]" /> ₹5,000</span>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#8B5CF6]" /> ₹3,500</span>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#0D9488]" /> ₹2,500</span>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#64748B]" /> ₹1,500</span>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#0284C7]" /> ₹1,000 PP</span>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#EAB308]" /> VIP</span>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#EF4444]" /> Obligation</span>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#06B6D4]" /> Sponsor comp</span>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#475569]" /> Blocked</span>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-xs bg-[#1E293B]" /> Unassigned</span>
-            </div>
-            <p className="text-[10px] text-slate-400">
-              <strong className="text-emerald-400">Emerald Green (■)</strong> seats represent actual passes sold so far, sequentially allocated across each price band from front to back. Click any seat for details.
-            </p>
-          </div>
+        <div className="lg:col-span-8">
+          <HallLayoutMap
+            seats={stagedSeats}
+            readOnly={false}
+            activeFloor={activeFloor}
+            onFloorChange={setActiveFloor}
+            onSeatClick={handleSeatClick}
+            soldSeatMap={soldSeatMap}
+          />
         </div>
 
         {/* Right Section (4 cols): Planning Summary Rail (Exact replica of Image 1) */}
@@ -1042,11 +895,12 @@ export function BandsClient({
               <h3 className="text-base font-bold text-white">Row Has Existing Sales</h3>
             </div>
 
-            <p className="text-sm text-slate-300">
-              Row <strong className="text-white">{pendingReassignment.row}</strong> has{' '}
-              <strong className="text-amber-400">{pendingReassignment.salesCount}</strong> sales.{' '}
-              {pendingReassignment.salesCount} sold seats keep ₹{pendingReassignment.oldPrice.toLocaleString('en-IN')};{' '}
-              {pendingReassignment.affectedSeatIds.length} unsold seats move to ₹{pendingReassignment.newPrice.toLocaleString('en-IN')}. Confirm?
+            <p className="text-sm text-slate-300 leading-relaxed">
+              Row <strong className="text-white">{pendingReassignment.row}</strong> is{' '}
+              <strong className="text-white">₹{pendingReassignment.oldPrice.toLocaleString('en-IN')}</strong> and has{' '}
+              <strong className="text-amber-400">{pendingReassignment.salesCount}</strong> passes sold.{' '}
+              Those <strong className="text-white">{pendingReassignment.salesCount}</strong> keep ₹{pendingReassignment.oldPrice.toLocaleString('en-IN')}.{' '}
+              The row will sell at <strong className="text-emerald-400">₹{pendingReassignment.newPrice.toLocaleString('en-IN')}</strong> for the remaining seats. Confirm?
             </p>
 
             <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">

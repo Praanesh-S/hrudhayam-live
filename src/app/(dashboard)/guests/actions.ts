@@ -97,20 +97,11 @@ export async function deletePassAction(
       }
     }
 
-    // If gate checked-in
-    if (pass.status === 'used' && user.role !== 'system_admin' && user.role !== 'super_admin') {
-      return { 
-        success: false, 
-        error: 'Pass has already been scanned at gate check-in. Contact System Admin to delete.' 
-      };
-    }
-
     const now = new Date().toISOString();
 
     // 3. Delete or void payments
     if (hardDelete) {
       await adminClient.from('payments').delete().eq('pass_id', passId);
-      await adminClient.from('checkins').delete().eq('pass_id', passId);
     } else {
       await adminClient
         .from('payments')

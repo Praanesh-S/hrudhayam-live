@@ -289,31 +289,66 @@ export async function saveLayoutPlan(
       return { success: false, error: 'No seat updates provided.' };
     }
 
-    // 1. Update seats in parallel batches
+    // 1. Fetch currently sold or pending seats to protect historical pass prices
+    const { data: bookedSeats } = await adminClient
+      .from('seats')
+      .select('id, price, category')
+      .or('sold.eq.true,payment_status.not.is.null');
+
+    const bookedMap = new Map((bookedSeats || []).map((s) => [s.id, s]));
+
+    // 2. Update seats in parallel batches, preserving prices on already-sold seats
     const now = new Date().toISOString();
     const batchSize = 100;
     for (let i = 0; i < seatsUpdates.length; i += batchSize) {
       const batch = seatsUpdates.slice(i, i + batchSize);
       await Promise.all(
-        batch.map((s) =>
-          adminClient
+        batch.map((s) => {
+          const booked = bookedMap.get(s.id);
+          // If seat was already booked/sold, strictly preserve its historical price & category
+          const category = booked ? booked.category : s.category;
+          const price = booked && booked.price !== null ? booked.price : s.price;
+
+          return adminClient
             .from('seats')
             .update({
-              category: s.category,
-              tier: s.price,
-              price: s.price,
+              category,
+              tier: price,
+              price,
               counts_to_raise: s.counts_to_raise,
               obligation_type: s.obligation_type || null,
               name: s.name || null,
               is_blocked: s.category === 'blocked',
               updated_at: now,
             })
-            .eq('id', s.id)
-        )
+            .eq('id', s.id);
+        })
       );
     }
 
-    // 2. Compute quotas for each band
+    // 3. If rows were re-tiered, update rows table tier and record required audit entries
+    if (reassignments && reassignments.length > 0) {
+      for (const r of reassignments) {
+        // Update rows table tier for future seat allocations
+        await adminClient
+          .from('rows')
+          .update({ tier: r.newPrice, updated_at: now })
+          .eq('section', r.section)
+          .eq('row_label', r.row);
+
+        // Record individual re-tier audit log
+        await logAudit(user.id, 'ROW_RETIERED', 'rows', `${r.section} Row ${r.row}`, {
+          row: `Row ${r.row}`,
+          section: r.section,
+          previous_price: r.oldPrice,
+          new_price: r.newPrice,
+          already_sold_count: r.salesCount,
+          timestamp: now,
+        });
+      }
+    }
+
+    // 4. Compute quotas for each band
     const bandCounts: Record<string, number> = {
       band_5000: 0,
       band_3500: 0,
@@ -330,7 +365,7 @@ export async function saveLayoutPlan(
       else if (s.category === 'pp') bandCounts.band_pp++;
     }
 
-    // 3. Update bands table quotas
+    // 5. Update bands table quotas
     await Promise.all([
       adminClient.from('bands').update({ total_allocated: bandCounts.band_5000, total_capacity: bandCounts.band_5000, updated_at: now }).eq('id', 'band_5000'),
       adminClient.from('bands').update({ total_allocated: bandCounts.band_3500, total_capacity: bandCounts.band_3500, updated_at: now }).eq('id', 'band_3500'),
@@ -339,7 +374,7 @@ export async function saveLayoutPlan(
       adminClient.from('bands').update({ total_allocated: bandCounts.band_pp, total_capacity: bandCounts.band_pp, updated_at: now }).eq('id', 'band_pp'),
     ]);
 
-    // 4. Record audit log
+    // 6. Record layout plan committed audit log
     await logAudit(user.id, 'LAYOUT_PLAN_COMMITTED', 'seats', 'all', {
       total_seats_updated: seatsUpdates.length,
       band_quotas: bandCounts,

@@ -8,7 +8,7 @@ import { revalidatePath } from 'next/cache';
 /**
  * Confirm a pending payment as received (§12, §19.5).
  */
-export async function markPaymentReceived(paymentId: string, referenceNo: string) {
+export async function markPaymentReceived(paymentId: string, referenceNo: string, paymentMode?: string) {
   try {
     const user = await requireUser();
     const adminClient = createAdminClient();
@@ -17,9 +17,13 @@ export async function markPaymentReceived(paymentId: string, referenceNo: string
       return { success: false, error: 'Transaction reference number / UTR is mandatory.' };
     }
 
+    if (!paymentMode || !paymentMode.trim()) {
+      return { success: false, error: 'Payment mode is mandatory.' };
+    }
+
     const { data: payment, error: fetchError } = await adminClient
       .from('payments')
-      .select('*, pass:passes(id, pass_code, donor_name)')
+      .select('*, pass:passes(id, pass_code, donor_name, seat_id)')
       .eq('id', paymentId)
       .single();
 
@@ -33,6 +37,7 @@ export async function markPaymentReceived(paymentId: string, referenceNo: string
       .update({
         status: 'received',
         reference_no: referenceNo.trim(),
+        mode: paymentMode.trim(),
         collected_by_user_id: user.id,
         collected_at: now,
         updated_at: now,
@@ -40,6 +45,14 @@ export async function markPaymentReceived(paymentId: string, referenceNo: string
       .eq('id', paymentId);
 
     if (updateError) throw updateError;
+
+    // If linked to a pass and seat, update seat payment_status to received
+    if (payment.pass?.seat_id) {
+      await adminClient
+        .from('seats')
+        .update({ payment_status: 'received', updated_at: now })
+        .eq('id', payment.pass.seat_id);
+    }
 
     // If linked to a sponsor, also update sponsor status to received
     if (payment.sponsor_id) {

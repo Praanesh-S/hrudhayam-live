@@ -15,7 +15,6 @@ import {
   Layers, 
   Building2, 
   Download, 
-  Printer, 
   CheckCircle2,
   Clock,
   Heart,
@@ -185,17 +184,6 @@ export function ReportsClient({
             <FileSpreadsheet className="w-4 h-4" />
             <span>{isExporting ? 'Generating Excel...' : 'Master Excel Export'}</span>
           </Button>
-
-          {/* Printable Gate Manifest */}
-          <a
-            href="/api/manifest"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="h-10 px-3.5 rounded-lg border border-[#1D3249] bg-[#07111C] hover:bg-[#15283C] text-slate-200 font-bold text-xs flex items-center gap-1.5 transition-colors no-underline"
-          >
-            <Printer className="w-4 h-4 text-amber-400" />
-            <span>Gate Manifest</span>
-          </a>
         </div>
       </div>
 
