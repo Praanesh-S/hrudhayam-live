@@ -55,6 +55,7 @@ export function BandsClient({
   // Staged seats state
   const [stagedSeats, setStagedSeats] = useState<SeatData[]>(initialSeats);
   const [activeFloor, setActiveFloor] = useState<SeatSection>('Ground Floor');
+  const [isolatedFilter, setIsolatedFilter] = useState<string>('all');
 
   // Form controls for Assign Rows
   const [assignFloor, setAssignFloor] = useState<SeatSection>('Ground Floor');
@@ -465,10 +466,7 @@ export function BandsClient({
           Bands & Protected Seats
         </h1>
         <p className="text-xs sm:text-sm text-slate-400 mt-1">
-          Plan the hall — assign each row to a price band or reserve it.{' '}
-          <strong className="text-white">
-            The Music Academy, Madras — 648 Ground Floor + 750 Balcony + 50 VIP = 1,448 total (1,398 sellable).
-          </strong>
+          Configure row price bands and protected seating allocations across the venue.
         </p>
       </div>
 
@@ -564,7 +562,7 @@ export function BandsClient({
         </div>
 
         <p className="text-[11px] text-slate-500">
-          Reassigning a row that already has sales opens a confirmation: sold seats keep their original price, only unsold seats take the new band. VIP Box is fixed.
+          Reassigning rows preserves historical prices on sold tickets.
         </p>
 
         {hasStagedChanges && (
@@ -602,11 +600,14 @@ export function BandsClient({
         <div className="lg:col-span-8">
           <HallLayoutMap
             seats={stagedSeats}
+            bands={bands}
             readOnly={false}
             activeFloor={activeFloor}
             onFloorChange={setActiveFloor}
             onSeatClick={handleSeatClick}
             soldSeatMap={soldSeatMap}
+            isolatedFilter={isolatedFilter}
+            onIsolatedFilterChange={setIsolatedFilter}
           />
         </div>
 
@@ -635,36 +636,45 @@ export function BandsClient({
 
           {/* Sold — Counts Towards Raise */}
           <div className="space-y-2 pt-2 border-t border-slate-800">
-            <p className="text-[11px] font-black uppercase tracking-wider text-slate-400">
-              SOLD — COUNTS TOWARDS RAISE
-            </p>
+            <div className="flex justify-between items-center">
+              <button
+                type="button"
+                onClick={() => setIsolatedFilter(isolatedFilter === 'sold' ? 'all' : 'sold')}
+                className={cn(
+                  "text-[11px] font-black uppercase tracking-wider text-slate-400 hover:text-white transition-colors cursor-pointer flex items-center gap-1",
+                  isolatedFilter === 'sold' && "text-emerald-400 font-extrabold"
+                )}
+              >
+                <span>SOLD — COUNTS TOWARDS RAISE</span>
+                {isolatedFilter === 'sold' && <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1 rounded">ISOLATED</span>}
+              </button>
+            </div>
 
-            <div className="space-y-2 text-xs">
+            <div className="space-y-1.5 text-xs">
               {/* Band A */}
               {(() => {
                 const b = bands.find((x) => x.price === 5000 || x.id.includes('5000'));
                 const sold = b?.sold_count || 0;
+                const isSelected = isolatedFilter === 'b5000';
                 return (
-                  <div className="flex justify-between items-center">
+                  <button
+                    type="button"
+                    onClick={() => setIsolatedFilter(isSelected ? 'all' : 'b5000')}
+                    className={cn(
+                      "w-full flex justify-between items-center text-left p-1.5 rounded-xl transition-all cursor-pointer",
+                      isSelected ? "bg-amber-500/20 ring-1 ring-amber-400" : "hover:bg-slate-800/40"
+                    )}
+                  >
                     <span className="flex items-center gap-1.5 font-bold text-white">
                       <span className="w-2.5 h-2.5 rounded-xs bg-[#F59E0B]" /> ₹5,000
                     </span>
-                    <div className="text-right">
-                      <div className="flex items-center gap-1.5 justify-end">
-                        <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold text-[10px]">
-                          {sold} sold
-                        </span>
-                        <span className="font-mono font-bold text-white">/ {summary.soldCounts.b5000}</span>
-                      </div>
-                      <p className="text-[10px] text-slate-400">
-                        {sold > 0 ? (
-                          <span className="text-emerald-400 font-mono">₹{(sold * 5000).toLocaleString('en-IN')} raised</span>
-                        ) : (
-                          `= ₹${(summary.soldCounts.b5000 * 5000).toLocaleString('en-IN')} if sold`
-                        )}
-                      </p>
+                    <div className="text-right flex items-center gap-1.5">
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold text-[10px]">
+                        {sold} sold
+                      </span>
+                      <span className="font-mono font-bold text-white">/ {summary.soldCounts.b5000}</span>
                     </div>
-                  </div>
+                  </button>
                 );
               })()}
 
@@ -672,27 +682,26 @@ export function BandsClient({
               {(() => {
                 const b = bands.find((x) => x.price === 3500 || x.id.includes('3500'));
                 const sold = b?.sold_count || 0;
+                const isSelected = isolatedFilter === 'b3500';
                 return (
-                  <div className="flex justify-between items-center">
+                  <button
+                    type="button"
+                    onClick={() => setIsolatedFilter(isSelected ? 'all' : 'b3500')}
+                    className={cn(
+                      "w-full flex justify-between items-center text-left p-1.5 rounded-xl transition-all cursor-pointer",
+                      isSelected ? "bg-purple-500/20 ring-1 ring-purple-400" : "hover:bg-slate-800/40"
+                    )}
+                  >
                     <span className="flex items-center gap-1.5 font-bold text-white">
                       <span className="w-2.5 h-2.5 rounded-xs bg-[#8B5CF6]" /> ₹3,500
                     </span>
-                    <div className="text-right">
-                      <div className="flex items-center gap-1.5 justify-end">
-                        <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold text-[10px]">
-                          {sold} sold
-                        </span>
-                        <span className="font-mono font-bold text-white">/ {summary.soldCounts.b3500}</span>
-                      </div>
-                      <p className="text-[10px] text-slate-400">
-                        {sold > 0 ? (
-                          <span className="text-emerald-400 font-mono">₹{(sold * 3500).toLocaleString('en-IN')} raised</span>
-                        ) : (
-                          `= ₹${(summary.soldCounts.b3500 * 3500).toLocaleString('en-IN')} if sold`
-                        )}
-                      </p>
+                    <div className="text-right flex items-center gap-1.5">
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold text-[10px]">
+                        {sold} sold
+                      </span>
+                      <span className="font-mono font-bold text-white">/ {summary.soldCounts.b3500}</span>
                     </div>
-                  </div>
+                  </button>
                 );
               })()}
 
@@ -700,29 +709,26 @@ export function BandsClient({
               {(() => {
                 const b = bands.find((x) => x.price === 2500 || x.id.includes('2500'));
                 const sold = b?.sold_count || 0;
+                const isSelected = isolatedFilter === 'b2500';
                 return (
-                  <div className="flex justify-between items-center">
+                  <button
+                    type="button"
+                    onClick={() => setIsolatedFilter(isSelected ? 'all' : 'b2500')}
+                    className={cn(
+                      "w-full flex justify-between items-center text-left p-1.5 rounded-xl transition-all cursor-pointer",
+                      isSelected ? "bg-teal-500/20 ring-1 ring-teal-400" : "hover:bg-slate-800/40"
+                    )}
+                  >
                     <span className="flex items-center gap-1.5 font-bold text-white">
                       <span className="w-2.5 h-2.5 rounded-xs bg-[#0D9488]" /> ₹2,500
                     </span>
-                    <div className="text-right">
-                      <div className="flex items-center gap-1.5 justify-end">
-                        {sold > 0 && (
-                          <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold text-[10px]">
-                            {sold} sold
-                          </span>
-                        )}
-                        <span className="font-mono font-bold text-white">{sold > 0 ? `/ ${summary.soldCounts.b2500}` : summary.soldCounts.b2500}</span>
-                      </div>
-                      <p className="text-[10px] text-slate-400">
-                        {sold > 0 ? (
-                          <span className="text-emerald-400 font-mono">₹{(sold * 2500).toLocaleString('en-IN')} raised</span>
-                        ) : (
-                          `= ₹${(summary.soldCounts.b2500 * 2500).toLocaleString('en-IN')} if sold`
-                        )}
-                      </p>
+                    <div className="text-right flex items-center gap-1.5">
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold text-[10px]">
+                        {sold} sold
+                      </span>
+                      <span className="font-mono font-bold text-white">/ {summary.soldCounts.b2500}</span>
                     </div>
-                  </div>
+                  </button>
                 );
               })()}
 
@@ -730,29 +736,26 @@ export function BandsClient({
               {(() => {
                 const b = bands.find((x) => x.price === 1500 || x.id.includes('1500'));
                 const sold = b?.sold_count || 0;
+                const isSelected = isolatedFilter === 'b1500';
                 return (
-                  <div className="flex justify-between items-center">
+                  <button
+                    type="button"
+                    onClick={() => setIsolatedFilter(isSelected ? 'all' : 'b1500')}
+                    className={cn(
+                      "w-full flex justify-between items-center text-left p-1.5 rounded-xl transition-all cursor-pointer",
+                      isSelected ? "bg-slate-500/20 ring-1 ring-slate-400" : "hover:bg-slate-800/40"
+                    )}
+                  >
                     <span className="flex items-center gap-1.5 font-bold text-white">
                       <span className="w-2.5 h-2.5 rounded-xs bg-[#64748B]" /> ₹1,500
                     </span>
-                    <div className="text-right">
-                      <div className="flex items-center gap-1.5 justify-end">
-                        {sold > 0 && (
-                          <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold text-[10px]">
-                            {sold} sold
-                          </span>
-                        )}
-                        <span className="font-mono font-bold text-white">{sold > 0 ? `/ ${summary.soldCounts.b1500}` : summary.soldCounts.b1500}</span>
-                      </div>
-                      <p className="text-[10px] text-slate-400">
-                        {sold > 0 ? (
-                          <span className="text-emerald-400 font-mono">₹{(sold * 1500).toLocaleString('en-IN')} raised</span>
-                        ) : (
-                          `= ₹${(summary.soldCounts.b1500 * 1500).toLocaleString('en-IN')} if sold`
-                        )}
-                      </p>
+                    <div className="text-right flex items-center gap-1.5">
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold text-[10px]">
+                        {sold} sold
+                      </span>
+                      <span className="font-mono font-bold text-white">/ {summary.soldCounts.b1500}</span>
                     </div>
-                  </div>
+                  </button>
                 );
               })()}
 
@@ -760,27 +763,26 @@ export function BandsClient({
               {(() => {
                 const b = bands.find((x) => x.price === 1000 || x.id.includes('pp'));
                 const sold = b?.sold_count || 0;
+                const isSelected = isolatedFilter === 'pp';
                 return (
-                  <div className="flex justify-between items-center">
+                  <button
+                    type="button"
+                    onClick={() => setIsolatedFilter(isSelected ? 'all' : 'pp')}
+                    className={cn(
+                      "w-full flex justify-between items-center text-left p-1.5 rounded-xl transition-all cursor-pointer",
+                      isSelected ? "bg-sky-500/20 ring-1 ring-sky-400" : "hover:bg-slate-800/40"
+                    )}
+                  >
                     <span className="flex items-center gap-1.5 font-bold text-white">
                       <span className="w-2.5 h-2.5 rounded-xs bg-[#0284C7]" /> ₹1,000 PP
                     </span>
-                    <div className="text-right">
-                      <div className="flex items-center gap-1.5 justify-end">
-                        <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold text-[10px]">
-                          {sold} sold
-                        </span>
-                        <span className="font-mono font-bold text-white">/ {summary.soldCounts.pp}</span>
-                      </div>
-                      <p className="text-[10px] text-slate-400">
-                        {sold > 0 ? (
-                          <span className="text-emerald-400 font-mono">₹{(sold * 1000).toLocaleString('en-IN')} raised</span>
-                        ) : (
-                          `= ₹${(summary.soldCounts.pp * 1000).toLocaleString('en-IN')} if sold`
-                        )}
-                      </p>
+                    <div className="text-right flex items-center gap-1.5">
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold text-[10px]">
+                        {sold} sold
+                      </span>
+                      <span className="font-mono font-bold text-white">/ {summary.soldCounts.pp}</span>
                     </div>
-                  </div>
+                  </button>
                 );
               })()}
             </div>
@@ -792,42 +794,94 @@ export function BandsClient({
               RESERVED — NOT FOR SALE
             </p>
 
-            <div className="space-y-2 text-xs">
-              <div className="flex justify-between items-center">
-                <span className="flex items-center gap-1.5 font-bold text-white">
-                  <span className="w-2.5 h-2.5 rounded-xs bg-[#EAB308]" /> VIP
-                </span>
-                <span className="font-mono text-slate-300">
-                  {summary.reservedCounts.vip.count} · {summary.reservedCounts.vip.named} named
-                </span>
-              </div>
+            <div className="space-y-1 text-xs">
+              {/* VIP */}
+              {(() => {
+                const isSelected = isolatedFilter === 'vip';
+                return (
+                  <button
+                    type="button"
+                    onClick={() => setIsolatedFilter(isSelected ? 'all' : 'vip')}
+                    className={cn(
+                      "w-full flex justify-between items-center text-left p-1.5 rounded-xl transition-all cursor-pointer",
+                      isSelected ? "bg-amber-500/20 ring-1 ring-amber-400" : "hover:bg-slate-800/40"
+                    )}
+                  >
+                    <span className="flex items-center gap-1.5 font-bold text-white">
+                      <span className="w-2.5 h-2.5 rounded-xs bg-[#EAB308]" /> VIP
+                    </span>
+                    <span className="font-mono text-slate-300">
+                      {summary.reservedCounts.vip.count} · {summary.reservedCounts.vip.named} named
+                    </span>
+                  </button>
+                );
+              })()}
 
-              <div className="flex justify-between items-center">
-                <span className="flex items-center gap-1.5 font-bold text-white">
-                  <span className="w-2.5 h-2.5 rounded-xs bg-[#EF4444]" /> Obligation
-                </span>
-                <span className="font-mono text-slate-300">
-                  {summary.reservedCounts.obligation.count} · {summary.reservedCounts.obligation.named} named
-                </span>
-              </div>
+              {/* Obligation */}
+              {(() => {
+                const isSelected = isolatedFilter === 'obligation';
+                return (
+                  <button
+                    type="button"
+                    onClick={() => setIsolatedFilter(isSelected ? 'all' : 'obligation')}
+                    className={cn(
+                      "w-full flex justify-between items-center text-left p-1.5 rounded-xl transition-all cursor-pointer",
+                      isSelected ? "bg-red-500/20 ring-1 ring-red-400" : "hover:bg-slate-800/40"
+                    )}
+                  >
+                    <span className="flex items-center gap-1.5 font-bold text-white">
+                      <span className="w-2.5 h-2.5 rounded-xs bg-[#EF4444]" /> Obligation
+                    </span>
+                    <span className="font-mono text-slate-300">
+                      {summary.reservedCounts.obligation.count} · {summary.reservedCounts.obligation.named} named
+                    </span>
+                  </button>
+                );
+              })()}
 
-              <div className="flex justify-between items-center">
-                <span className="flex items-center gap-1.5 font-bold text-white">
-                  <span className="w-2.5 h-2.5 rounded-xs bg-[#06B6D4]" /> Sponsor comp
-                </span>
-                <span className="font-mono text-slate-300">
-                  {summary.reservedCounts.sponsor_comp.count} · {summary.reservedCounts.sponsor_comp.named} named
-                </span>
-              </div>
+              {/* Sponsor Comp */}
+              {(() => {
+                const isSelected = isolatedFilter === 'sponsor_comp';
+                return (
+                  <button
+                    type="button"
+                    onClick={() => setIsolatedFilter(isSelected ? 'all' : 'sponsor_comp')}
+                    className={cn(
+                      "w-full flex justify-between items-center text-left p-1.5 rounded-xl transition-all cursor-pointer",
+                      isSelected ? "bg-cyan-500/20 ring-1 ring-cyan-400" : "hover:bg-slate-800/40"
+                    )}
+                  >
+                    <span className="flex items-center gap-1.5 font-bold text-white">
+                      <span className="w-2.5 h-2.5 rounded-xs bg-[#06B6D4]" /> Sponsor comp
+                    </span>
+                    <span className="font-mono text-slate-300">
+                      {summary.reservedCounts.sponsor_comp.count} · {summary.reservedCounts.sponsor_comp.named} named
+                    </span>
+                  </button>
+                );
+              })()}
 
-              <div className="flex justify-between items-center">
-                <span className="flex items-center gap-1.5 font-bold text-white">
-                  <span className="w-2.5 h-2.5 rounded-xs bg-[#475569]" /> Blocked
-                </span>
-                <span className="font-mono text-slate-300">
-                  {summary.reservedCounts.blocked.count} seats
-                </span>
-              </div>
+              {/* Blocked */}
+              {(() => {
+                const isSelected = isolatedFilter === 'blocked';
+                return (
+                  <button
+                    type="button"
+                    onClick={() => setIsolatedFilter(isSelected ? 'all' : 'blocked')}
+                    className={cn(
+                      "w-full flex justify-between items-center text-left p-1.5 rounded-xl transition-all cursor-pointer",
+                      isSelected ? "bg-slate-500/20 ring-1 ring-slate-400" : "hover:bg-slate-800/40"
+                    )}
+                  >
+                    <span className="flex items-center gap-1.5 font-bold text-white">
+                      <span className="w-2.5 h-2.5 rounded-xs bg-[#475569]" /> Blocked
+                    </span>
+                    <span className="font-mono text-slate-300">
+                      {summary.reservedCounts.blocked.count} seats
+                    </span>
+                  </button>
+                );
+              })()}
             </div>
           </div>
 

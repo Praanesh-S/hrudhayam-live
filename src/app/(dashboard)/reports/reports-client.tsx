@@ -166,7 +166,7 @@ export function ReportsClient({
         <div>
           <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-bold mb-1">
             <Heart className="w-3 h-3 fill-amber-400" />
-            <span>Public-Access AED Project</span>
+            <span>Rotary Club of Aarch City Madras</span>
           </div>
           <h2 className="text-xl font-black text-white">Event Audit & Reconciliation</h2>
           <p className="text-xs text-slate-400">
@@ -188,7 +188,7 @@ export function ReportsClient({
       </div>
 
       {/* 2. Top Level KPI Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {/* Total Funds Raised */}
         <Card className="bg-[#0B1724] border-[#1D3249]">
           <CardContent className="p-5">
@@ -212,23 +212,7 @@ export function ReportsClient({
           </CardContent>
         </Card>
 
-        {/* AED Stations Goal */}
-        <Card className="bg-gradient-to-br from-[#0B1724] to-[#122A3F] border-[#1E3A52]">
-          <CardContent className="p-5">
-            <div className="flex items-center justify-between text-xs text-amber-300 font-medium">
-              <span>AED Stations Funded</span>
-              <Heart className="w-4 h-4 fill-rose-500 text-rose-500" />
-            </div>
-            <p className="text-3xl font-black text-amber-400 mt-2">
-              {metrics.aedStationsFunded} <span className="text-base font-normal text-slate-300">Stations</span>
-            </p>
-            <p className="text-[11px] text-slate-400 mt-2 pt-2 border-t border-[#1E3A52]">
-              Goal: ₹1,50,000 per fully equipped public AED post
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Passes Sold */}
+        {/* Passes Issued */}
         <Card className="bg-[#0B1724] border-[#1D3249]">
           <CardContent className="p-5">
             <div className="flex items-center justify-between text-xs text-slate-400 font-medium">
@@ -239,23 +223,23 @@ export function ReportsClient({
               {metrics.passesSold} <span className="text-base font-normal text-slate-400">Passes</span>
             </p>
             <p className="text-[11px] text-slate-400 mt-2 pt-2 border-t border-[#1D3249]">
-              Value: {formatINR(metrics.passesTotal)}
+              Total Value: {formatINR(metrics.passesTotal)}
             </p>
           </CardContent>
         </Card>
 
-        {/* Gate Attendance */}
+        {/* Sponsorship & Club Contributions */}
         <Card className="bg-[#0B1724] border-[#1D3249]">
           <CardContent className="p-5">
             <div className="flex items-center justify-between text-xs text-slate-400 font-medium">
-              <span>Gate Checked-In</span>
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              <span>Sponsors & Clubs Raised</span>
+              <Building2 className="w-4 h-4 text-emerald-400" />
             </div>
-            <p className="text-3xl font-black text-emerald-400 mt-2">
-              {metrics.gateCheckedIn} <span className="text-base font-normal text-slate-400">Guests</span>
+            <p className="text-3xl font-black text-white mt-2">
+              {formatINR(metrics.sponsorsTotal + metrics.clubsTotalEntryFees)}
             </p>
             <p className="text-[11px] text-slate-400 mt-2 pt-2 border-t border-[#1D3249]">
-              {metrics.passesSold > 0 ? `${Math.round((metrics.gateCheckedIn / metrics.passesSold) * 100)}% turn-out rate` : '0% turn-out'}
+              {sponsors.length} sponsors · {clubs.length} participating clubs
             </p>
           </CardContent>
         </Card>
@@ -496,7 +480,7 @@ export function ReportsClient({
               <ShieldCheck className="w-4 h-4" />
               <span>Rule R7: Ring-Fenced Participating Clubs</span>
             </div>
-            Each participating club pays a ₹25,000 entry fee and receives ₹15,000 worth of passes, yielding a ₹10,000 net contribution to the AED cause. As per business rule R7, this revenue is ring-fenced and excluded from individual sales leaderboard competition.
+            Each participating club pays a ₹25,000 entry fee and receives ₹15,000 worth of passes, yielding a ₹10,000 net contribution. As per business rule R7, this revenue is ring-fenced and excluded from individual sales leaderboard competition.
           </div>
 
           <div className="bg-[#0B1724] rounded-2xl border border-[#1D3249] overflow-hidden shadow-xl">

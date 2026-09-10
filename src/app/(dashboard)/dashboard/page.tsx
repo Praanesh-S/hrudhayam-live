@@ -180,7 +180,7 @@ export default async function DashboardPage() {
             Real-time venue occupancy status
           </span>
         </div>
-        <HallLayoutMap seats={allSeats} readOnly={true} />
+        <HallLayoutMap seats={allSeats} bands={metrics.bands} readOnly={true} />
       </div>
 
       {/* 6. Team-wise Collections & Seats Sold Comparison */}

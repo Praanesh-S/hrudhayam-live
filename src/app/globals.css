@@ -155,7 +155,8 @@ html:not(.dark) {
   .bg-\[\#131F2E\],
   .bg-\[\#0F2236\],
   .bg-\[\#0B1E2B\],
-  .bg-\[\#132B3E\] {
+  .bg-\[\#132B3E\],
+  .bg-\[\#0B1724\] {
     background-color: #FFFDF9 !important;
     color: #0F172A !important;
     border-color: #E2D7C5 !important;
@@ -165,6 +166,8 @@ html:not(.dark) {
 
   /* 2. Sub-headers, Inner Section Boxes, and Table Headers */
   .bg-\[\#0E1724\],
+  .bg-\[\#0E1722\],
+  .bg-\[\#07111C\],
   .bg-\[\#081522\],
   .bg-\[\#08121D\],
   .bg-\[\#0A1624\],
@@ -186,6 +189,20 @@ html:not(.dark) {
     border-width: 1px !important;
   }
 
+  /* Native select and option styling in light mode */
+  select,
+  select option {
+    background-color: #FAF7F0 !important;
+    color: #0F172A !important;
+  }
+
+  /* Progress and bar tracks in light mode */
+  .bg-slate-800,
+  .bg-slate-800\/80,
+  .bg-slate-900 {
+    background-color: #EAE2D5 !important;
+  }
+
   /* Input placeholders in light mode */
   input.bg-\[\#1A2839\]::placeholder,
   textarea.bg-\[\#1A2839\]::placeholder,
@@ -205,6 +222,7 @@ html:not(.dark) {
   .border-\[\#1E2D3D\],
   .border-\[\#2A4D70\],
   .border-\[\#24364A\],
+  .border-\[\#1D3249\],
   .border-slate-800,
   .border-slate-700 {
     border-color: #E2D7C5 !important;
@@ -217,12 +235,12 @@ html:not(.dark) {
 
   .text-slate-300,
   .text-slate-200 {
-    color: #2D3748 !important;
+    color: #1E293B !important;
   }
 
   .text-slate-400,
   .text-slate-500 {
-    color: #5C5243 !important;
+    color: #4B5563 !important;
   }
 
   /* High-Contrast Status & Metric Colors in Light Mode */

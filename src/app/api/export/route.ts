@@ -97,13 +97,11 @@ export async function GET() {
     sheetSummary.addRow({ metric: 'Total Seating Allocation (All Bands)', value: totalCap });
     sheetSummary.addRow({ metric: 'Total Passes Issued / Sold', value: totalSold });
     sheetSummary.addRow({ metric: 'Remaining Available Seats', value: totalRem });
-    sheetSummary.addRow({ metric: 'Gate Admissions Admitted', value: totalCheckedIn });
     sheetSummary.addRow({ metric: 'Pass Sales Revenue Collected (₹)', value: totalPassesCollected });
     sheetSummary.addRow({ metric: 'Pass Sales Pending (₹)', value: totalPassesPending });
     sheetSummary.addRow({ metric: 'Sponsorships Received (₹)', value: sponsorsReceived });
     sheetSummary.addRow({ metric: 'Sponsorships Committed (₹)', value: sponsorsCommitted });
     sheetSummary.addRow({ metric: 'Total Net Funds Raised (₹)', value: totalRaised });
-    sheetSummary.addRow({ metric: 'Public-Access AED Stations Funded (at ₹1.5L)', value: fundedStations });
     styleHeader(sheetSummary);
 
     // ──────────────────────────────────────────────
