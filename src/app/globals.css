@@ -150,85 +150,321 @@
  * Transforms all elements into warm peach/champagne ivory with
  * crisp warm borders and deep high-contrast readable typography.
  * ───────────────────────────────────────────────────────────── */
-html:not(.dark) {
-  /* 1. Main Cards, Panels & Outer Containers */
+html:not(.dark),
+html.light {
+  /* 1. Main Cards, Panels, Forms & Outer Containers */
+  .bg-\[\#102030\],
   .bg-\[\#131F2E\],
+  .bg-\[\#0B1724\],
+  .bg-\[\#0B1724\]\/60,
+  .bg-\[\#0B1724\]\/80,
+  .bg-\[\#0B1724\]\/90,
   .bg-\[\#0F2236\],
   .bg-\[\#0B1E2B\],
   .bg-\[\#132B3E\],
-  .bg-\[\#0B1724\] {
+  .bg-\[\#16293D\],
+  .bg-\[\#161318\],
+  .bg-\[\#162538\],
+  .bg-slate-900\/80,
+  header.bg-\[\#0B1E2B\],
+  div.bg-\[\#0B1E2B\] {
     background-color: #FFFDF9 !important;
     color: #0F172A !important;
     border-color: #E2D7C5 !important;
-    border-width: 1px !important;
     box-shadow: 0 2px 8px -2px rgba(100, 80, 50, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04) !important;
   }
 
-  /* 2. Sub-headers, Inner Section Boxes, and Table Headers */
+  /* 2. Sub-headers, Inner Section Boxes, Stat Tiles, Table Headers & Neutral Bars */
   .bg-\[\#0E1724\],
   .bg-\[\#0E1722\],
+  .bg-\[\#0E1825\],
   .bg-\[\#07111C\],
   .bg-\[\#081522\],
+  .bg-\[\#081522\]\/60,
   .bg-\[\#08121D\],
   .bg-\[\#0A1624\],
   .bg-\[\#0A1420\],
-  .bg-\[\#060D15\] {
+  .bg-\[\#060D15\],
+  .bg-\[\#0F2031\],
+  .bg-\[\#0F2B3C\],
+  .bg-slate-900\/30,
+  .bg-slate-900\/40,
+  .bg-slate-900\/60,
+  .bg-slate-800\/40,
+  .bg-slate-800\/60 {
     background-color: #F6F1E8 !important;
     color: #0F172A !important;
     border-color: #E2D7C5 !important;
   }
 
-  /* 3. Textboxes, Search Inputs & Select Triggers (Warm Peach-Ivory with Clear Crisp Border) */
+  /* 3. Textboxes, Search Inputs, Native Selects & Combobox Triggers */
+  input,
+  textarea,
+  select,
+  [data-slot="input"],
+  [data-slot="select-trigger"],
   .bg-\[\#1A2839\],
   .bg-\[\#162C42\],
   .bg-\[\#1A344E\],
-  .bg-\[\#1E3B5A\] {
+  .bg-\[\#1E3B5A\],
+  input.bg-\[\#0B1724\],
+  input.bg-\[\#07111C\],
+  input.bg-\[\#131F2E\],
+  input.bg-\[\#102030\],
+  textarea.bg-\[\#0B1724\],
+  textarea.bg-\[\#07111C\],
+  textarea.bg-\[\#131F2E\],
+  textarea.bg-\[\#102030\] {
     background-color: #FAF7F0 !important;
     color: #0F172A !important;
     border-color: #D2C4AF !important;
-    border-width: 1px !important;
   }
 
-  /* Native select and option styling in light mode */
+  /* Native select and options */
   select,
   select option {
     background-color: #FAF7F0 !important;
     color: #0F172A !important;
   }
 
-  /* Progress and bar tracks in light mode */
-  .bg-slate-800,
-  .bg-slate-800\/80,
-  .bg-slate-900 {
-    background-color: #EAE2D5 !important;
+  /* Select dropdown menu floating content */
+  [data-slot="select-content"],
+  [role="listbox"] {
+    background-color: #FFFDF9 !important;
+    color: #0F172A !important;
+    border-color: #E2D7C5 !important;
+    box-shadow: 0 10px 25px -5px rgba(100, 80, 50, 0.15) !important;
   }
 
-  /* Input placeholders in light mode */
-  input.bg-\[\#1A2839\]::placeholder,
-  textarea.bg-\[\#1A2839\]::placeholder,
+  [data-slot="select-item"]:hover,
+  [role="option"]:hover,
+  [data-highlighted] {
+    background-color: #F4EFE6 !important;
+    color: #0F172A !important;
+  }
+
+  /* Input and textarea placeholders */
   input::placeholder,
   textarea::placeholder {
     color: #786B5A !important;
     opacity: 0.85 !important;
   }
 
-  /* 4. Strong Well-Defined Warm Borders */
-  .border-\[\#223345\],
-  .border-\[\#1E3A4C\],
-  .border-\[\#2A3F55\],
-  .border-\[\#243D56\],
-  .border-\[\#2A4866\],
-  .border-\[\#1E3750\],
-  .border-\[\#1E2D3D\],
-  .border-\[\#2A4D70\],
-  .border-\[\#24364A\],
-  .border-\[\#1D3249\],
-  .border-slate-800,
-  .border-slate-700 {
+  /* 4. Special Contextual Containers */
+  /* WhatsApp Comms Preview Chat Bubble */
+  .bg-\[\#081B15\] {
+    background-color: #E7F8E8 !important;
+    color: #0F172A !important;
+    border-color: #B7E4C7 !important;
+  }
+
+  /* Sell a Pass Order Summary Box */
+  .bg-\[\#0D281E\] {
+    background-color: #ECFDF5 !important;
+    color: #065F46 !important;
+    border-color: #A7F3D0 !important;
+  }
+
+  /* Members Header Gradient Banner */
+  .bg-gradient-to-r.from-\[\#131F2E\],
+  .from-\[\#131F2E\] {
+    background-image: linear-gradient(to right, #FAF6EE, #F2EADB, #FAF6EE) !important;
     border-color: #E2D7C5 !important;
   }
 
-  /* 5. Typography & High-Contrast Readability */
+  /* 5. Progress Bars & Metric Gauge Tracks */
+  .bg-slate-800,
+  .bg-slate-800\/80,
+  .bg-slate-900 {
+    background-color: #E5DDD0 !important;
+  }
+
+  /* 6. Comprehensive Dark Borders Overhaul */
+  .border-\[\#223345\],
+  .border-\[\#1E3A4C\],
+  .border-\[\#1E2D3D\],
+  .border-\[\#1E3750\],
+  .border-\[\#2A3F55\],
+  .border-\[\#243D56\],
+  .border-\[\#2A4866\],
+  .border-\[\#2A4D70\],
+  .border-\[\#24364A\],
+  .border-\[\#1D3249\],
+  .border-\[\#234263\],
+  .border-\[\#2A4668\],
+  .border-slate-800,
+  .border-slate-800\/40,
+  .border-slate-800\/60,
+  .border-slate-800\/80,
+  .border-slate-700,
+  .border-slate-700\/60,
+  .border-slate-700\/80,
+  .border-slate-600 {
+    border-color: #E2D7C5 !important;
+  }
+
+  /* 7. Tables & Data Grids */
+  thead tr,
+  th,
+  tr.bg-\[\#07111C\] {
+    background-color: #F6F1E8 !important;
+    color: #4B5563 !important;
+    border-color: #E2D7C5 !important;
+  }
+
+  tbody tr {
+    background-color: #FFFDF9 !important;
+    color: #0F172A !important;
+    border-color: #E2D7C5 !important;
+  }
+
+  /* Table row hover states */
+  tbody tr:hover,
+  tr.hover\:bg-\[\#0E2032\]:hover,
+  .hover\:bg-\[\#0E2032\]:hover {
+    background-color: #F8F4EC !important;
+  }
+
+  /* 8. Neutral Hover States */
+  .hover\:bg-slate-800:hover,
+  .hover\:bg-slate-800\/60:hover,
+  .hover\:bg-slate-700:hover,
+  .hover\:bg-\[\#122436\]:hover,
+  .hover\:bg-\[\#15283C\]:hover,
+  .hover\:bg-\[\#1A384F\]:hover,
+  .hover\:bg-\[\#223345\]:hover,
+  .hover\:bg-\[\#253950\]:hover {
+    background-color: #EDE5D8 !important;
+    color: #0F172A !important;
+  }
+
+  /* 9. Inactive Tab Buttons & Toggle Chips */
+  button.bg-\[\#102030\],
+  button.bg-\[\#131F2E\],
+  button.bg-\[\#0B1724\],
+  button.bg-slate-800,
+  button.bg-slate-900,
+  button.bg-\[\#162C42\] {
+    background-color: #F4EFE6 !important;
+    border-color: #D8CBBA !important;
+    color: #475569 !important;
+  }
+
+  button.bg-\[\#102030\]:hover,
+  button.bg-\[\#131F2E\]:hover,
+  button.bg-\[\#0B1724\]:hover,
+  button.bg-slate-800:hover {
+    background-color: #EAE2D3 !important;
+    color: #0F172A !important;
+  }
+
+  /* 10. Status Badges & Pill Chips (All 950 Dark Backgrounds transformed to warm crisp pastels) */
+  .bg-emerald-950,
+  .bg-emerald-950\/20,
+  .bg-emerald-950\/30,
+  .bg-emerald-950\/40,
+  .bg-emerald-950\/60,
+  .bg-emerald-950\/70,
+  .bg-emerald-950\/80 {
+    background-color: #D1FAE5 !important;
+    border-color: #A7F3D0 !important;
+    color: #065F46 !important;
+  }
+
+  .bg-red-950,
+  .bg-red-950\/30,
+  .bg-red-950\/40,
+  .bg-red-950\/50,
+  .bg-red-950\/60,
+  .bg-red-950\/70 {
+    background-color: #FEE2E2 !important;
+    border-color: #FECACA !important;
+    color: #991B1B !important;
+  }
+
+  .bg-amber-950,
+  .bg-amber-950\/40,
+  .bg-amber-950\/50,
+  .bg-amber-950\/80 {
+    background-color: #FEF3C7 !important;
+    border-color: #FDE68A !important;
+    color: #92400E !important;
+  }
+
+  .bg-cyan-950,
+  .bg-cyan-950\/50 {
+    background-color: #CFFAFE !important;
+    border-color: #A5F3FC !important;
+    color: #155E75 !important;
+  }
+
+  .bg-teal-950,
+  .bg-teal-950\/30,
+  .bg-teal-950\/40 {
+    background-color: #CCFBF1 !important;
+    border-color: #99F6E4 !important;
+    color: #115E59 !important;
+  }
+
+  .bg-sky-950,
+  .bg-sky-950\/40,
+  .bg-blue-950 {
+    background-color: #E0F2FE !important;
+    border-color: #BAE6FD !important;
+    color: #0369A1 !important;
+  }
+
+  .bg-purple-950,
+  .bg-purple-950\/40 {
+    background-color: #F3E8FF !important;
+    border-color: #E9D5FF !important;
+    color: #6B21A8 !important;
+  }
+
+  span.bg-slate-800,
+  span.bg-slate-900,
+  span.bg-slate-800\/80 {
+    background-color: #EAE2D5 !important;
+    border-color: #D2C4AF !important;
+    color: #334155 !important;
+  }
+
+  /* 11. Alerts & Notifications */
+  [role="alert"] {
+    background-color: #FFFDF9 !important;
+    border-color: #E2D7C5 !important;
+  }
+
+  /* 12. Dialogs, Modals, Sheets & Overlays */
+  [role="dialog"],
+  [data-slot="dialog-content"],
+  [data-slot="sheet-content"] {
+    background-color: #FFFDF9 !important;
+    color: #0F172A !important;
+    border-color: #E2D7C5 !important;
+    box-shadow: 0 25px 50px -12px rgba(100, 80, 50, 0.18) !important;
+  }
+
+  /* 13. Sidebar & Header Elements */
+  /* Header user profile pill */
+  .bg-\[\#132B3E\] {
+    background-color: #FAF7F0 !important;
+    border-color: #D2C4AF !important;
+  }
+
+  /* Sidebar footer */
+  .bg-slate-900\/30 {
+    background-color: #FAF7F0 !important;
+    border-color: #E2D7C5 !important;
+  }
+
+  /* Sidebar inactive links hover */
+  .hover\:bg-slate-800\/60:hover {
+    background-color: #F3ECE0 !important;
+    color: #0F172A !important;
+  }
+
+  /* 14. Typography & High-Contrast Readability */
   .text-white {
     color: #0F172A !important;
   }
@@ -241,6 +477,46 @@ html:not(.dark) {
   .text-slate-400,
   .text-slate-500 {
     color: #4B5563 !important;
+  }
+
+  /* PRESERVE crisp white text on solid colored action buttons */
+  button.bg-emerald-600,
+  button.bg-emerald-600 *,
+  button.bg-emerald-500,
+  button.bg-emerald-500 *,
+  button.bg-red-600,
+  button.bg-red-600 *,
+  button.bg-red-500,
+  button.bg-red-500 *,
+  button.bg-teal-600,
+  button.bg-teal-600 *,
+  button.bg-teal-500,
+  button.bg-teal-500 *,
+  button.bg-blue-600,
+  button.bg-blue-600 *,
+  button.bg-\[\#0284C7\],
+  button.bg-\[\#0284C7\] *,
+  button.bg-\[\#8B5CF6\],
+  button.bg-\[\#8B5CF6\] *,
+  .bg-emerald-600 .text-white,
+  .bg-red-600 .text-white,
+  .bg-teal-600 .text-white,
+  .bg-\[\#0284C7\] .text-white,
+  .bg-\[\#8B5CF6\] .text-white {
+    color: #FFFFFF !important;
+  }
+
+  /* Amber buttons keep crisp dark text */
+  button.bg-\[\#E8913A\],
+  button.bg-\[\#E8913A\] *,
+  button.bg-\[\#E58327\],
+  button.bg-\[\#E58327\] *,
+  button.bg-amber-500,
+  button.bg-amber-500 *,
+  button.bg-\[\#D97706\],
+  button.bg-\[\#D97706\] *,
+  .bg-gradient-to-r.from-\[\#E8913A\] * {
+    color: #000000 !important;
   }
 
   /* High-Contrast Status & Metric Colors in Light Mode */
@@ -291,49 +567,7 @@ html:not(.dark) {
     color: #B91C1C !important; /* Deep Crimson */
   }
 
-  /* 6. Icon Badges & Metric Pill Backgrounds */
-  .bg-amber-950\/40 {
-    background-color: #FEF3C7 !important;
-    border-color: #FDE68A !important;
-    color: #92400E !important;
-  }
-
-  .bg-emerald-950\/40 {
-    background-color: #D1FAE5 !important;
-    border-color: #A7F3D0 !important;
-    color: #065F46 !important;
-  }
-
-  .bg-sky-950\/40 {
-    background-color: #E0F2FE !important;
-    border-color: #BAE6FD !important;
-    color: #0369A1 !important;
-  }
-
-  .bg-purple-950\/40 {
-    background-color: #F3E8FF !important;
-    border-color: #E9D5FF !important;
-    color: #6B21A8 !important;
-  }
-
-  /* 7. Action Buttons & Filter Chips */
-  button.bg-\[\#E8913A\],
-  button.bg-\[\#D97706\],
-  .bg-gradient-to-r.from-\[\#E8913A\] {
-    background-color: #E8913A !important;
-    color: #000000 !important;
-    border-color: #D97706 !important;
-  }
-
-  /* Filter buttons in Seat Blueprint */
-  button.bg-\[\#162C42\],
-  button.bg-slate-800,
-  button.bg-slate-900 {
-    background-color: #F6F0E4 !important;
-    border-color: #D8CBBA !important;
-    color: #2D3748 !important;
-  }
-
+  /* 15. Action Buttons & Filter Chips in Seat Blueprint */
   button.bg-\[\#F59E0B\],
   .bg-\[\#F59E0B\]\/10 {
     background-color: #FEF3C7 !important;
@@ -365,13 +599,13 @@ html:not(.dark) {
     color: #FFFFFF !important;
   }
 
-  /* 8. Floor Switcher Toggle */
+  /* 16. Floor Switcher Toggle */
   .inline-flex.bg-\[\#081522\] {
     background-color: #EDE4D5 !important;
     border-color: #D8CBBA !important;
   }
 
-  /* 9. Tabs in Light Mode (only for uncolored default tabs) */
+  /* 17. Tabs in Light Mode */
   [data-slot="tabs-trigger"][data-active]:not([class*="bg-amber"]):not([class*="bg-[#E8913A]"]),
   [data-slot="tabs-trigger"][data-state="active"]:not([class*="bg-amber"]):not([class*="bg-[#E8913A]"]) {
     background-color: #FFFDF9 !important;
@@ -380,16 +614,7 @@ html:not(.dark) {
     font-weight: 700 !important;
   }
 
-  /* 10. Dialogs & Modals */
-  [role="dialog"] {
-    background-color: #FFFDF9 !important;
-    color: #0F172A !important;
-    border-color: #E2D7C5 !important;
-    border-width: 1px !important;
-    box-shadow: 0 25px 50px -12px rgba(100, 80, 50, 0.15) !important;
-  }
-
-  /* 11. Seat Map Architectural Canvas in Light Mode */
+  /* 18. Seat Map Architectural Canvas in Light Mode */
   .bg-\[\#0A1624\] {
     background-color: #F5EFE4 !important;
     border-color: #D8CBBA !important;
@@ -406,7 +631,7 @@ html:not(.dark) {
     border-color: #D4C6B2 !important;
   }
 
-  /* 12. Hero Concert Banner in Light Mode */
+  /* 19. Hero Concert Banner in Light Mode */
   .bg-gradient-to-r.from-\[\#0B131E\] {
     background-image: linear-gradient(to right, #1E293B, #0F172A) !important;
   }

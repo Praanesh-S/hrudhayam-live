@@ -96,14 +96,14 @@ export function StatusDialog({
       onClick={() => onOpenChange(false)}
     >
       <div
-        className="relative bg-[#131F2E] border-2 border-slate-700 text-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl space-y-5 text-center animate-in zoom-in-95 duration-150"
+        className="relative bg-[#FFFDF9] dark:bg-[#131F2E] border-2 border-[#E2D7C5] dark:border-slate-700 text-slate-900 dark:text-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl space-y-5 text-center animate-in zoom-in-95 duration-150"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Close "X" Button */}
         <button
           type="button"
           onClick={() => onOpenChange(false)}
-          className="absolute top-4 right-4 p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition-colors"
+          className="absolute top-4 right-4 p-2 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white rounded-xl hover:bg-[#F4EFE6] dark:hover:bg-slate-800 transition-colors"
           aria-label="Close dialog"
         >
           <X className="w-5 h-5" />
@@ -114,10 +114,10 @@ export function StatusDialog({
 
         {/* Title & Message */}
         <div className="space-y-2">
-          <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white">
+          <h2 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 dark:text-white">
             {title}
           </h2>
-          <div className="text-sm sm:text-base text-slate-300 leading-relaxed font-normal">
+          <div className="text-sm sm:text-base text-slate-700 dark:text-slate-300 leading-relaxed font-normal">
             {message}
           </div>
         </div>
