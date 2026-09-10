@@ -4,6 +4,7 @@ import { useTheme } from 'next-themes';
 import { Sun, Moon, Laptop } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,22 +12,32 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 
-export function ThemeToggle() {
-  const { theme, setTheme } = useTheme();
+interface ThemeToggleProps {
+  className?: string;
+  showLabel?: boolean;
+}
+
+export function ThemeToggle({ className, showLabel = false }: ThemeToggleProps) {
+  const { theme, resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
+  const isDark = mounted ? (resolvedTheme === 'dark' || theme === 'dark') : true;
+
   if (!mounted) {
     return (
       <Button
         variant="outline"
         size="icon"
-        className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-[#132B3E] border-slate-200 dark:border-[#1E3A4C] text-slate-700 dark:text-slate-300"
+        className={cn(
+          "w-9 h-9 rounded-xl bg-[#132B3E] border-slate-700 text-slate-300",
+          className
+        )}
       >
-        <Moon className="h-4 w-4" />
+        <Sun className="h-4 w-4 text-amber-400" />
       </Button>
     );
   }
@@ -34,17 +45,31 @@ export function ThemeToggle() {
   return (
     <Button
       variant="outline"
-      size="icon"
-      onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-      className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-[#132B3E] dark:hover:bg-[#1A384F] border-slate-200 dark:border-[#1E3A4C] text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
-      title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-    >
-      {theme === 'dark' ? (
-        <Sun className="h-4 w-4 text-amber-400" />
-      ) : (
-        <Moon className="h-4 w-4 text-sky-600" />
+      size={showLabel ? "default" : "icon"}
+      onClick={() => setTheme(isDark ? 'light' : 'dark')}
+      className={cn(
+        "rounded-xl border transition-all cursor-pointer",
+        showLabel ? "h-9 px-3 gap-2 text-xs font-bold" : "w-9 h-9",
+        isDark
+          ? "bg-[#132B3E] hover:bg-[#1A384F] border-slate-700 text-amber-300 hover:text-amber-200"
+          : "bg-[#FAF7F0] hover:bg-[#F3ECE0] border-[#D2C4AF] text-slate-800 hover:text-slate-950 shadow-xs",
+        className
       )}
-      <span className="sr-only">Toggle theme</span>
+      title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
+      aria-label={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
+    >
+      {isDark ? (
+        <>
+          <Sun className="h-4 w-4 text-amber-400" />
+          {showLabel && <span>Light Mode</span>}
+        </>
+      ) : (
+        <>
+          <Moon className="h-4 w-4 text-slate-700" />
+          {showLabel && <span>Dark Mode</span>}
+        </>
+      )}
+      {!showLabel && <span className="sr-only">Toggle theme</span>}
     </Button>
   );
 }

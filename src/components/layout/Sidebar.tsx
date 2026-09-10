@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AuthUser } from '@/lib/auth/session';
+import { ThemeToggle } from '@/components/theme-toggle';
 
 interface SidebarProps {
   user: AuthUser;
@@ -121,14 +122,17 @@ export function SidebarContent({ user, onNavigate }: { user: AuthUser; onNavigat
         )}
       </div>
 
-      {/* Footer Info */}
-      <div className="p-4 border-t border-slate-800/80 bg-slate-900/30 text-center">
-        <div className="text-[11px] font-bold text-white truncate">
-          {user.fullName}
+      {/* Footer Info & Theme Toggle */}
+      <div className="p-3.5 border-t border-slate-800/80 bg-slate-900/30 flex items-center justify-between gap-2">
+        <div className="min-w-0 flex-1 text-left">
+          <div className="text-[11px] font-bold text-white truncate">
+            {user.fullName}
+          </div>
+          <div className="text-[10px] text-amber-400 font-semibold uppercase tracking-wider">
+            {user.role === 'super_admin' ? 'Super Admin' : user.role === 'system_admin' ? 'System Admin' : user.groupName || 'Group Admin'}
+          </div>
         </div>
-        <div className="text-[10px] text-amber-400 font-semibold uppercase tracking-wider">
-          {user.role === 'super_admin' ? 'Super Admin' : user.role === 'system_admin' ? 'System Admin' : user.groupName || 'Group Admin'}
-        </div>
+        <ThemeToggle />
       </div>
     </div>
   );

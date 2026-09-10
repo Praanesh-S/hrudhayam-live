@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/sheet';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { SidebarContent } from './Sidebar';
+import { ThemeToggle } from '@/components/theme-toggle';
 import { useState } from 'react';
 
 interface HeaderProps {
@@ -79,6 +80,9 @@ export function Header({ user }: HeaderProps) {
         </div>
 
         <div className="flex items-center gap-2.5 sm:gap-3">
+          {/* Light / Dark Mode Toggle */}
+          <ThemeToggle />
+
           {/* User Profile Pill */}
           <div className="flex items-center gap-2.5 bg-[#132B3E] px-3 py-1.5 rounded-full border border-slate-700/80">
             <Avatar className="h-6 w-6 border border-amber-500/40">
