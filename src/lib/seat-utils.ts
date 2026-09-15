@@ -10,9 +10,6 @@ export function generateSeatId(
   rowLabel: string,
   seatNo: number
 ): string {
-  if (rowLabel === "SPL VIP") {
-    return `GF-SPL VIP-${String(seatNo).padStart(2, "0")}`;
-  }
   const prefix = SECTION_PREFIX[section] ?? (section === "Ground Floor" ? "GF" : "BAL");
   return `${prefix}-${rowLabel}-${String(seatNo).padStart(2, "0")}`;
 }
@@ -59,11 +56,11 @@ export function parseSeatId(seatId: string): {
 export function getRowOrder(section: SeatSection): string[] {
   if (section === "Ground Floor") {
     return [
-      "A", "B", "C", "D", "E", "F", "G",
+      "SPL", "A", "B", "C", "D", "E", "F", "G",
       "H", "I", "J", "K", "L", "M", "N",
     ];
   }
-  return ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N"];
+  return ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O"];
 }
 
 /**
@@ -115,12 +112,7 @@ export function getSeatColor(seat: {
   sponsor_id?: string | null;
   pass_code?: string | null;
 }): string {
-  // 1. VIP (SPL VIP Box or Category VIP)
-  if (seat.category === 'vip' || seat.row_label === 'SPL VIP' || seat.obligation === 'chief' || seat.obligation_type === 'vip') {
-    return '#EAB308'; // Gold (VIP)
-  }
-
-  // 2. Blocked
+  // 1. Blocked
   if (seat.category === 'blocked' || seat.is_blocked) {
     return '#475569'; // Dark Slate (Blocked)
   }

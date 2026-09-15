@@ -21,40 +21,39 @@ BEGIN
         obligation public.obligation_type
     ) ON COMMIT DROP;
 
-    -- Ground Floor (698 seats total: 648 regular + 50 SPL VIP)
-    INSERT INTO tmp_rows VALUES ('Ground Floor', 'A', 34, 1, false, NULL);
-    INSERT INTO tmp_rows VALUES ('Ground Floor', 'B', 40, 2, false, NULL);
-    INSERT INTO tmp_rows VALUES ('Ground Floor', 'C', 42, 3, false, NULL);
-    INSERT INTO tmp_rows VALUES ('Ground Floor', 'D', 43, 4, false, NULL);
-    INSERT INTO tmp_rows VALUES ('Ground Floor', 'E', 46, 5, false, NULL);
-    INSERT INTO tmp_rows VALUES ('Ground Floor', 'F', 46, 6, false, NULL);
-    INSERT INTO tmp_rows VALUES ('Ground Floor', 'G', 47, 7, false, NULL);
-    INSERT INTO tmp_rows VALUES ('Ground Floor', 'H', 50, 8, false, NULL);
-    INSERT INTO tmp_rows VALUES ('Ground Floor', 'I', 53, 9, false, NULL);
-    INSERT INTO tmp_rows VALUES ('Ground Floor', 'J', 54, 10, false, NULL);
-    INSERT INTO tmp_rows VALUES ('Ground Floor', 'K', 56, 11, false, NULL);
-    INSERT INTO tmp_rows VALUES ('Ground Floor', 'L', 57, 12, false, NULL);
-    INSERT INTO tmp_rows VALUES ('Ground Floor', 'M', 40, 13, false, NULL);
-    INSERT INTO tmp_rows VALUES ('Ground Floor', 'N', 40, 14, false, NULL);
-    
-    -- SPL VIP (50 chief guest seats)
-    INSERT INTO tmp_rows VALUES ('Ground Floor', 'SPL VIP', 50, 0, false, 'chief');
+    -- Ground Floor (698 seats total across 15 rows: SPL + A..N)
+    INSERT INTO tmp_rows VALUES ('Ground Floor', 'SPL', 34, 1, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Ground Floor', 'A', 40, 2, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Ground Floor', 'B', 42, 3, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Ground Floor', 'C', 43, 4, false, 'police');
+    INSERT INTO tmp_rows VALUES ('Ground Floor', 'D', 46, 5, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Ground Floor', 'E', 46, 6, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Ground Floor', 'F', 47, 7, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Ground Floor', 'G', 50, 8, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Ground Floor', 'H', 50, 9, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Ground Floor', 'I', 53, 10, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Ground Floor', 'J', 54, 11, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Ground Floor', 'K', 56, 12, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Ground Floor', 'L', 57, 13, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Ground Floor', 'M', 40, 14, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Ground Floor', 'N', 40, 15, false, NULL);
 
-    -- Balcony (750 placeholder seats total across A-N)
-    INSERT INTO tmp_rows VALUES ('Balcony', 'A', 54, 1, true, NULL);
-    INSERT INTO tmp_rows VALUES ('Balcony', 'B', 54, 2, true, NULL);
-    INSERT INTO tmp_rows VALUES ('Balcony', 'C', 54, 3, true, NULL);
-    INSERT INTO tmp_rows VALUES ('Balcony', 'D', 54, 4, true, NULL);
-    INSERT INTO tmp_rows VALUES ('Balcony', 'E', 54, 5, true, NULL);
-    INSERT INTO tmp_rows VALUES ('Balcony', 'F', 54, 6, true, NULL);
-    INSERT INTO tmp_rows VALUES ('Balcony', 'G', 54, 7, true, NULL);
-    INSERT INTO tmp_rows VALUES ('Balcony', 'H', 54, 8, true, NULL);
-    INSERT INTO tmp_rows VALUES ('Balcony', 'I', 54, 9, true, NULL);
-    INSERT INTO tmp_rows VALUES ('Balcony', 'J', 54, 10, true, NULL);
-    INSERT INTO tmp_rows VALUES ('Balcony', 'K', 54, 11, true, NULL);
-    INSERT INTO tmp_rows VALUES ('Balcony', 'L', 54, 12, true, NULL);
-    INSERT INTO tmp_rows VALUES ('Balcony', 'M', 51, 13, true, NULL);
-    INSERT INTO tmp_rows VALUES ('Balcony', 'N', 51, 14, true, NULL);
+    -- Balcony (750 seats total across 15 rows: A..O)
+    INSERT INTO tmp_rows VALUES ('Balcony', 'A', 50, 1, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Balcony', 'B', 50, 2, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Balcony', 'C', 50, 3, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Balcony', 'D', 42, 4, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Balcony', 'E', 42, 5, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Balcony', 'F', 46, 6, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Balcony', 'G', 46, 7, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Balcony', 'H', 50, 8, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Balcony', 'I', 62, 9, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Balcony', 'J', 61, 10, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Balcony', 'K', 65, 11, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Balcony', 'L', 66, 12, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Balcony', 'M', 68, 13, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Balcony', 'N', 44, 14, false, NULL);
+    INSERT INTO tmp_rows VALUES ('Balcony', 'O', 8, 15, false, NULL);
 
     -- Upsert rows and generate seats
     FOR r IN SELECT * FROM tmp_rows
@@ -75,9 +74,7 @@ BEGIN
         -- Insert seats for this row
         FOR i IN 1..r.seat_count
         LOOP
-            IF r.section = 'Ground Floor' AND r.row_label = 'SPL VIP' THEN
-                seat_id_str := 'VIP-' || lpad(i::text, 2, '0');
-            ELSIF r.section = 'Ground Floor' THEN
+            IF r.section = 'Ground Floor' THEN
                 seat_id_str := 'GF-' || r.row_label || '-' || lpad(i::text, 2, '0');
             ELSIF r.section = 'Balcony' THEN
                 seat_id_str := 'BAL-' || r.row_label || '-' || lpad(i::text, 2, '0');

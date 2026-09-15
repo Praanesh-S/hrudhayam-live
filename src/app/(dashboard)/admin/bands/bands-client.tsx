@@ -39,7 +39,6 @@ const CATEGORY_META: Record<SeatCategory, { label: string; price: number; color:
   b2500: { label: '₹2,500 — Band C', price: 2500, color: '#0D9488', countsToRaise: true },
   b1500: { label: '₹1,500 — Band D', price: 1500, color: '#64748B', countsToRaise: true },
   pp: { label: '₹1,000 — PP', price: 1000, color: '#0284C7', countsToRaise: true },
-  vip: { label: 'VIP (SPL)', price: 0, color: '#EAB308', countsToRaise: false },
   obligation: { label: 'Obligation', price: 0, color: '#EF4444', countsToRaise: false },
   sponsor_comp: { label: 'Sponsor comp', price: 0, color: '#06B6D4', countsToRaise: false },
   blocked: { label: 'Blocked', price: 0, color: '#475569', countsToRaise: false },
@@ -59,7 +58,7 @@ export function BandsClient({
 
   // Form controls for Assign Rows
   const [assignFloor, setAssignFloor] = useState<SeatSection>('Ground Floor');
-  const [fromRow, setFromRow] = useState<string>('Special A');
+  const [fromRow, setFromRow] = useState<string>('SPL');
   const [toRow, setToRow] = useState<string>('C');
   const [selectedCategory, setSelectedCategory] = useState<SeatCategory>('b5000');
 
@@ -104,7 +103,7 @@ export function BandsClient({
 
   // Derive row order for each floor
   const groundRowsList = useMemo(() => [
-    'Special A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N'
+    'SPL', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N'
   ], []);
 
   const balconyRowsList = useMemo(() => [
@@ -142,7 +141,6 @@ export function BandsClient({
     };
 
     const reservedCounts: Record<string, { count: number; named: number }> = {
-      vip: { count: 0, named: 0 },
       obligation: { count: 0, named: 0 },
       sponsor_comp: { count: 0, named: 0 },
       blocked: { count: 0, named: 0 },
@@ -303,7 +301,7 @@ export function BandsClient({
             price: targetCategoryMeta.price,
             tier: targetCategoryMeta.price,
             counts_to_raise: targetCategoryMeta.countsToRaise,
-            obligation_type: selectedCategory === 'obligation' ? 'police' : (selectedCategory === 'vip' ? 'vip' : null),
+            obligation_type: selectedCategory === 'obligation' ? 'police' : null,
             is_blocked: selectedCategory === 'blocked',
           };
         }
@@ -383,7 +381,7 @@ export function BandsClient({
       return;
     }
 
-    if (['vip', 'obligation', 'sponsor_comp'].includes(seat.category)) {
+    if (['obligation', 'sponsor_comp'].includes(seat.category)) {
       setNamingSeat(seat);
       setGuestNameInput(seat.name || seat.guest_name || '');
     }
@@ -495,7 +493,7 @@ export function BandsClient({
               onChange={(e) => {
                 const floor = e.target.value as SeatSection;
                 setAssignFloor(floor);
-                setFromRow(floor === 'Ground Floor' ? 'Special A' : 'A');
+                setFromRow(floor === 'Ground Floor' ? 'SPL' : 'A');
                 setToRow(floor === 'Ground Floor' ? 'C' : 'C');
               }}
               className="w-full h-10 bg-[#1A2839] border border-slate-700 text-white rounded-xl px-3 text-xs font-bold"
@@ -543,7 +541,6 @@ export function BandsClient({
               <option value="b2500">₹2,500 — Band C</option>
               <option value="b1500">₹1,500 — Band D</option>
               <option value="pp">₹1,000 — PP</option>
-              <option value="vip">VIP (SPL Reserved)</option>
               <option value="obligation">Obligation (Police/Corp)</option>
               <option value="sponsor_comp">Sponsor comp</option>
               <option value="blocked">Blocked</option>
@@ -795,28 +792,6 @@ export function BandsClient({
             </p>
 
             <div className="space-y-1 text-xs">
-              {/* VIP */}
-              {(() => {
-                const isSelected = isolatedFilter === 'vip';
-                return (
-                  <button
-                    type="button"
-                    onClick={() => setIsolatedFilter(isSelected ? 'all' : 'vip')}
-                    className={cn(
-                      "w-full flex justify-between items-center text-left p-1.5 rounded-xl transition-all cursor-pointer",
-                      isSelected ? "bg-amber-500/20 ring-1 ring-amber-400" : "hover:bg-slate-800/40"
-                    )}
-                  >
-                    <span className="flex items-center gap-1.5 font-bold text-white">
-                      <span className="w-2.5 h-2.5 rounded-xs bg-[#EAB308]" /> VIP
-                    </span>
-                    <span className="font-mono text-slate-300">
-                      {summary.reservedCounts.vip.count} · {summary.reservedCounts.vip.named} named
-                    </span>
-                  </button>
-                );
-              })()}
-
               {/* Obligation */}
               {(() => {
                 const isSelected = isolatedFilter === 'obligation';
@@ -1065,7 +1040,7 @@ export function BandsClient({
                   </p>
                   {summary.unassignedCount > 0 && (
                     <p className="text-amber-400 font-bold mt-1">
-                      ⚠️ Note: {summary.unassignedCount} seat(s) remain unassigned (e.g. Special A).
+                      ⚠️ Note: {summary.unassignedCount} seat(s) remain unassigned.
                     </p>
                   )}
                 </div>

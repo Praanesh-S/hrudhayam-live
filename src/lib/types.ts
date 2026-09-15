@@ -5,7 +5,7 @@
 
 export type AppRole = 'super_admin' | 'system_admin' | 'group_admin' | 'tech_coordinator';
 export type TicketType = 'physical';
-export type SeatCategory = 'b5000' | 'b3500' | 'b2500' | 'b1500' | 'pp' | 'vip' | 'obligation' | 'sponsor_comp' | 'blocked' | 'unassigned';
+export type SeatCategory = 'b5000' | 'b3500' | 'b2500' | 'b1500' | 'pp' | 'obligation' | 'sponsor_comp' | 'blocked' | 'unassigned';
 export type PassStatus = 'issued' | 'used' | 'cancelled';
 export type PaymentStatus = 'received' | 'pending';
 export type PaymentMode = 'upi' | 'bank_transfer' | 'cash' | 'cheque' | 'card' | 'complimentary' | 'legacy';

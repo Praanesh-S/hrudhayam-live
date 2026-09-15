@@ -2,7 +2,6 @@
 
 import React, { useState, useMemo } from 'react';
 import { SeatData, SeatSection, SeatCategory } from '@/lib/types';
-import { Crown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export const CATEGORY_META: Record<SeatCategory, { label: string; price: number; color: string; countsToRaise: boolean }> = {
@@ -11,7 +10,6 @@ export const CATEGORY_META: Record<SeatCategory, { label: string; price: number;
   b2500: { label: '₹2,500 — Band C', price: 2500, color: '#0D9488', countsToRaise: true },
   b1500: { label: '₹1,500 — Band D', price: 1500, color: '#64748B', countsToRaise: true },
   pp: { label: '₹1,000 — PP', price: 1000, color: '#0284C7', countsToRaise: true },
-  vip: { label: 'VIP (SPL)', price: 0, color: '#EAB308', countsToRaise: false },
   obligation: { label: 'Obligation', price: 0, color: '#EF4444', countsToRaise: false },
   sponsor_comp: { label: 'Sponsor comp', price: 0, color: '#06B6D4', countsToRaise: false },
   blocked: { label: 'Blocked', price: 0, color: '#475569', countsToRaise: false },
@@ -59,13 +57,22 @@ export function HallLayoutMap({
   };
 
   const groundRowsList = useMemo(
-    () => ['Special A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N'],
+    () => ['SPL', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N'],
     []
   );
 
   const balconyRowsList = useMemo(
     () => ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O'],
     []
+  );
+
+  const groundFloorCount = useMemo(
+    () => seats.filter((s) => s.section === 'Ground Floor').length || 698,
+    [seats]
+  );
+  const balconyCount = useMemo(
+    () => seats.filter((s) => s.section === 'Balcony').length || 750,
+    [seats]
   );
 
   const currentRowsList = activeFloor === 'Ground Floor' ? groundRowsList : balconyRowsList;
@@ -165,7 +172,7 @@ export function HallLayoutMap({
                 : 'text-slate-400 hover:text-white'
             )}
           >
-            Ground Floor <span className="text-[10px] font-normal opacity-80">648 + 50 VIP</span>
+            Ground Floor <span className="text-[10px] font-normal opacity-80">{groundFloorCount}</span>
           </button>
           <button
             type="button"
@@ -177,7 +184,7 @@ export function HallLayoutMap({
                 : 'text-slate-400 hover:text-white'
             )}
           >
-            Balcony <span className="text-[10px] font-normal opacity-80">750</span>
+            Balcony <span className="text-[10px] font-normal opacity-80">{balconyCount}</span>
           </button>
         </div>
 
@@ -206,7 +213,6 @@ export function HallLayoutMap({
           { id: 'b2500', label: '₹2.5k Band C', color: '#0D9488' },
           { id: 'b1500', label: '₹1.5k Band D', color: '#64748B' },
           { id: 'pp', label: '₹1k PP', color: '#0284C7' },
-          { id: 'vip', label: 'VIP', color: '#EAB308' },
           { id: 'obligation', label: 'Obligation', color: '#EF4444' },
           { id: 'sponsor_comp', label: 'Sponsor', color: '#06B6D4' },
           { id: 'blocked', label: 'Blocked', color: '#475569' },
@@ -238,48 +244,6 @@ export function HallLayoutMap({
 
       {/* Layout Map: Ground Floor vs Balcony */}
       <div className="flex gap-4 items-start overflow-x-auto pb-4">
-        {/* SPL VIP Box (Visible on Ground Floor) */}
-        {activeFloor === 'Ground Floor' && (
-          <div className="w-36 p-3 bg-[#0E1722] border-2 border-amber-500/40 rounded-2xl space-y-2 shrink-0">
-            <div className="text-center">
-              <div className="text-xs font-black text-amber-400 flex items-center justify-center gap-1">
-                <Crown className="w-3 h-3 text-amber-400" /> SPL VIP (50)
-              </div>
-            </div>
-
-            <div className="grid grid-cols-5 gap-1 pt-1">
-              {seats
-                .filter((s) => s.row_label === 'SPL VIP')
-                .sort((a, b) => a.seat_no - b.seat_no)
-                .map((s) => {
-                  const isNamed = !!(s.name || s.guest_name);
-                  const status = getSeatStatus(s);
-                  const isIsolated = isSeatIsolated(s);
-
-                  return (
-                    <button
-                      key={s.id}
-                      type="button"
-                      disabled={readOnly}
-                      onClick={() => !readOnly && onSeatClick?.(s)}
-                      title={`${s.id}: ${s.name || s.guest_name || 'VIP Chief Guest'} (${status})`}
-                      className={cn(
-                        'w-5 h-5 rounded text-[9px] font-black flex items-center justify-center transition-all',
-                        isNamed
-                          ? 'bg-amber-400 text-slate-950 ring-1 ring-white'
-                          : 'bg-amber-500/30 text-amber-300 hover:bg-amber-500 hover:text-slate-950',
-                        readOnly ? 'cursor-default' : 'cursor-pointer',
-                        !isIsolated && 'opacity-20 grayscale pointer-events-none'
-                      )}
-                    >
-                      {readOnly ? (status === 'sold' ? '✓' : status === 'pending' ? '●' : s.seat_no) : s.seat_no}
-                    </button>
-                  );
-                })}
-            </div>
-          </div>
-        )}
-
         {/* Rows List */}
         <div className="flex-1 space-y-2.5 min-w-[580px]">
           {currentRowsList.map((rLabel) => {
@@ -351,9 +315,12 @@ export function HallLayoutMap({
 
             return (
               <div key={rLabel} className="flex items-center gap-3 group">
-                {/* Row Label (clean, no clutter) */}
-                <div className="w-16 text-xs font-mono font-black text-slate-300 flex items-center shrink-0">
-                  <span>Row {rLabel}</span>
+                {/* Row Label & Seat Count */}
+                <div className="w-24 text-xs font-mono font-black text-slate-300 flex items-center justify-between shrink-0 pr-2">
+                  <span className="truncate">Row {rLabel}</span>
+                  <span className="text-[10px] font-bold text-amber-400/90 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded font-mono tabular-nums">
+                    {rowSeats.length}
+                  </span>
                 </div>
 
                 {/* Physical Seats in 3 blocks */}
@@ -403,7 +370,6 @@ export function HallLayoutMap({
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-[#0D9488]" /> ₹2,500</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-[#64748B]" /> ₹1,500</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-[#0284C7]" /> ₹1,000 PP</span>
-          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-[#EAB308]" /> VIP</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-[#EF4444]" /> Obligation</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-[#06B6D4]" /> Sponsor</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-[#475569]" /> Blocked</span>

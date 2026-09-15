@@ -146,7 +146,7 @@ export async function updateBandPrice(bandId: string, newPrice: number) {
 export async function syncBandAllocationsFromSeats(adminClient: any) {
   const [{ data: bandsData }, { data: seatsData }] = await Promise.all([
     adminClient.from('bands').select('*').order('sort_order'),
-    adminClient.from('seats').select('tier').neq('row_label', 'SPL VIP'),
+    adminClient.from('seats').select('tier'),
   ]);
 
   if (!bandsData || bandsData.length === 0) return;
