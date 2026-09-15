@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { Band, SeatData, VenueRow, SeatSection, SeatCategory } from '@/lib/types';
 import { AuthUser } from '@/lib/auth/session';
 import { saveLayoutPlan, updateSeatName } from '../actions';
@@ -34,12 +35,12 @@ interface BandsClientProps {
 }
 
 const CATEGORY_META: Record<SeatCategory, { label: string; price: number; color: string; countsToRaise: boolean }> = {
-  b5000: { label: '₹5,000 — Band A', price: 5000, color: '#F59E0B', countsToRaise: true },
-  b3500: { label: '₹3,500 — Band B', price: 3500, color: '#8B5CF6', countsToRaise: true },
-  b2500: { label: '₹2,500 — Band C', price: 2500, color: '#0D9488', countsToRaise: true },
-  b1500: { label: '₹1,500 — Band D', price: 1500, color: '#EC4899', countsToRaise: true },
-  pp: { label: '₹1,000 — PP', price: 1000, color: '#0284C7', countsToRaise: true },
-  obligation: { label: 'Obligation', price: 0, color: '#EF4444', countsToRaise: false },
+  b5000: { label: '₹5,000 — VIP Premium', price: 5000, color: '#F59E0B', countsToRaise: true },
+  b3500: { label: '₹3,500 — Gold', price: 3500, color: '#8B5CF6', countsToRaise: true },
+  b2500: { label: '₹2,500 — Silver', price: 2500, color: '#0D9488', countsToRaise: true },
+  b1500: { label: '₹1,500 — Classic Value', price: 1500, color: '#EC4899', countsToRaise: true },
+  pp: { label: '₹1,500 — Paadarivom Padipparivom', price: 1500, color: '#0284C7', countsToRaise: true },
+  obligation: { label: 'Special Guest / Police / Corp', price: 0, color: '#EF4444', countsToRaise: false },
   sponsor_comp: { label: 'Sponsor comp', price: 0, color: '#06B6D4', countsToRaise: false },
   blocked: { label: 'Blocked', price: 0, color: '#475569', countsToRaise: false },
   unassigned: { label: 'Unassigned', price: 0, color: '#1E293B', countsToRaise: false },
@@ -51,10 +52,17 @@ export function BandsClient({
   rows: initialRows,
   currentUser,
 }: BandsClientProps) {
+  const router = useRouter();
+
   // Staged seats state
   const [stagedSeats, setStagedSeats] = useState<SeatData[]>(initialSeats);
   const [activeFloor, setActiveFloor] = useState<SeatSection>('Ground Floor');
   const [isolatedFilter, setIsolatedFilter] = useState<string>('all');
+
+  // Keep stagedSeats in sync when server revalidates initialSeats
+  useEffect(() => {
+    setStagedSeats(initialSeats);
+  }, [initialSeats]);
 
   // Form controls for Assign Rows
   const [assignFloor, setAssignFloor] = useState<SeatSection>('Ground Floor');
@@ -176,7 +184,7 @@ export function BandsClient({
       soldCounts.b3500 * 3500 +
       soldCounts.b2500 * 2500 +
       soldCounts.b1500 * 1500 +
-      soldCounts.pp * 1000;
+      soldCounts.pp * 1500;
 
     return {
       groundMoney,
@@ -194,16 +202,16 @@ export function BandsClient({
   const soldSeatMap = useMemo(() => {
     const map = new Map<string, { soldIndex: number; totalSold: number; bandName: string }>();
 
-    const categoryToBandPrice: Record<string, number> = {
-      b5000: 5000,
-      b3500: 3500,
-      b2500: 2500,
-      b1500: 1500,
-      pp: 1000,
+    const categoryToBandId: Record<string, string> = {
+      b5000: 'band_5000',
+      b3500: 'band_3500',
+      b2500: 'band_2500',
+      b1500: 'band_1500',
+      pp: 'band_pp',
     };
 
-    for (const [cat, price] of Object.entries(categoryToBandPrice)) {
-      const band = bands.find((b) => b.price === price || b.id.includes(cat));
+    for (const [cat, bId] of Object.entries(categoryToBandId)) {
+      const band = bands.find((b) => b.id === bId || b.id.includes(cat));
       const soldCount = band?.sold_count || 0;
       if (soldCount <= 0) continue;
 
@@ -432,6 +440,7 @@ export function BandsClient({
         title: 'Hall Layout Saved!',
         message: `The hall blueprint and seat price band capacities have been saved to the database at ${timeStr}. Real-time quotas are live.`,
       });
+      router.refresh();
     } else {
       setStatusMessage({ type: 'error', text: res.error || 'Failed to save layout plan.' });
       setDialogState({
@@ -536,12 +545,12 @@ export function BandsClient({
               onChange={(e) => setSelectedCategory(e.target.value as SeatCategory)}
               className="w-full h-10 bg-[#1A2839] border border-slate-700 text-white rounded-xl px-3 text-xs font-bold"
             >
-              <option value="b5000">₹5,000 — Band A</option>
-              <option value="b3500">₹3,500 — Band B</option>
-              <option value="b2500">₹2,500 — Band C</option>
-              <option value="b1500">₹1,500 — Band D</option>
-              <option value="pp">₹1,000 — PP</option>
-              <option value="obligation">Obligation (Police/Corp)</option>
+              <option value="b5000">₹5,000 — VIP Premium</option>
+              <option value="b3500">₹3,500 — Gold</option>
+              <option value="b2500">₹2,500 — Silver</option>
+              <option value="b1500">₹1,500 — Classic Value</option>
+              <option value="pp">₹1,500 — Paadarivom Padipparivom</option>
+              <option value="obligation">Obligation (Special Guest / Police / Corp)</option>
               <option value="sponsor_comp">Sponsor comp</option>
               <option value="blocked">Blocked</option>
               <option value="unassigned">Unassigned</option>
@@ -758,7 +767,7 @@ export function BandsClient({
 
               {/* PP */}
               {(() => {
-                const b = bands.find((x) => x.price === 1000 || x.id.includes('pp'));
+                const b = bands.find((x) => x.id === 'band_pp' || x.id.includes('pp'));
                 const sold = b?.sold_count || 0;
                 const isSelected = isolatedFilter === 'pp';
                 return (
@@ -771,7 +780,7 @@ export function BandsClient({
                     )}
                   >
                     <span className="flex items-center gap-1.5 font-bold text-white">
-                      <span className="w-2.5 h-2.5 rounded-xs bg-[#0284C7]" /> ₹1,000 PP
+                      <span className="w-2.5 h-2.5 rounded-xs bg-[#0284C7]" /> ₹1,500 PP
                     </span>
                     <div className="text-right flex items-center gap-1.5">
                       <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold text-[10px]">

@@ -5,12 +5,12 @@ import { SeatData, SeatSection, SeatCategory } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
 export const CATEGORY_META: Record<SeatCategory, { label: string; price: number; color: string; countsToRaise: boolean }> = {
-  b5000: { label: '₹5,000 — Band A', price: 5000, color: '#F59E0B', countsToRaise: true },
-  b3500: { label: '₹3,500 — Band B', price: 3500, color: '#8B5CF6', countsToRaise: true },
-  b2500: { label: '₹2,500 — Band C', price: 2500, color: '#0D9488', countsToRaise: true },
-  b1500: { label: '₹1,500 — Band D', price: 1500, color: '#EC4899', countsToRaise: true },
-  pp: { label: '₹1,000 — PP', price: 1000, color: '#0284C7', countsToRaise: true },
-  obligation: { label: 'Obligation', price: 0, color: '#EF4444', countsToRaise: false },
+  b5000: { label: '₹5,000 — VIP Premium', price: 5000, color: '#F59E0B', countsToRaise: true },
+  b3500: { label: '₹3,500 — Gold', price: 3500, color: '#8B5CF6', countsToRaise: true },
+  b2500: { label: '₹2,500 — Silver', price: 2500, color: '#0D9488', countsToRaise: true },
+  b1500: { label: '₹1,500 — Classic Value', price: 1500, color: '#EC4899', countsToRaise: true },
+  pp: { label: '₹1,500 — Paadarivom Padipparivom', price: 1500, color: '#0284C7', countsToRaise: true },
+  obligation: { label: 'Special Guest / Police / Corp', price: 0, color: '#EF4444', countsToRaise: false },
   sponsor_comp: { label: 'Sponsor comp', price: 0, color: '#06B6D4', countsToRaise: false },
   blocked: { label: 'Blocked', price: 0, color: '#475569', countsToRaise: false },
   unassigned: { label: 'Unassigned', price: 0, color: '#1E293B', countsToRaise: false },
@@ -95,16 +95,16 @@ export function HallLayoutMap({
 
     // 2. If bands data is passed with sold_count, fill sequentially
     if (bands && bands.length > 0) {
-      const categoryToBandPrice: Record<string, number> = {
-        b5000: 5000,
-        b3500: 3500,
-        b2500: 2500,
-        b1500: 1500,
-        pp: 1000,
+      const categoryToBandId: Record<string, string> = {
+        b5000: 'band_5000',
+        b3500: 'band_3500',
+        b2500: 'band_2500',
+        b1500: 'band_1500',
+        pp: 'band_pp',
       };
 
-      for (const [cat, price] of Object.entries(categoryToBandPrice)) {
-        const band = bands.find((b) => b.price === price || b.id?.includes(cat));
+      for (const [cat, bId] of Object.entries(categoryToBandId)) {
+        const band = bands.find((b) => b.id === bId || b.id?.includes(cat));
         const soldCount = band?.sold_count || 0;
         if (soldCount <= 0) continue;
 
@@ -208,11 +208,11 @@ export function HallLayoutMap({
           { id: 'all', label: 'All Seats' },
           { id: 'sold', label: '✓ Sold', color: '#10B981' },
           { id: 'available', label: '○ Available', color: '#0D9488' },
-          { id: 'b5000', label: '₹5k Band A', color: '#F59E0B' },
-          { id: 'b3500', label: '₹3.5k Band B', color: '#8B5CF6' },
-          { id: 'b2500', label: '₹2.5k Band C', color: '#0D9488' },
-          { id: 'b1500', label: '₹1.5k Band D', color: '#EC4899' },
-          { id: 'pp', label: '₹1k PP', color: '#0284C7' },
+          { id: 'b5000', label: '₹5k VIP', color: '#F59E0B' },
+          { id: 'b3500', label: '₹3.5k Gold', color: '#8B5CF6' },
+          { id: 'b2500', label: '₹2.5k Silver', color: '#0D9488' },
+          { id: 'b1500', label: '₹1.5k Classic', color: '#EC4899' },
+          { id: 'pp', label: '₹1.5k PP', color: '#0284C7' },
           { id: 'obligation', label: 'Obligation', color: '#EF4444' },
           { id: 'sponsor_comp', label: 'Sponsor', color: '#06B6D4' },
           { id: 'blocked', label: 'Blocked', color: '#475569' },

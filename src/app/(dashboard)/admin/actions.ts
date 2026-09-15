@@ -289,53 +289,108 @@ export async function saveLayoutPlan(
       return { success: false, error: 'No seat updates provided.' };
     }
 
-    // 1. Fetch currently sold or pending seats to protect historical pass prices
+    // 1. Fetch currently sold seats or issued passes to protect historical pass prices
     const { data: bookedSeats } = await adminClient
       .from('seats')
       .select('id, price, category')
-      .or('sold.eq.true,payment_status.not.is.null');
+      .or('sold.eq.true,pass_code.not.is.null,payment_status.eq.received');
 
     const bookedMap = new Map((bookedSeats || []).map((s) => [s.id, s]));
 
-    // 2. Update seats in parallel batches, preserving prices on already-sold seats
+    // 2. Group seat updates to execute ultra-fast, reliable batch queries
     const now = new Date().toISOString();
-    const batchSize = 100;
-    for (let i = 0; i < seatsUpdates.length; i += batchSize) {
-      const batch = seatsUpdates.slice(i, i + batchSize);
-      await Promise.all(
-        batch.map((s) => {
-          const booked = bookedMap.get(s.id);
-          // If seat was already booked/sold, strictly preserve its historical price & category
-          const category = booked ? booked.category : s.category;
-          const price = booked && booked.price !== null ? booked.price : s.price;
 
-          return adminClient
-            .from('seats')
-            .update({
-              category,
-              tier: price,
-              price,
-              counts_to_raise: s.counts_to_raise,
-              obligation_type: s.obligation_type || null,
-              name: s.name || null,
-              is_blocked: s.category === 'blocked',
-              updated_at: now,
-            })
-            .eq('id', s.id);
-        })
-      );
+    const updateGroups = new Map<string, {
+      payload: {
+        category: string;
+        tier: number;
+        price: number;
+        counts_to_raise: boolean;
+        obligation_type: string | null;
+        name: string | null;
+        is_blocked: boolean;
+        updated_at: string;
+      };
+      ids: string[];
+    }>();
+
+    for (const s of seatsUpdates) {
+      const booked = bookedMap.get(s.id);
+      // If seat was already booked/sold, strictly preserve its historical price & category
+      const category = booked ? booked.category : s.category;
+      const price = booked && booked.price !== null ? booked.price : s.price;
+
+      const groupKey = JSON.stringify({
+        category,
+        price,
+        counts_to_raise: s.counts_to_raise,
+        obligation_type: s.obligation_type || null,
+        name: s.name || null,
+        is_blocked: category === 'blocked',
+      });
+
+      if (!updateGroups.has(groupKey)) {
+        updateGroups.set(groupKey, {
+          payload: {
+            category,
+            tier: price,
+            price,
+            counts_to_raise: s.counts_to_raise,
+            obligation_type: s.obligation_type || null,
+            name: s.name || null,
+            is_blocked: category === 'blocked',
+            updated_at: now,
+          },
+          ids: [],
+        });
+      }
+      updateGroups.get(groupKey)!.ids.push(s.id);
     }
 
-    // 3. If rows were re-tiered, update rows table tier and record required audit entries
+    // Execute batch updates in chunks of 150 IDs
+    for (const group of updateGroups.values()) {
+      const chunkSize = 150;
+      for (let i = 0; i < group.ids.length; i += chunkSize) {
+        const idChunk = group.ids.slice(i, i + chunkSize);
+        const { error: batchErr } = await adminClient
+          .from('seats')
+          .update(group.payload)
+          .in('id', idChunk);
+
+        if (batchErr) {
+          throw new Error(`Failed to update seats batch: ${batchErr.message}`);
+        }
+      }
+    }
+
+    // 3. Keep rows table tier in sync for all rows updated
+    const rowTiers = new Map<string, number>();
+    for (const s of seatsUpdates) {
+      const parts = s.id.split('-');
+      if (parts.length >= 2) {
+        const section = parts[0] === 'GF' ? 'Ground Floor' : 'Balcony';
+        const rowLabel = parts[1];
+        const key = `${section}:${rowLabel}`;
+        if (!rowTiers.has(key)) {
+          rowTiers.set(key, s.price || 0);
+        }
+      }
+    }
+
+    await Promise.all(
+      Array.from(rowTiers.entries()).map(([key, tier]) => {
+        const [section, rowLabel] = key.split(':');
+        return adminClient
+          .from('rows')
+          .update({ tier, updated_at: now })
+          .eq('section', section)
+          .eq('row_label', rowLabel);
+      })
+    );
+
+    // If rows were re-tiered with existing sales, record required audit entries
     if (reassignments && reassignments.length > 0) {
       for (const r of reassignments) {
-        // Update rows table tier for future seat allocations
-        await adminClient
-          .from('rows')
-          .update({ tier: r.newPrice, updated_at: now })
-          .eq('section', r.section)
-          .eq('row_label', r.row);
-
         // Record individual re-tier audit log
         await logAudit(user.id, 'ROW_RETIERED', 'rows', `${r.section} Row ${r.row}`, {
           row: `Row ${r.row}`,
