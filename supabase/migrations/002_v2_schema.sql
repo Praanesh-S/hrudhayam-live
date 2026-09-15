@@ -128,7 +128,7 @@ INSERT INTO public.bands (id, label, price, total_allocated, sort_order, color) 
   ('band_5000', 'Band A (₹5,000)', 5000, 200, 1, '#F59E0B'),
   ('band_3500', 'Band B (₹3,500)', 3500, 300, 2, '#8B5CF6'),
   ('band_2500', 'Band C (₹2,500)', 2500, 400, 3, '#0D9488'),
-  ('band_1500', 'Band D (₹1,500)', 1500, 500, 4, '#64748B')
+  ('band_1500', 'Band D (₹1,500)', 1500, 500, 4, '#EC4899')
 ON CONFLICT (id) DO UPDATE SET
   label = EXCLUDED.label,
   price = EXCLUDED.price,

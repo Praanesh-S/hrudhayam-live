@@ -37,7 +37,7 @@ const CATEGORY_META: Record<SeatCategory, { label: string; price: number; color:
   b5000: { label: '₹5,000 — Band A', price: 5000, color: '#F59E0B', countsToRaise: true },
   b3500: { label: '₹3,500 — Band B', price: 3500, color: '#8B5CF6', countsToRaise: true },
   b2500: { label: '₹2,500 — Band C', price: 2500, color: '#0D9488', countsToRaise: true },
-  b1500: { label: '₹1,500 — Band D', price: 1500, color: '#64748B', countsToRaise: true },
+  b1500: { label: '₹1,500 — Band D', price: 1500, color: '#EC4899', countsToRaise: true },
   pp: { label: '₹1,000 — PP', price: 1000, color: '#0284C7', countsToRaise: true },
   obligation: { label: 'Obligation', price: 0, color: '#EF4444', countsToRaise: false },
   sponsor_comp: { label: 'Sponsor comp', price: 0, color: '#06B6D4', countsToRaise: false },
@@ -740,11 +740,11 @@ export function BandsClient({
                     onClick={() => setIsolatedFilter(isSelected ? 'all' : 'b1500')}
                     className={cn(
                       "w-full flex justify-between items-center text-left p-1.5 rounded-xl transition-all cursor-pointer",
-                      isSelected ? "bg-slate-500/20 ring-1 ring-slate-400" : "hover:bg-slate-800/40"
+                      isSelected ? "bg-pink-500/20 ring-1 ring-pink-400" : "hover:bg-slate-800/40"
                     )}
                   >
                     <span className="flex items-center gap-1.5 font-bold text-white">
-                      <span className="w-2.5 h-2.5 rounded-xs bg-[#64748B]" /> ₹1,500
+                      <span className="w-2.5 h-2.5 rounded-xs bg-[#EC4899]" /> ₹1,500
                     </span>
                     <div className="text-right flex items-center gap-1.5">
                       <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold text-[10px]">

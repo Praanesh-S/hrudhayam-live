@@ -8,7 +8,7 @@ export const CATEGORY_META: Record<SeatCategory, { label: string; price: number;
   b5000: { label: '₹5,000 — Band A', price: 5000, color: '#F59E0B', countsToRaise: true },
   b3500: { label: '₹3,500 — Band B', price: 3500, color: '#8B5CF6', countsToRaise: true },
   b2500: { label: '₹2,500 — Band C', price: 2500, color: '#0D9488', countsToRaise: true },
-  b1500: { label: '₹1,500 — Band D', price: 1500, color: '#64748B', countsToRaise: true },
+  b1500: { label: '₹1,500 — Band D', price: 1500, color: '#EC4899', countsToRaise: true },
   pp: { label: '₹1,000 — PP', price: 1000, color: '#0284C7', countsToRaise: true },
   obligation: { label: 'Obligation', price: 0, color: '#EF4444', countsToRaise: false },
   sponsor_comp: { label: 'Sponsor comp', price: 0, color: '#06B6D4', countsToRaise: false },
@@ -211,7 +211,7 @@ export function HallLayoutMap({
           { id: 'b5000', label: '₹5k Band A', color: '#F59E0B' },
           { id: 'b3500', label: '₹3.5k Band B', color: '#8B5CF6' },
           { id: 'b2500', label: '₹2.5k Band C', color: '#0D9488' },
-          { id: 'b1500', label: '₹1.5k Band D', color: '#64748B' },
+          { id: 'b1500', label: '₹1.5k Band D', color: '#EC4899' },
           { id: 'pp', label: '₹1k PP', color: '#0284C7' },
           { id: 'obligation', label: 'Obligation', color: '#EF4444' },
           { id: 'sponsor_comp', label: 'Sponsor', color: '#06B6D4' },
@@ -368,7 +368,7 @@ export function HallLayoutMap({
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-[#F59E0B]" /> ₹5,000</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-[#8B5CF6]" /> ₹3,500</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-[#0D9488]" /> ₹2,500</span>
-          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-[#64748B]" /> ₹1,500</span>
+          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-[#EC4899]" /> ₹1,500</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-[#0284C7]" /> ₹1,000 PP</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-[#EF4444]" /> Obligation</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-[#06B6D4]" /> Sponsor</span>

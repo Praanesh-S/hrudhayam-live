@@ -681,7 +681,7 @@ export function SellClient({
                     if (band.id === 'band_5000') priceColorClass = 'text-[#F59E0B]';
                     if (band.id === 'band_3500') priceColorClass = 'text-[#A78BFA]';
                     if (band.id === 'band_2500') priceColorClass = 'text-[#2DD4BF]';
-                    if (band.id === 'band_1500') priceColorClass = 'text-[#94A3B8]';
+                    if (band.id === 'band_1500') priceColorClass = 'text-[#EC4899]';
                     if (band.id === 'band_pp') priceColorClass = 'text-[#38BDF8]';
 
                     return (

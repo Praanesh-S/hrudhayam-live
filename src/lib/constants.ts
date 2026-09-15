@@ -48,10 +48,10 @@ export const BANDS_CONFIG = [
     id: "band_1500",
     name: "₹1,500 Bronze",
     standardPrice: 1500,
-    color: "#64748B", // Slate Steel
-    bgColor: "bg-slate-500/10",
-    borderColor: "border-slate-500/40",
-    textColor: "text-slate-600 dark:text-slate-300",
+    color: "#EC4899", // Vibrant Pink
+    bgColor: "bg-pink-500/10",
+    borderColor: "border-pink-500/40",
+    textColor: "text-pink-600 dark:text-pink-400",
   },
 ] as const;
 
@@ -59,7 +59,7 @@ export const BAND_COLOR_MAP: Record<string, string> = {
   band_5000: "#F59E0B",
   band_3500: "#8B5CF6",
   band_2500: "#0D9488",
-  band_1500: "#64748B",
+  band_1500: "#EC4899",
 };
 
 // ── Reserved Categories ──

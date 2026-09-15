@@ -96,7 +96,7 @@ export function getRowsInRange(
  * - Band A (₹5,000): #F59E0B (Amber Gold)
  * - Band B (₹3,500): #A855F7 (Violet Purple)
  * - Band C (₹2,500): #0D9488 (Teal)
- * - Band D (₹1,500): #64748B (Steel Slate)
+ * - Band D (₹1,500): #EC4899 (Pink)
  */
 export function getSeatColor(seat: {
   tier?: number | null;
@@ -131,7 +131,7 @@ export function getSeatColor(seat: {
   if (seat.category === 'b5000') return '#F59E0B'; // Orange
   if (seat.category === 'b3500') return '#8B5CF6'; // Purple
   if (seat.category === 'b2500') return '#0D9488'; // Teal
-  if (seat.category === 'b1500') return '#64748B'; // Slate
+  if (seat.category === 'b1500') return '#EC4899'; // Pink
   if (seat.category === 'pp') return '#0284C7';    // Bright Blue (PP)
   if (seat.category === 'unassigned') return '#1E293B'; // Dark unassigned
 
@@ -145,7 +145,7 @@ export function getSeatColor(seat: {
     case 2500:
       return '#0D9488'; // Teal (Band C)
     case 1500:
-      return '#64748B'; // Slate (Band D)
+      return '#EC4899'; // Pink (Band D)
     case 1000:
       return '#0284C7'; // Bright Blue (PP)
     default:
