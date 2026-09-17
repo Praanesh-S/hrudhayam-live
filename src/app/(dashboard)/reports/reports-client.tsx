@@ -19,8 +19,11 @@ import {
   Clock,
   Heart,
   ShieldCheck,
-  Award
+  Award,
+  Ticket,
+  Search
 } from 'lucide-react';
+import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 
 interface ReportsClientProps {
@@ -31,6 +34,13 @@ interface ReportsClientProps {
   sponsors: Sponsor[];
   clubs: ParticipatingClub[];
   currentUser: AuthUser;
+}
+
+function getPassPayment(p: any) {
+  if (Array.isArray(p.payment) && p.payment.length > 0) return p.payment[0];
+  if (Array.isArray(p.payments) && p.payments.length > 0) return p.payments[0];
+  if (p.payment && typeof p.payment === 'object') return p.payment;
+  return null;
 }
 
 export function ReportsClient({
@@ -44,6 +54,8 @@ export function ReportsClient({
 }: ReportsClientProps) {
   const [activeTab, setActiveTab] = useState('bands');
   const [isExporting, setIsExporting] = useState(false);
+  const [passSearch, setPassSearch] = useState('');
+  const [passStatusFilter, setPassStatusFilter] = useState<'all' | 'issued' | 'used' | 'cancelled'>('all');
 
   // Exclude cancelled passes for reconciliation
   const activePasses = useMemo(() => passes.filter(p => p.status !== 'cancelled'), [passes]);
@@ -53,11 +65,11 @@ export function ReportsClient({
     // 1. Passes revenue
     const passesSold = activePasses.length;
     const passesCollected = activePasses
-      .filter(p => (p.payment?.status || 'received') === 'received')
-      .reduce((sum, p) => sum + (p.payment?.amount || p.band?.price || p.band?.standard_price || 0), 0);
+      .filter(p => (getPassPayment(p)?.status || 'received') === 'received')
+      .reduce((sum, p) => sum + (getPassPayment(p)?.amount || p.band?.price || p.band?.standard_price || 0), 0);
     const passesPending = activePasses
-      .filter(p => p.payment?.status === 'pending')
-      .reduce((sum, p) => sum + (p.payment?.amount || p.band?.price || p.band?.standard_price || 0), 0);
+      .filter(p => getPassPayment(p)?.status === 'pending')
+      .reduce((sum, p) => sum + (getPassPayment(p)?.amount || p.band?.price || p.band?.standard_price || 0), 0);
     const passesTotal = passesCollected + passesPending;
 
     // 2. Sponsors revenue
@@ -110,7 +122,7 @@ export function ReportsClient({
     return groups.map((g) => {
       const teamPasses = activePasses.filter(p => p.seller?.group_id === g.id);
       const passesAmount = teamPasses.reduce(
-        (sum, p) => sum + (p.payment?.amount || p.band?.price || p.band?.standard_price || 0), 
+        (sum, p) => sum + (getPassPayment(p)?.amount || p.band?.price || p.band?.standard_price || 0), 
         0
       );
 
@@ -134,6 +146,35 @@ export function ReportsClient({
       };
     }).sort((a, b) => b.totalRaised - a.totalRaised);
   }, [groups, activePasses, members, sponsors]);
+
+  // Filtered passes for Passes & Transactions tab
+  const filteredPassesList = useMemo(() => {
+    return passes.filter((p) => {
+      if (passStatusFilter !== 'all' && p.status !== passStatusFilter) {
+        return false;
+      }
+      if (!passSearch.trim()) return true;
+      const q = passSearch.toLowerCase().trim();
+      const pay = getPassPayment(p);
+      const ref = pay?.reference_no?.toLowerCase() || '';
+      const serial = p.physical_serial?.toLowerCase() || '';
+      const passCode = p.pass_code?.toLowerCase() || '';
+      const donor = p.donor_name?.toLowerCase() || '';
+      const phone = p.donor_phone || '';
+      const seller = p.seller?.full_name?.toLowerCase() || '';
+      const team = p.seller?.group?.name?.toLowerCase() || '';
+
+      return (
+        passCode.includes(q) ||
+        ref.includes(q) ||
+        serial.includes(q) ||
+        donor.includes(q) ||
+        phone.includes(q) ||
+        seller.includes(q) ||
+        team.includes(q)
+      );
+    });
+  }, [passes, passSearch, passStatusFilter]);
 
   // Handle Export Excel
   const handleExportExcel = async () => {
@@ -275,6 +316,13 @@ export function ReportsClient({
           >
             <ShieldCheck className="w-4 h-4" />
             Participating Clubs ({clubs.length})
+          </TabsTrigger>
+          <TabsTrigger 
+            value="passes" 
+            className="text-xs sm:text-sm data-active:bg-amber-500 data-active:text-slate-950 data-[state=active]:bg-amber-500 data-[state=active]:text-slate-950 font-bold gap-2 px-4 py-2 rounded-xl"
+          >
+            <Ticket className="w-4 h-4" />
+            Passes & Transactions ({passes.length})
           </TabsTrigger>
         </TabsList>
 
@@ -538,6 +586,143 @@ export function ReportsClient({
                         </td>
                       </tr>
                     ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </TabsContent>
+
+        {/* TAB 5: Passes & Transactions */}
+        <TabsContent value="passes" className="space-y-4">
+          <div className="bg-[#0B1724] rounded-2xl border border-[#1D3249] p-4 shadow-xl space-y-4">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+                <Input
+                  placeholder="Search by Pass Code, Serial No, Donor, Phone, Seller, or Payment Ref / UTR..."
+                  value={passSearch}
+                  onChange={(e) => setPassSearch(e.target.value)}
+                  className="pl-9 h-10 bg-[#07111C] border-[#1D3249] text-white rounded-xl text-xs sm:text-sm"
+                />
+              </div>
+
+              <div className="flex items-center gap-1.5 self-start sm:self-auto overflow-x-auto">
+                {(['all', 'issued', 'used', 'cancelled'] as const).map((st) => (
+                  <button
+                    key={st}
+                    onClick={() => setPassStatusFilter(st)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition-all ${
+                      passStatusFilter === st
+                        ? 'bg-amber-500 text-slate-950'
+                        : 'bg-[#07111C] text-slate-400 hover:text-white border border-[#1D3249]'
+                    }`}
+                  >
+                    {st === 'all' ? `All (${passes.length})` : st}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {filteredPassesList.length === 0 ? (
+              <div className="p-8 text-center text-slate-500 text-xs">
+                No passes found matching your filter criteria.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-[#07111C] text-slate-400 border-b border-[#1D3249]">
+                      <th className="p-3 pl-4">Pass Code / Serial</th>
+                      <th className="p-3">Donor Information</th>
+                      <th className="p-3">Price Band</th>
+                      <th className="p-3">Payment Mode</th>
+                      <th className="p-3 font-bold text-amber-400">Reference / UTR</th>
+                      <th className="p-3 text-right">Amount (₹)</th>
+                      <th className="p-3 text-center">Payment Status</th>
+                      <th className="p-3 text-center">Pass Status</th>
+                      <th className="p-3 pr-4">Seller & Team</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#1D3249]/60 text-slate-200">
+                    {filteredPassesList.map((p) => {
+                      const pay = getPassPayment(p);
+                      const isCancelled = p.status === 'cancelled';
+                      const isUsed = p.status === 'used';
+                      const amount = pay?.amount ?? p.band?.price ?? 0;
+                      const refNo = pay?.reference_no;
+
+                      return (
+                        <tr key={p.id} className={`hover:bg-[#0E2032] transition-colors ${isCancelled ? 'opacity-50' : ''}`}>
+                          <td className="p-3 pl-4">
+                            <div className="font-mono font-bold text-white flex items-center gap-1.5">
+                              <span>{p.pass_code}</span>
+                              <span className="text-[10px] text-slate-400 font-normal">({p.ticket_type || 'physical'})</span>
+                            </div>
+                            {p.physical_serial ? (
+                              <p className="font-mono text-[11px] text-amber-400">
+                                SN: {p.physical_serial}
+                              </p>
+                            ) : (
+                              <p className="text-[11px] text-slate-500 font-mono">No serial</p>
+                            )}
+                          </td>
+                          <td className="p-3">
+                            <p className="font-semibold text-white">{p.donor_name}</p>
+                            <p className="font-mono text-[11px] text-slate-400">{p.donor_phone}</p>
+                            {p.donor_email && <p className="text-[10px] text-slate-500">{p.donor_email}</p>}
+                          </td>
+                          <td className="p-3">
+                            <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-medium text-[11px]">
+                              {p.band?.label || p.band_id}
+                            </span>
+                          </td>
+                          <td className="p-3 font-semibold capitalize text-slate-300">
+                            {pay?.mode ? (pay.mode === 'bank_transfer' ? 'Cheque/Bank' : pay.mode.toUpperCase()) : 'Cash'}
+                          </td>
+                          <td className="p-3 font-mono font-bold">
+                            {refNo ? (
+                              <span className="px-2 py-1 rounded bg-[#07111C] border border-amber-500/40 text-amber-300 text-[11px] inline-block">
+                                {refNo}
+                              </span>
+                            ) : (
+                              <span className="text-slate-600 font-normal italic">None</span>
+                            )}
+                          </td>
+                          <td className="p-3 text-right font-mono font-bold text-white">
+                            {formatINR(amount)}
+                          </td>
+                          <td className="p-3 text-center">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                pay?.status === 'received'
+                                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                  : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                              }`}
+                            >
+                              {(pay?.status || 'received').toUpperCase()}
+                            </span>
+                          </td>
+                          <td className="p-3 text-center">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                isCancelled
+                                  ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                                  : isUsed
+                                  ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                                  : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                              }`}
+                            >
+                              {p.status.toUpperCase()}
+                            </span>
+                          </td>
+                          <td className="p-3 pr-4 text-slate-300">
+                            <p className="font-medium text-white">{p.seller?.full_name || 'Direct / Fallback'}</p>
+                            <p className="text-[11px] text-slate-400">{p.seller?.group?.name || 'Admin'}</p>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

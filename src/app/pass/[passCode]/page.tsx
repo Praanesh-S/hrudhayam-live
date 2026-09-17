@@ -19,7 +19,7 @@ export default async function PublicPassPage({ params }: { params: Promise<{ pas
   // 1. Try finding in v2 passes table
   let { data: pass } = await adminClient
     .from('passes')
-    .select('*, band:bands(label, price, name, standard_price)')
+    .select('*, band:bands(label, price, name, standard_price), payments(mode, reference_no, status, amount)')
     .eq('pass_code', passCode)
     .maybeSingle();
 
@@ -95,6 +95,7 @@ export default async function PublicPassPage({ params }: { params: Promise<{ pas
   const isCheckedIn = pass ? pass.status === 'used' : legacySale.checked_in;
   const isPhysical = pass ? pass.ticket_type === 'physical' : (legacySale.issuance_type === 'printed');
   const physicalSerial = pass?.physical_serial || null;
+  const payment = pass?.payments && pass.payments.length > 0 ? pass.payments[0] : null;
 
   const qrToken = pass ? (pass.qr_token || pass.pass_code) : (legacySale.qr_token || legacySale.pass_code);
   const qrDataUrl = await generateQrDataUrl(qrToken, { width: 320, margin: 1 });
@@ -211,6 +212,15 @@ export default async function PublicPassPage({ params }: { params: Promise<{ pas
                 <p className="text-[11px] text-slate-400">Gates Open: 5:30 PM • Concert: 6:30 PM</p>
               </div>
             </div>
+
+            {payment && payment.reference_no && (
+              <div className="flex items-center justify-between text-[11px] text-slate-300 pt-2 mt-2 border-t border-[#1E3A4C]/80 font-mono">
+                <span>Ref / UTR: <strong className="text-amber-400">{payment.reference_no}</strong></span>
+                <span className="text-emerald-400 font-bold uppercase tracking-wider text-[10px]">
+                  {payment.mode} • Verified
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Download PDF Action Link (for Digital Passes) */}

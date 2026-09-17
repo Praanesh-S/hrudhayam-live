@@ -135,6 +135,28 @@ export async function issuePass(input: IssuePassInput) {
       }
     }
 
+    // 1c. Unique Reference ID Check for UPI and Cheque / Bank Transfer
+    if (paymentReferenceNo && paymentReferenceNo.trim()) {
+      const cleanRef = paymentReferenceNo.trim();
+      if (paymentMode === 'upi' || paymentMode === 'bank_transfer' || cleanRef.toLowerCase() !== 'cash') {
+        const { data: existingPayments } = await adminClient
+          .from('payments')
+          .select('id, reference_no, passes(id, pass_code, donor_name, status)')
+          .ilike('reference_no', cleanRef);
+
+        if (existingPayments && existingPayments.length > 0) {
+          const activeDuplicate = existingPayments.find((p: any) => !p.passes || p.passes.status !== 'cancelled');
+          if (activeDuplicate) {
+            const pass = (activeDuplicate as any).passes;
+            return {
+              success: false,
+              error: `Duplicate Reference ID: Transaction reference "${cleanRef}" has already been recorded for pass ${pass?.pass_code || ''} (${pass?.donor_name || 'recorded transaction'}). UPI and Cheque reference IDs must be unique.`
+            };
+          }
+        }
+      }
+    }
+
     // Optional legacy seat validation if seatId was explicitly passed
     let seatData: any = null;
     if (input.seatId && input.seatId.trim()) {
@@ -696,6 +718,30 @@ export async function markPendingPaymentReceived(
       }
     }
 
+    // Check duplicate reference_no across different transactions
+    if (referenceNo && referenceNo.trim()) {
+      const cleanRef = referenceNo.trim();
+      if (mode === 'upi' || mode === 'bank_transfer' || cleanRef.toLowerCase() !== 'cash') {
+        const { data: existing } = await adminClient
+          .from('payments')
+          .select('id, reference_no, passes(id, pass_code, donor_name, status)')
+          .ilike('reference_no', cleanRef);
+
+        if (existing && existing.length > 0) {
+          const foreignMatch = existing.find(
+            (p: any) => !ids.includes(p.id) && (!p.passes || p.passes.status !== 'cancelled')
+          );
+          if (foreignMatch) {
+            const pass = (foreignMatch as any).passes;
+            return {
+              success: false,
+              error: `Duplicate Reference ID: "${cleanRef}" has already been recorded for pass ${pass?.pass_code || ''} (${pass?.donor_name || 'another transaction'}). Reference IDs must be unique.`
+            };
+          }
+        }
+      }
+    }
+
     const now = new Date().toISOString();
     const { error: updateErr } = await adminClient
       .from('payments')
@@ -820,6 +866,48 @@ export async function demoSwitchRoleAction(targetRole: 'super_admin' | 'group_ad
   } catch (err: any) {
     console.error('Error switching demo role:', err);
     return { success: false, error: err.message || 'Failed to switch demo role' };
+  }
+}
+
+/**
+ * Check if a payment reference ID is already used across any active transactions.
+ */
+export async function checkPaymentReferenceUniquenessAction(
+  referenceNo: string,
+  excludePaymentIds?: string[]
+) {
+  try {
+    const cleanRef = referenceNo.trim();
+    if (!cleanRef || cleanRef.toLowerCase() === 'cash') {
+      return { isUnique: true };
+    }
+
+    const adminClient = createAdminClient();
+    let query = adminClient
+      .from('payments')
+      .select('id, reference_no, passes(id, pass_code, donor_name, status)')
+      .ilike('reference_no', cleanRef);
+
+    if (excludePaymentIds && excludePaymentIds.length > 0) {
+      query = query.not('id', 'in', `(${excludePaymentIds.join(',')})`);
+    }
+
+    const { data: existing } = await query;
+    if (existing && existing.length > 0) {
+      const activeMatch = existing.find((p: any) => !p.passes || p.passes.status !== 'cancelled');
+      if (activeMatch) {
+        const pass = (activeMatch as any).passes;
+        return {
+          isUnique: false,
+          error: `Reference ID "${cleanRef}" has already been used in another transaction (${pass?.pass_code || 'Pass'} - ${pass?.donor_name || 'Donor'}). Reference IDs must be unique.`
+        };
+      }
+    }
+
+    return { isUnique: true };
+  } catch (err: any) {
+    console.error('Error checking reference uniqueness:', err);
+    return { isUnique: true };
   }
 }
 

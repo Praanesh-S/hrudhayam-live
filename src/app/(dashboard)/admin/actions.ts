@@ -1111,6 +1111,190 @@ export async function movePassToBandBySystemAdmin(passId: string, targetBandId: 
   }
 }
 
+export interface UpdatePassTicketDetailsInput {
+  passId: string;
+  physicalSerial?: string;
+  ticketType?: string;
+  donorName?: string;
+  donorPhone?: string;
+  donorEmail?: string;
+  paymentMode?: string;
+  paymentReferenceNo?: string;
+  paymentStatus?: string;
+}
+
+/**
+ * Update pass ticket details (serial number, donor information, payment mode, reference ID).
+ * Restricted to Super Admin or System Admin with strict duplicate checking.
+ */
+export async function updatePassTicketDetailsBySystemAdmin(input: UpdatePassTicketDetailsInput) {
+  try {
+    const user = await requireSuperOrSystemAdmin();
+    const adminClient = createAdminClient();
+
+    const { passId } = input;
+    if (!passId) return { success: false, error: 'Pass ID is required.' };
+
+    const { data: pass, error: fetchErr } = await adminClient
+      .from('passes')
+      .select('*, payments(*)')
+      .eq('id', passId)
+      .single();
+
+    if (fetchErr || !pass) {
+      return { success: false, error: 'Pass not found.' };
+    }
+
+    const updates: Record<string, any> = {
+      updated_at: new Date().toISOString(),
+    };
+
+    // 1. Donor Name
+    if (input.donorName !== undefined) {
+      const cleanName = input.donorName.trim();
+      if (!cleanName) return { success: false, error: 'Donor name cannot be empty.' };
+      updates.donor_name = cleanName;
+    }
+
+    // 2. Donor Phone
+    if (input.donorPhone !== undefined) {
+      const cleanPhone = input.donorPhone.replace(/\D/g, '');
+      const last10 = cleanPhone.slice(-10);
+      if (last10.length !== 10) {
+        return { success: false, error: 'Donor phone must be a valid 10-digit mobile number.' };
+      }
+      updates.donor_phone = last10;
+    }
+
+    // 3. Donor Email
+    if (input.donorEmail !== undefined) {
+      updates.donor_email = input.donorEmail.trim() || null;
+    }
+
+    // 4. Ticket Type
+    if (input.ticketType) {
+      updates.ticket_type = input.ticketType;
+    }
+
+    // 5. Physical Serial Number
+    if (input.physicalSerial !== undefined) {
+      const cleanSerial = input.physicalSerial.trim().toUpperCase();
+      if (cleanSerial) {
+        // Check uniqueness of physical serial across active passes
+        const { data: existingPasses } = await adminClient
+          .from('passes')
+          .select('id, pass_code, physical_serial, donor_name')
+          .ilike('physical_serial', cleanSerial)
+          .neq('id', passId)
+          .neq('status', 'cancelled');
+
+        if (existingPasses && existingPasses.length > 0) {
+          const match = existingPasses[0];
+          return {
+            success: false,
+            error: `Serial number "${cleanSerial}" is already assigned to pass ${match.pass_code} (${match.donor_name}). Every physical pass must have a unique serial number.`
+          };
+        }
+        updates.physical_serial = cleanSerial;
+        updates.serial_no = cleanSerial;
+      } else {
+        updates.physical_serial = null;
+      }
+    }
+
+    // Update passes table
+    const { error: passUpdateErr } = await adminClient
+      .from('passes')
+      .update(updates)
+      .eq('id', passId);
+
+    if (passUpdateErr) throw passUpdateErr;
+
+    // 6. Payment updates (Mode, Reference No, Status)
+    const existingPayment = pass.payments && pass.payments.length > 0 ? pass.payments[0] : null;
+    const paymentUpdates: Record<string, any> = {
+      updated_at: new Date().toISOString(),
+    };
+
+    if (input.paymentMode) {
+      paymentUpdates.mode = input.paymentMode;
+    }
+
+    if (input.paymentStatus) {
+      paymentUpdates.status = input.paymentStatus;
+    }
+
+    if (input.paymentReferenceNo !== undefined) {
+      const cleanRef = input.paymentReferenceNo.trim();
+      const currentMode = input.paymentMode || existingPayment?.mode || 'upi';
+
+      if (cleanRef && (currentMode === 'upi' || currentMode === 'bank_transfer' || currentMode === 'cheque' || cleanRef.toLowerCase() !== 'cash')) {
+        // Check duplicate reference_no across different transactions
+        const { data: duplicatePayments } = await adminClient
+          .from('payments')
+          .select('id, reference_no, passes(id, pass_code, donor_name, status)')
+          .ilike('reference_no', cleanRef)
+          .neq('pass_id', passId);
+
+        if (duplicatePayments && duplicatePayments.length > 0) {
+          const activeDup = duplicatePayments.find((p: any) => !p.passes || p.passes.status !== 'cancelled');
+          if (activeDup) {
+            const foreignPass = (activeDup as any).passes;
+            return {
+              success: false,
+              error: `Duplicate Reference ID: "${cleanRef}" has already been used for pass ${foreignPass?.pass_code || ''} (${foreignPass?.donor_name || 'another transaction'}). Reference IDs must be unique.`
+            };
+          }
+        }
+      }
+      paymentUpdates.reference_no = cleanRef || null;
+    }
+
+    if (existingPayment) {
+      await adminClient
+        .from('payments')
+        .update(paymentUpdates)
+        .eq('id', existingPayment.id);
+    } else if (input.paymentMode || input.paymentReferenceNo) {
+      // Insert payment row if none existed
+      await adminClient.from('payments').insert({
+        pass_id: passId,
+        mode: input.paymentMode || 'cash',
+        reference_no: input.paymentReferenceNo?.trim() || 'MANUAL',
+        amount: pass.price || 0,
+        status: input.paymentStatus || 'received',
+        collected_by_user_id: user.id,
+        collected_at: new Date().toISOString(),
+      });
+    }
+
+    // Audit Log
+    await logAudit(user.id, 'UPDATE_PASS_DETAILS', 'passes', passId, {
+      pass_code: pass.pass_code,
+      updates: { ...updates, ...paymentUpdates },
+      previous: {
+        donor_name: pass.donor_name,
+        donor_phone: pass.donor_phone,
+        physical_serial: pass.physical_serial,
+        payment_mode: existingPayment?.mode,
+        reference_no: existingPayment?.reference_no,
+      },
+      updated_by: user.fullName,
+    });
+
+    revalidatePath('/admin/passes');
+    revalidatePath('/reports');
+    revalidatePath('/payments');
+    revalidatePath('/sell');
+    revalidatePath('/dashboard');
+
+    return { success: true };
+  } catch (err: any) {
+    console.error('Error updating pass ticket details:', err);
+    return { success: false, error: err.message || 'Failed to update pass ticket details.' };
+  }
+}
+
 // ──────────────────────────────────────────────
 // 4. Role & Super Admin Reassignment
 // ──────────────────────────────────────────────

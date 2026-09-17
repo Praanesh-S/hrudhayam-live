@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Band, PaymentMode, PaymentStatus, SeatData } from '@/lib/types';
 import { AuthUser } from '@/lib/auth/session';
-import { issuePass, undoSale, checkDonorPassCount, markPendingPaymentReceived, demoSwitchRoleAction } from './actions';
+import { issuePass, undoSale, checkDonorPassCount, markPendingPaymentReceived, checkPaymentReferenceUniquenessAction } from './actions';
 import { updatePassDonorDetails } from '@/app/(dashboard)/guests/actions';
 import { numberToIndianWords } from '@/lib/format-utils';
 import { getWhatsAppUrl } from '@/lib/whatsapp';
@@ -82,6 +82,7 @@ export function SellClient({
   // Payment fields
   const [paymentMode, setPaymentMode] = useState<PaymentMode>('upi');
   const [paymentReferenceNo, setPaymentReferenceNo] = useState<string>('');
+  const [refError, setRefError] = useState<string | null>(null);
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>('received');
   const [preferredLanguage, setPreferredLanguage] = useState<'en' | 'ta'>('en');
 
@@ -133,10 +134,6 @@ export function SellClient({
   const [editDonorName, setEditDonorName] = useState<string>('');
   const [editDonorPhone, setEditDonorPhone] = useState<string>('');
   const [isSavingEdit, setIsSavingEdit] = useState<boolean>(false);
-
-  // Demo Switcher Modal
-  const [showDemoModal, setShowDemoModal] = useState<boolean>(false);
-  const [isSwitchingRole, setIsSwitchingRole] = useState<boolean>(false);
 
   // Ensure default selected band is valid
   const currentBand = bands.find((b) => b.id === selectedBandId) || bands[0] || null;
@@ -286,7 +283,8 @@ export function SellClient({
   };
 
   // Step 2: Handle Finalize / Issue Passes with validation & scrolling
-  const handleAttemptSubmitSale = () => {
+  const handleAttemptSubmitSale = async () => {
+    setRefError(null);
     // 1. Check physical pass serials
     for (let i = 0; i < quantity; i++) {
       const serial = (physicalSerials[i] || '').trim();
@@ -341,6 +339,27 @@ export function SellClient({
         message: 'Payment reference number / UTR / Cash voucher is mandatory when payment is marked as Received. For cash sales, you may enter "CASH".',
       });
       return;
+    }
+
+    // 4. Real-time duplicate check for UPI / Cheque reference ID
+    const cleanRef = paymentReferenceNo.trim();
+    if (cleanRef && (paymentMode === 'upi' || paymentMode === 'bank_transfer' || cleanRef.toLowerCase() !== 'cash')) {
+      const checkRes = await checkPaymentReferenceUniquenessAction(cleanRef);
+      if (!checkRes.isUnique) {
+        setRefError(checkRes.error || 'Duplicate Reference ID.');
+        const el = document.getElementById('paymentRef');
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.focus();
+        }
+        setDialogState({
+          open: true,
+          type: 'error',
+          title: 'Duplicate Reference ID',
+          message: checkRes.error || `The reference ID "${cleanRef}" has already been entered for another transaction. Reference IDs must be unique.`,
+        });
+        return;
+      }
     }
 
     setShowConfirmModal(true);
@@ -517,25 +536,6 @@ export function SellClient({
     }
   };
 
-  // Handle Demo Switch Role
-  const handleDemoSwitch = async (role: 'super_admin' | 'group_admin' | 'tech_coordinator') => {
-    setIsSwitchingRole(true);
-    try {
-      const res = await demoSwitchRoleAction(role);
-      if (res.success) {
-        toast.success(`Switched role to ${role.replace('_', ' ')}! Reloading...`);
-        setShowDemoModal(false);
-        window.location.reload();
-      } else {
-        toast.error(res.error || 'Could not switch demo user.');
-      }
-    } catch (err: any) {
-      toast.error(err.message || 'Error switching demo user.');
-    } finally {
-      setIsSwitchingRole(false);
-    }
-  };
-
   const totalPendingAmount = useMemo(() => {
     return pendingSales.reduce((acc, curr) => acc + curr.total_amount, 0);
   }, [pendingSales]);
@@ -592,14 +592,6 @@ export function SellClient({
           )}
         >
           <span>Pending Payments ({pendingSales.length})</span>
-        </button>
-
-        <button
-          onClick={() => setShowDemoModal(true)}
-          className="px-4 py-2.5 rounded-xl font-semibold text-xs text-slate-400 bg-[#102030] border border-slate-800 hover:bg-slate-800 hover:text-white transition-all flex items-center gap-1.5 ml-auto"
-        >
-          <RotateCcw className="w-3.5 h-3.5" />
-          <span>Demo: switch role</span>
         </button>
       </div>
 
@@ -1000,15 +992,27 @@ export function SellClient({
                   id="paymentRef"
                   placeholder={paymentStatus === 'received' ? "Enter UPI ref / UTR / Cash voucher now *" : "Optional (can be collected and added later)"}
                   value={paymentReferenceNo}
-                  onChange={(e) => setPaymentReferenceNo(e.target.value)}
-                  className="h-12 bg-[#0B1724] border-slate-800 rounded-xl text-white font-mono"
+                  onChange={(e) => {
+                    setPaymentReferenceNo(e.target.value);
+                    if (refError) setRefError(null);
+                  }}
+                  className={cn(
+                    "h-12 bg-[#0B1724] border-slate-800 rounded-xl text-white font-mono",
+                    refError && "border-red-500 focus:border-red-500 focus:ring-red-500/20"
+                  )}
                   required={paymentStatus === 'received'}
                 />
-                <p className="text-[11px] text-slate-400">
-                  {paymentStatus === 'received'
-                    ? "Required for audit trail and financial reconciliation."
-                    : "Optional for pending sales. Can be recorded later upon collection."}
-                </p>
+                {refError ? (
+                  <p className="text-xs text-red-400 font-semibold flex items-center gap-1 mt-1">
+                    {refError}
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-slate-400">
+                    {paymentStatus === 'received'
+                      ? "Required for audit trail and financial reconciliation. Must be unique across transactions."
+                      : "Optional for pending sales. Can be recorded later upon collection."}
+                  </p>
+                )}
               </div>
 
               {/* Payment Status Toggle */}
@@ -1481,79 +1485,6 @@ export function SellClient({
             >
               {isSavingEdit ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
               Save Changes
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Demo Switch Role Modal */}
-      <Dialog open={showDemoModal} onOpenChange={setShowDemoModal}>
-        <DialogContent className="bg-[#102030] border border-slate-800 text-white max-w-md rounded-2xl">
-          <DialogHeader>
-            <DialogTitle className="text-lg font-black text-white flex items-center gap-2">
-              <RotateCcw className="w-5 h-5 text-amber-500" />
-              Demo: Switch User Role
-            </DialogTitle>
-            <DialogDescription className="text-slate-400 text-xs mt-1">
-              Select a persona to test role scoping, competition credit, and permissions.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-2.5 py-3">
-            <button
-              type="button"
-              disabled={isSwitchingRole}
-              onClick={() => handleDemoSwitch('super_admin')}
-              className="w-full text-left p-3.5 rounded-xl border border-slate-800 bg-[#0B1724] hover:border-amber-500/50 hover:bg-[#122436] transition-all flex items-center justify-between"
-            >
-              <div>
-                <span className="font-bold text-sm text-white block">Kiru / Admin (Super Admin)</span>
-                <span className="text-xs text-slate-400">All 8 teams · all 88 members · full planning & sales</span>
-              </div>
-              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-400">
-                SUPER ADMIN
-              </span>
-            </button>
-
-            <button
-              type="button"
-              disabled={isSwitchingRole}
-              onClick={() => handleDemoSwitch('group_admin')}
-              className="w-full text-left p-3.5 rounded-xl border border-slate-800 bg-[#0B1724] hover:border-amber-500/50 hover:bg-[#122436] transition-all flex items-center justify-between"
-            >
-              <div>
-                <span className="font-bold text-sm text-white block">Buvana (Group Admin — Team 1)</span>
-                <span className="text-xs text-slate-400">Team 1 only · credits to Team 1 sellers</span>
-              </div>
-              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-400">
-                GROUP ADMIN
-              </span>
-            </button>
-
-            <button
-              type="button"
-              disabled={isSwitchingRole}
-              onClick={() => handleDemoSwitch('tech_coordinator')}
-              className="w-full text-left p-3.5 rounded-xl border border-slate-800 bg-[#0B1724] hover:border-teal-500/50 hover:bg-[#122436] transition-all flex items-center justify-between"
-            >
-              <div>
-                <span className="font-bold text-sm text-white block">Ganesh R (Tech Coordinator — Team 1)</span>
-                <span className="text-xs text-slate-400">Enters sales on behalf of Team 1 members</span>
-              </div>
-              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-500/20 text-teal-400">
-                TECH COORD
-              </span>
-            </button>
-          </div>
-
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setShowDemoModal(false)}
-              className="border-slate-800 bg-[#0B1724] text-slate-300 hover:bg-slate-800 rounded-xl text-xs"
-            >
-              Close
             </Button>
           </DialogFooter>
         </DialogContent>

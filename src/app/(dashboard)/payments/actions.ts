@@ -31,6 +31,29 @@ export async function markPaymentReceived(paymentId: string, referenceNo: string
       return { success: false, error: 'Payment record not found.' };
     }
 
+    // Check duplicate reference_no across different transactions
+    const cleanRef = referenceNo.trim();
+    if (cleanRef && (paymentMode.toLowerCase() === 'upi' || paymentMode.toLowerCase() === 'bank_transfer' || cleanRef.toLowerCase() !== 'cash')) {
+      const { data: existing } = await adminClient
+        .from('payments')
+        .select('id, reference_no, passes(id, pass_code, donor_name, status)')
+        .ilike('reference_no', cleanRef)
+        .neq('id', paymentId);
+
+      if (existing && existing.length > 0) {
+        const foreignMatch = existing.find(
+          (p: any) => !p.passes || p.passes.status !== 'cancelled'
+        );
+        if (foreignMatch) {
+          const pass = (foreignMatch as any).passes;
+          return {
+            success: false,
+            error: `Duplicate Reference ID: "${cleanRef}" has already been recorded for pass ${pass?.pass_code || ''} (${pass?.donor_name || 'another transaction'}). Reference IDs must be unique.`
+          };
+        }
+      }
+    }
+
     const now = new Date().toISOString();
     const { error: updateError } = await adminClient
       .from('payments')

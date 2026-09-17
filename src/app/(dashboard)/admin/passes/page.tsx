@@ -34,7 +34,7 @@ export default async function AdminPassesPage() {
       payments(id, mode, amount, reference_no, status)
     `)
     .order('created_at', { ascending: false })
-    .limit(50);
+    .limit(1000);
 
   return (
     <div className="flex flex-col gap-6 max-w-5xl mx-auto pb-16">
