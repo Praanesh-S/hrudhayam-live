@@ -39,6 +39,22 @@ interface GuestsClientProps {
   currentUser: AuthUser;
 }
 
+function getPassPayment(p: any) {
+  if (!p) return null;
+  if (Array.isArray(p.payment) && p.payment.length > 0) return p.payment[0];
+  if (Array.isArray(p.payments) && p.payments.length > 0) return p.payments[0];
+  if (p.payment && typeof p.payment === 'object') return p.payment;
+  return null;
+}
+
+function getPassPaymentStatus(p: any): 'received' | 'pending' {
+  if (!p) return 'received';
+  if (p.source === 'participating_club') return 'received';
+  const pay = getPassPayment(p);
+  if (!pay) return 'pending';
+  return pay.status === 'received' ? 'received' : 'pending';
+}
+
 export function GuestsClient({ initialPasses, bands, groups, currentUser }: GuestsClientProps) {
   const [passes, setPasses] = useState<any[]>(initialPasses);
   const [searchQuery, setSearchQuery] = useState('');
@@ -76,7 +92,7 @@ export function GuestsClient({ initialPasses, bands, groups, currentUser }: Gues
 
       // Payment Status filter
       if (paymentFilter !== 'all') {
-        const paymentStatus = p.payment?.status || 'received';
+        const paymentStatus = getPassPaymentStatus(p);
         if (paymentStatus !== paymentFilter) return false;
       }
 
@@ -93,15 +109,17 @@ export function GuestsClient({ initialPasses, bands, groups, currentUser }: Gues
         if (sellerGroupId !== groupFilter) return false;
       }
 
-      // Search query (donor name, phone, pass code, physical serial)
+      // Search query (donor name, phone, pass code, physical serial, payment ref)
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
+        const pay = getPassPayment(p);
         const matchName = (p.donor_name || '').toLowerCase().includes(q);
         const matchPhone = (p.donor_phone || '').includes(q);
         const matchCode = (p.pass_code || '').toLowerCase().includes(q);
         const matchSerial = (p.physical_serial || '').toLowerCase().includes(q);
         const matchSeller = (p.seller?.full_name || '').toLowerCase().includes(q);
-        if (!matchName && !matchPhone && !matchCode && !matchSerial && !matchSeller) return false;
+        const matchRef = (pay?.reference_no || '').toLowerCase().includes(q);
+        if (!matchName && !matchPhone && !matchCode && !matchSerial && !matchSeller && !matchRef) return false;
       }
 
       return true;
@@ -114,8 +132,8 @@ export function GuestsClient({ initialPasses, bands, groups, currentUser }: Gues
     const digital = activePasses.filter(p => p.ticket_type === 'digital').length;
     const physical = activePasses.filter(p => p.ticket_type === 'physical').length;
     const checkedIn = activePasses.filter(p => p.status === 'used').length;
-    const received = activePasses.filter(p => (p.payment?.status || 'received') === 'received').length;
-    const pending = activePasses.filter(p => p.payment?.status === 'pending').length;
+    const received = activePasses.filter(p => getPassPaymentStatus(p) === 'received').length;
+    const pending = activePasses.filter(p => getPassPaymentStatus(p) === 'pending').length;
     const cancelled = cancelledPasses.length;
 
     return { total, digital, physical, checkedIn, received, pending, cancelled };
@@ -124,7 +142,7 @@ export function GuestsClient({ initialPasses, bands, groups, currentUser }: Gues
   // Handle WhatsApp Resend with PDF Attachment / Direct Link
   const handleResendWhatsApp = async (pass: any) => {
     const bandLabel = pass.band?.label || pass.band?.name || 'Seating Band';
-    const paymentStatus = pass.payment?.status || 'received';
+    const paymentStatus = getPassPaymentStatus(pass);
     const message = formatDonorPassMessage({
       donorName: pass.donor_name,
       donorPhone: pass.donor_phone,
@@ -453,7 +471,8 @@ export function GuestsClient({ initialPasses, bands, groups, currentUser }: Gues
                   const isPhysical = p.ticket_type === 'physical';
                   const isUsed = p.status === 'used';
                   const isCancelled = p.status === 'cancelled';
-                  const paymentStatus = p.payment?.status || 'received';
+                  const pay = getPassPayment(p);
+                  const paymentStatus = getPassPaymentStatus(p);
                   const isPaid = paymentStatus === 'received';
                   const bandLabel = p.band?.label || p.band?.name || 'Band';
                   const bandPrice = p.band?.price || p.band?.standard_price || 0;
@@ -526,11 +545,16 @@ export function GuestsClient({ initialPasses, bands, groups, currentUser }: Gues
                               ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
                               : 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30'
                           }`}>
-                            {isPaid ? '✓ Paid' : 'Pending'}
+                            {isPaid ? '✓ Paid' : '⏳ Pending'}
                           </Badge>
-                          {p.payment?.mode && (
+                          {pay?.mode && (
                             <span className="text-[10px] text-slate-500 uppercase font-medium">
-                              {p.payment.mode}
+                              {pay.mode}
+                            </span>
+                          )}
+                          {pay?.reference_no && (
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              Ref: {pay.reference_no}
                             </span>
                           )}
                         </div>
@@ -735,12 +759,17 @@ export function GuestsClient({ initialPasses, bands, groups, currentUser }: Gues
                   <span className="text-slate-400">Band / Tier:</span>
                   <span className="font-bold text-amber-400">{deletingPass.band?.label || deletingPass.band?.name}</span>
                 </div>
-                {deletingPass.payment && (
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Amount / Status:</span>
-                    <span className="font-mono text-emerald-400">₹{deletingPass.payment.amount?.toLocaleString('en-IN')} ({deletingPass.payment.status})</span>
-                  </div>
-                )}
+                {(() => {
+                  const pay = getPassPayment(deletingPass);
+                  return pay ? (
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Amount / Status:</span>
+                      <span className="font-mono text-emerald-400">
+                        ₹{(pay.amount || 0).toLocaleString('en-IN')} ({pay.status})
+                      </span>
+                    </div>
+                  ) : null;
+                })()}
                 {deletingPass.physical_serial && (
                   <div className="flex justify-between">
                     <span className="text-slate-400">Physical Serial:</span>
