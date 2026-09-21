@@ -21,7 +21,8 @@ import {
   ShieldCheck,
   Award,
   Ticket,
-  Search
+  Search,
+  Database
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
@@ -225,6 +226,17 @@ export function ReportsClient({
             <FileSpreadsheet className="w-4 h-4" />
             <span>{isExporting ? 'Generating Excel...' : 'Master Excel Export'}</span>
           </Button>
+
+          {/* Direct Download JSON Backup */}
+          {(currentUser.role === 'super_admin' || currentUser.role === 'system_admin') && (
+            <Button
+              onClick={() => { window.location.href = '/api/admin/backup'; }}
+              className="bg-[#131F2E] hover:bg-[#1A2A3E] text-amber-400 border border-amber-500/30 hover:border-amber-500/60 font-bold text-xs gap-1.5 h-10 shadow-lg"
+            >
+              <Database className="w-4 h-4" />
+              <span>Backup Database (JSON)</span>
+            </Button>
+          )}
         </div>
       </div>
 

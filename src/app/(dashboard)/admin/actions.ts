@@ -2058,3 +2058,160 @@ export async function updateMemberDetailsAction(memberId: number, fullName: stri
     return { success: false, error: err.message || 'Failed to update member.' };
   }
 }
+
+// ──────────────────────────────────────────────
+// 10. Database Backups & Cloud Snapshots
+// ──────────────────────────────────────────────
+
+export interface StoredBackupItem {
+  name: string;
+  size: number;
+  created_at: string | null;
+  updated_at?: string | null;
+  download_url: string | null;
+  is_auto: boolean;
+}
+
+export async function listDatabaseBackupsAction(): Promise<{ success: boolean; backups?: StoredBackupItem[]; error?: string }> {
+  try {
+    await requireSuperOrSystemAdmin();
+    const adminClient = createAdminClient();
+
+    const { data: files, error: listErr } = await adminClient.storage
+      .from('backups')
+      .list('', { sortBy: { column: 'created_at', order: 'desc' }, limit: 100 });
+
+    if (listErr) throw listErr;
+
+    const backups: StoredBackupItem[] = await Promise.all(
+      (files || [])
+        .filter((f) => f.name.endsWith('.json'))
+        .map(async (f) => {
+          const { data: signed } = await adminClient.storage
+            .from('backups')
+            .createSignedUrl(f.name, 3600);
+
+          return {
+            name: f.name,
+            size: f.metadata?.size || 0,
+            created_at: f.created_at,
+            updated_at: f.updated_at,
+            download_url: signed?.signedUrl || null,
+            is_auto: f.name.includes('_auto_'),
+          };
+        })
+    );
+
+    return { success: true, backups };
+  } catch (err: any) {
+    console.error('Error listing backups:', err);
+    return { success: false, error: err.message || 'Failed to list backups.' };
+  }
+}
+
+export async function triggerManualDatabaseBackupAction(): Promise<{ success: boolean; file?: string; download_url?: string | null; error?: string }> {
+  try {
+    const user = await requireSuperOrSystemAdmin();
+    const adminClient = createAdminClient();
+
+    // Fetch all critical tables
+    const [
+      bandsRes,
+      rowsRes,
+      seatsRes,
+      passesRes,
+      paymentsRes,
+      sponsorsRes,
+      clubsRes,
+      membersRes,
+      groupsRes,
+      protectedBlocksRes,
+      auditLogsRes,
+    ] = await Promise.all([
+      adminClient.from('bands').select('*').order('price', { ascending: false }),
+      adminClient.from('rows').select('*').order('display_order', { ascending: true }),
+      adminClient.from('seats').select('*').order('seat_number', { ascending: true }),
+      adminClient.from('passes').select('*').order('created_at', { ascending: false }),
+      adminClient.from('payments').select('*').order('created_at', { ascending: false }),
+      adminClient.from('sponsors').select('*').order('created_at', { ascending: false }),
+      adminClient.from('participating_clubs').select('*').order('created_at', { ascending: false }),
+      adminClient.from('members').select('*').order('created_at', { ascending: false }),
+      adminClient.from('groups').select('*').order('name', { ascending: true }),
+      adminClient.from('protected_blocks').select('*').order('created_at', { ascending: false }),
+      adminClient.from('audit_logs').select('*').order('created_at', { ascending: false }).limit(2000),
+    ]);
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupData = {
+      meta: {
+        exported_at: new Date().toISOString(),
+        exported_by: user.fullName || user.loginId || user.id,
+        app_version: '2.0.0',
+        venue: 'The Music Academy, Madras',
+        total_regular_capacity: 1448,
+        ground_floor_capacity: 698,
+        balcony_capacity: 750,
+      },
+      counts: {
+        bands: bandsRes.data?.length || 0,
+        rows: rowsRes.data?.length || 0,
+        seats: seatsRes.data?.length || 0,
+        passes: passesRes.data?.length || 0,
+        payments: paymentsRes.data?.length || 0,
+        sponsors: sponsorsRes.data?.length || 0,
+        participating_clubs: clubsRes.data?.length || 0,
+        members: membersRes.data?.length || 0,
+        groups: groupsRes.data?.length || 0,
+        protected_blocks: protectedBlocksRes.data?.length || 0,
+        audit_logs: auditLogsRes.data?.length || 0,
+      },
+      data: {
+        bands: bandsRes.data || [],
+        rows: rowsRes.data || [],
+        seats: seatsRes.data || [],
+        passes: passesRes.data || [],
+        payments: paymentsRes.data || [],
+        sponsors: sponsorsRes.data || [],
+        participating_clubs: clubsRes.data || [],
+        members: membersRes.data || [],
+        groups: groupsRes.data || [],
+        protected_blocks: protectedBlocksRes.data || [],
+        audit_logs: auditLogsRes.data || [],
+      },
+    };
+
+    const jsonString = JSON.stringify(backupData, null, 2);
+    const filename = `hrudhayam_manual_backup_${timestamp}.json`;
+
+    const { error: uploadErr } = await adminClient.storage
+      .from('backups')
+      .upload(filename, jsonString, {
+        contentType: 'application/json',
+        upsert: true,
+      });
+
+    if (uploadErr) throw uploadErr;
+
+    const { data: signed } = await adminClient.storage
+      .from('backups')
+      .createSignedUrl(filename, 3600);
+
+    await logAudit(user.id, 'DATABASE_BACKUP_CREATED', 'system', filename, {
+      file: filename,
+      size_bytes: Buffer.byteLength(jsonString, 'utf8'),
+      counts: backupData.counts,
+      created_by: user.fullName,
+    });
+
+    revalidatePath('/admin/backup');
+
+    return {
+      success: true,
+      file: filename,
+      download_url: signed?.signedUrl || null,
+    };
+  } catch (err: any) {
+    console.error('Error triggering manual backup:', err);
+    return { success: false, error: err.message || 'Failed to trigger backup.' };
+  }
+}

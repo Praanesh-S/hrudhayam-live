@@ -17,7 +17,8 @@ import {
   Heart,
   ShieldCheck,
   RotateCcw,
-  MessageSquare
+  MessageSquare,
+  Database
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AuthUser } from '@/lib/auth/session';
@@ -46,6 +47,7 @@ export function SidebarContent({ user, onNavigate }: { user: AuthUser; onNavigat
     { name: 'Groups, Members & Logins', href: '/admin/users', icon: Users, roles: ['super_admin', 'system_admin'] },
     { name: 'Sponsors', href: '/admin/sponsors', icon: Building2, roles: ['super_admin', 'system_admin'] },
     { name: 'Pass Operations', href: '/admin/passes', icon: RotateCcw, roles: ['super_admin', 'system_admin'] },
+    { name: 'Database Backups', href: '/admin/backup', icon: Database, roles: ['super_admin', 'system_admin'] },
     { name: 'Audit Trail', href: '/admin/audit-logs', icon: History, roles: ['super_admin', 'system_admin'] },
   ];
 
