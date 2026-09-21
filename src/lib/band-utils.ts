@@ -153,7 +153,7 @@ export async function generateUniquePassCode(supabase: SupabaseClient): Promise<
  * Rule R7: Participating clubs are ring-fenced and excluded from competition/revenue calculations.
  */
 export async function fetchEventSummaryMetrics(supabase: SupabaseClient) {
-  const [bands, passesRes, sponsorsRes, protectedRes, settingsRes] = await Promise.all([
+  const [bands, passesRes, sponsorsRes, protectedRes, settingsRes, clubsRes] = await Promise.all([
     fetchBandsWithMetrics(supabase),
     supabase
       .from('passes')
@@ -169,14 +169,21 @@ export async function fetchEventSummaryMetrics(supabase: SupabaseClient) {
       .from('app_settings_v2')
       .select('key, value')
       .in('key', ['aed_station_cost', 'aed_target_stations']),
+    supabase
+      .from('participating_clubs')
+      .select('id, entry_fee, passes_value, net_contribution'),
   ]);
 
   const allPasses = passesRes.data || [];
-  // Exclude participating club passes from normal sales metrics per §11
+  // Exclude participating club passes from member competition metrics per §11
   const normalPasses = allPasses.filter(p => p.source !== 'participating_club');
+  const clubPasses = allPasses.filter(p => p.source === 'participating_club');
 
   const totalCapacity = bands.reduce((sum, b) => sum + (b.total_allocated || 0), 0);
-  const totalSold = normalPasses.length;
+  // Total passes issued/sold occupying seats in the hall
+  const totalSold = allPasses.length;
+  const normalSold = normalPasses.length;
+  const clubSold = clubPasses.length;
   const totalRemaining = bands.reduce((sum, b) => sum + (b.remaining_count || 0), 0);
   const totalCheckedIn = allPasses.filter(p => p.status === 'used').length;
 
@@ -201,7 +208,11 @@ export async function fetchEventSummaryMetrics(supabase: SupabaseClient) {
   const sponsorsReceived = sponsors.filter(s => s.status === 'received').reduce((sum, s) => sum + s.amount, 0);
   const sponsorsCommitted = sponsors.filter(s => s.status === 'committed').reduce((sum, s) => sum + s.amount, 0);
 
-  const totalCollected = totalPassesCollected + sponsorsReceived;
+  // Participating clubs amounts
+  const clubs = clubsRes.data || [];
+  const clubsTotalEntryFees = clubs.reduce((sum, c) => sum + (c.entry_fee || 25000), 0);
+
+  const totalCollected = totalPassesCollected + sponsorsReceived + clubsTotalEntryFees;
   const totalPending = totalPassesPending + sponsorsCommitted;
   const totalRaised = totalCollected;
 
@@ -218,12 +229,15 @@ export async function fetchEventSummaryMetrics(supabase: SupabaseClient) {
     bands,
     totalCapacity,
     totalSold,
+    normalSold,
+    clubSold,
     totalRemaining,
     totalCheckedIn,
     totalPassesCollected,
     totalPassesPending,
     sponsorsReceived,
     sponsorsCommitted,
+    clubsTotalEntryFees,
     totalCollected,
     totalPending,
     totalRaised,

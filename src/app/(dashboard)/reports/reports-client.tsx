@@ -151,7 +151,10 @@ export function ReportsClient({
   // Filtered passes for Passes & Transactions tab
   const filteredPassesList = useMemo(() => {
     return passes.filter((p) => {
-      if (passStatusFilter !== 'all' && p.status !== passStatusFilter) {
+      // Gate/Pass Status filter: 'all' shows active passes, 'cancelled' shows cancelled passes
+      if (passStatusFilter === 'all') {
+        if (p.status === 'cancelled') return false;
+      } else if (p.status !== passStatusFilter) {
         return false;
       }
       if (!passSearch.trim()) return true;
@@ -334,7 +337,7 @@ export function ReportsClient({
             className="text-xs sm:text-sm data-active:bg-amber-500 data-active:text-slate-950 data-[state=active]:bg-amber-500 data-[state=active]:text-slate-950 font-bold gap-2 px-4 py-2 rounded-xl"
           >
             <Ticket className="w-4 h-4" />
-            Passes & Transactions ({passes.length})
+            Passes & Transactions ({activePasses.length})
           </TabsTrigger>
         </TabsList>
 
@@ -620,19 +623,31 @@ export function ReportsClient({
               </div>
 
               <div className="flex items-center gap-1.5 self-start sm:self-auto overflow-x-auto">
-                {(['all', 'issued', 'used', 'cancelled'] as const).map((st) => (
-                  <button
-                    key={st}
-                    onClick={() => setPassStatusFilter(st)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition-all ${
-                      passStatusFilter === st
-                        ? 'bg-amber-500 text-slate-950'
-                        : 'bg-[#07111C] text-slate-400 hover:text-white border border-[#1D3249]'
-                    }`}
-                  >
-                    {st === 'all' ? `All (${passes.length})` : st}
-                  </button>
-                ))}
+                {(['all', 'issued', 'used', 'cancelled'] as const).map((st) => {
+                  const count = st === 'all'
+                    ? activePasses.length
+                    : st === 'cancelled'
+                    ? passes.filter((p) => p.status === 'cancelled').length
+                    : passes.filter((p) => p.status === st).length;
+                  const label = st === 'all'
+                    ? `Active (${count})`
+                    : st === 'cancelled'
+                    ? `Voided (${count})`
+                    : `${st} (${count})`;
+                  return (
+                    <button
+                      key={st}
+                      onClick={() => setPassStatusFilter(st)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition-all ${
+                        passStatusFilter === st
+                          ? 'bg-amber-500 text-slate-950'
+                          : 'bg-[#07111C] text-slate-400 hover:text-white border border-[#1D3249]'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 

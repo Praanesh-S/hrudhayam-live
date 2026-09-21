@@ -61,6 +61,10 @@ export function GuestsClient({ initialPasses, bands, groups, currentUser }: Gues
   const [hardDelete, setHardDelete] = useState(true);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // Active vs Cancelled passes
+  const activePasses = useMemo(() => passes.filter(p => p.status !== 'cancelled'), [passes]);
+  const cancelledPasses = useMemo(() => passes.filter(p => p.status === 'cancelled'), [passes]);
+
   // Filtered Passes
   const filteredPasses = useMemo(() => {
     return passes.filter((p) => {
@@ -76,8 +80,12 @@ export function GuestsClient({ initialPasses, bands, groups, currentUser }: Gues
         if (paymentStatus !== paymentFilter) return false;
       }
 
-      // Gate Status filter
-      if (statusFilter !== 'all' && p.status !== statusFilter) return false;
+      // Gate Status filter: 'all' shows active passes, 'cancelled' shows cancelled passes
+      if (statusFilter === 'all') {
+        if (p.status === 'cancelled') return false;
+      } else if (p.status !== statusFilter) {
+        return false;
+      }
 
       // Group filter
       if (groupFilter !== 'all') {
@@ -100,17 +108,18 @@ export function GuestsClient({ initialPasses, bands, groups, currentUser }: Gues
     });
   }, [passes, bandFilter, typeFilter, paymentFilter, statusFilter, groupFilter, searchQuery]);
 
-  // Overall statistics
+  // Overall statistics (computed strictly on active passes)
   const stats = useMemo(() => {
-    const total = passes.length;
-    const digital = passes.filter(p => p.ticket_type === 'digital').length;
-    const physical = passes.filter(p => p.ticket_type === 'physical').length;
-    const checkedIn = passes.filter(p => p.status === 'used').length;
-    const received = passes.filter(p => (p.payment?.status || 'received') === 'received').length;
-    const pending = passes.filter(p => p.payment?.status === 'pending').length;
+    const total = activePasses.length;
+    const digital = activePasses.filter(p => p.ticket_type === 'digital').length;
+    const physical = activePasses.filter(p => p.ticket_type === 'physical').length;
+    const checkedIn = activePasses.filter(p => p.status === 'used').length;
+    const received = activePasses.filter(p => (p.payment?.status || 'received') === 'received').length;
+    const pending = activePasses.filter(p => p.payment?.status === 'pending').length;
+    const cancelled = cancelledPasses.length;
 
-    return { total, digital, physical, checkedIn, received, pending };
-  }, [passes]);
+    return { total, digital, physical, checkedIn, received, pending, cancelled };
+  }, [activePasses, cancelledPasses]);
 
   // Handle WhatsApp Resend with PDF Attachment / Direct Link
   const handleResendWhatsApp = async (pass: any) => {
@@ -243,10 +252,10 @@ export function GuestsClient({ initialPasses, bands, groups, currentUser }: Gues
   return (
     <div className="space-y-6">
       {/* 1. Statistics Bar */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
         <Card className="bg-[#0B1724] border-[#1D3249]">
           <CardContent className="p-4 text-center">
-            <p className="text-xs text-slate-400 font-medium">Total Passes</p>
+            <p className="text-xs text-slate-400 font-medium">Active Passes</p>
             <p className="text-2xl font-black text-white mt-1">{stats.total}</p>
           </CardContent>
         </Card>
@@ -283,6 +292,16 @@ export function GuestsClient({ initialPasses, bands, groups, currentUser }: Gues
           <CardContent className="p-4 text-center">
             <p className="text-xs text-yellow-400 font-medium">Payment Pending</p>
             <p className="text-2xl font-black text-yellow-400 mt-1">{stats.pending}</p>
+          </CardContent>
+        </Card>
+
+        <Card 
+          className={`bg-[#0B1724] border-[#1D3249] cursor-pointer hover:border-red-500/50 transition-colors ${statusFilter === 'cancelled' ? 'border-red-500 ring-1 ring-red-500' : ''}`}
+          onClick={() => setStatusFilter(statusFilter === 'cancelled' ? 'all' : 'cancelled')}
+        >
+          <CardContent className="p-4 text-center">
+            <p className="text-xs text-red-400 font-medium">Voided / Cancelled</p>
+            <p className="text-2xl font-black text-red-400 mt-1">{stats.cancelled}</p>
           </CardContent>
         </Card>
       </div>
@@ -361,19 +380,28 @@ export function GuestsClient({ initialPasses, bands, groups, currentUser }: Gues
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs text-slate-400 shrink-0">Gate Status:</span>
               <div className="flex flex-wrap gap-1">
-                {['all', 'issued', 'used', 'cancelled'].map((st) => (
-                  <button
-                    key={st}
-                    onClick={() => setStatusFilter(st)}
-                    className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
-                      statusFilter === st
-                        ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
-                        : 'bg-[#07111C] text-slate-400 hover:text-white border border-[#1D3249]'
-                    }`}
-                  >
-                    {st === 'all' ? 'All' : st === 'issued' ? 'Issued' : st === 'used' ? 'Gate Checked-In' : 'Cancelled'}
-                  </button>
-                ))}
+                {(['all', 'issued', 'used', 'cancelled'] as const).map((st) => {
+                  const label = st === 'all'
+                    ? `Active (${stats.total})`
+                    : st === 'cancelled'
+                    ? `Voided (${stats.cancelled})`
+                    : st === 'used'
+                    ? `Checked In (${stats.checkedIn})`
+                    : `Issued (${stats.total - stats.checkedIn})`;
+                  return (
+                    <button
+                      key={st}
+                      onClick={() => setStatusFilter(st)}
+                      className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
+                        statusFilter === st
+                          ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
+                          : 'bg-[#07111C] text-slate-400 hover:text-white border border-[#1D3249]'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
