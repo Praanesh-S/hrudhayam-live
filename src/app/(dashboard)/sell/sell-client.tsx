@@ -192,8 +192,9 @@ export function SellClient({
   // Step 1 Validation
   const canContinueToStep2 = useMemo(() => {
     if (!selectedBandId || !currentBand) return false;
-    if ((currentBand.remaining_count ?? 0) < quantity) return false;
-    if (quantity < 1 || quantity > 10) return false;
+    const maxAvailable = currentBand.remaining_count ?? 0;
+    if (maxAvailable < quantity) return false;
+    if (quantity < 1 || quantity > maxAvailable) return false;
     if (!sellerMemberId) return false;
     if (!donorName.trim()) return false;
     if (!donorPhone.trim() || donorPhone.replace(/\D/g, '').length < 10) return false;
@@ -681,7 +682,11 @@ export function SellClient({
                         key={band.id}
                         type="button"
                         disabled={isSoldOut}
-                        onClick={() => setSelectedBandId(band.id)}
+                        onClick={() => {
+                          setSelectedBandId(band.id);
+                          const maxAvail = Math.max(1, band.remaining_count ?? 0);
+                          setQuantity((q) => Math.min(q, maxAvail));
+                        }}
                         className={cn(
                           "relative text-left p-4 rounded-xl border transition-all flex flex-col justify-between h-24",
                           isSelected
@@ -719,43 +724,67 @@ export function SellClient({
 
               {/* 2. HOW MANY PASSES? */}
               <div className="space-y-3">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center justify-between">
                   <span className="text-xs font-black text-amber-500 uppercase tracking-wider">
-                    ② HOW MANY PASSES? (UP TO 10)
+                    ② HOW MANY PASSES? {currentBand ? `(${currentBand.remaining_count ?? 0} REMAINING)` : ''}
                   </span>
+                  {currentBand && (
+                    <span className="text-xs text-slate-400">
+                      Up to <strong className="text-white font-mono">{currentBand.remaining_count ?? 0}</strong> tickets
+                    </span>
+                  )}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3">
-                  {/* Stepper */}
+                  {/* Stepper with Direct Input */}
                   <div className="flex items-center bg-[#0B1724] border border-slate-800 rounded-xl p-1">
                     <button
                       type="button"
                       onClick={() => setQuantity((q) => Math.max(1, q - 1))}
                       disabled={quantity <= 1}
                       className="w-10 h-10 rounded-lg flex items-center justify-center text-slate-300 hover:bg-slate-800 disabled:opacity-30 transition-colors"
+                      aria-label="Decrease quantity"
                     >
                       <Minus className="w-4 h-4" />
                     </button>
-                    <span className="w-12 text-center text-xl font-black text-white">
-                      {quantity}
-                    </span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={currentBand ? Math.max(1, currentBand.remaining_count ?? 1) : 9999}
+                      value={quantity}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        const maxAvail = currentBand ? Math.max(1, currentBand.remaining_count ?? 1) : 9999;
+                        if (isNaN(val) || val < 1) {
+                          setQuantity(1);
+                        } else if (val > maxAvail) {
+                          setQuantity(maxAvail);
+                        } else {
+                          setQuantity(val);
+                        }
+                      }}
+                      className="w-16 text-center text-xl font-black text-white bg-transparent border-0 focus:outline-none focus:ring-1 focus:ring-amber-500/50 rounded-md font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    />
                     <button
                       type="button"
                       onClick={() => {
-                        const maxAvail = currentBand ? Math.min(10, currentBand.remaining_count ?? 0) : 10;
+                        const maxAvail = currentBand ? (currentBand.remaining_count ?? 0) : 9999;
                         setQuantity((q) => Math.min(maxAvail, q + 1));
                       }}
-                      disabled={currentBand ? quantity >= Math.min(10, currentBand.remaining_count ?? 0) : quantity >= 10}
+                      disabled={currentBand ? quantity >= (currentBand.remaining_count ?? 0) : false}
                       className="w-10 h-10 rounded-lg flex items-center justify-center text-slate-300 hover:bg-slate-800 disabled:opacity-30 transition-colors"
+                      aria-label="Increase quantity"
                     >
                       <Plus className="w-4 h-4" />
                     </button>
                   </div>
 
                   {/* Quick Pick Pills */}
-                  <div className="flex items-center gap-2">
-                    {[1, 2, 3, 4, 5, 10].map((num) => {
-                      const isAvail = currentBand ? (currentBand.remaining_count ?? 0) >= num : true;
+                  <div className="flex flex-wrap items-center gap-2">
+                    {[1, 2, 3, 4, 5, 10, 20, 50, 100].map((num) => {
+                      const maxRem = currentBand?.remaining_count ?? 0;
+                      if (currentBand && num > maxRem && num > 5) return null;
+                      const isAvail = currentBand ? maxRem >= num : true;
                       const isQuickSelected = quantity === num;
                       return (
                         <button
@@ -764,7 +793,7 @@ export function SellClient({
                           disabled={!isAvail}
                           onClick={() => setQuantity(num)}
                           className={cn(
-                            "w-10 h-10 rounded-xl font-bold text-sm transition-all border",
+                            "h-10 px-3 min-w-10 rounded-xl font-bold text-sm transition-all border font-mono",
                             isQuickSelected
                               ? "bg-[#E58327] text-slate-950 border-amber-500"
                               : !isAvail
@@ -797,7 +826,7 @@ export function SellClient({
                 {/* Orange Left Border Info Box (matches Image 2) */}
                 <div className="border-l-4 border-amber-500 bg-[#0B1724]/90 p-4 rounded-r-xl space-y-2 text-xs sm:text-sm text-slate-300">
                   <p>
-                    <strong className="text-white">Buying for one family or a group of friends?</strong> You can block up to 10 passes together — they all go to one person, in one confirmation message.
+                    <strong className="text-white">Buying for one family or a group of friends?</strong> You can block multiple passes together (up to available band capacity) — they all go to one person, in one confirmation message.
                   </p>
                   <p>
                     <strong className="text-white">Buying for different individuals?</strong> Please enter them as separate sales, so each person's pass and credit is recorded correctly.
@@ -1073,7 +1102,7 @@ export function SellClient({
                   </span>
                 </div>
 
-                <div className="space-y-2.5">
+                <div className={cn("space-y-2.5", quantity > 10 && "max-h-96 overflow-y-auto pr-2")}>
                   {Array.from({ length: quantity }).map((_, index) => (
                     <div key={index} className="flex items-center gap-3">
                       <span className="w-24 text-xs font-bold text-slate-400 shrink-0">
