@@ -85,14 +85,28 @@ export default async function DashboardPage() {
       {/* 3. Top High-Level Campaign KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-[#131F2E] border border-slate-800 p-5 rounded-2xl">
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Passes Sold</span>
+          <div className="flex justify-between items-center">
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Passes Sold</span>
+            {metrics.allocatedSponsorSeats > 0 && (
+              <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-cyan-950/80 border border-cyan-700/60 text-cyan-400">
+                {metrics.allocatedSponsorSeats} Sponsors
+              </span>
+            )}
+          </div>
           <div className="text-3xl font-black text-white font-mono mt-1">
             {metrics.totalSold} <span className="text-base text-slate-500 font-normal">/ {metrics.totalCapacity}</span>
           </div>
           <div className="w-full bg-slate-800 h-1.5 rounded-full mt-3 overflow-hidden">
             <div className="bg-[#E8913A] h-full" style={{ width: `${occupancyPercent}%` }} />
           </div>
-          <span className="text-[11px] text-slate-400 mt-1.5 block">{occupancyPercent}% Concert Fill</span>
+          <div className="flex items-center justify-between text-[11px] text-slate-400 mt-1.5">
+            <span>{occupancyPercent}% Concert Fill</span>
+            {metrics.allocatedSponsorSeats > 0 && (
+              <span className="text-cyan-400 font-semibold">
+                +{metrics.allocatedSponsorSeats} Sponsor Seats
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="bg-[#131F2E] border border-slate-800 p-5 rounded-2xl">
@@ -126,7 +140,7 @@ export default async function DashboardPage() {
           <Layers className="w-5 h-5 text-[#E8913A]" /> Seating Band Capacities & Remaining
         </h3>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {metrics.bands.map((band) => {
             const sold = band.sold_count ?? 0;
             const cap = band.total_allocated ?? 0;

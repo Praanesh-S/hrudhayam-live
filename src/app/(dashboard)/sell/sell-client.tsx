@@ -6,7 +6,7 @@ import { AuthUser } from '@/lib/auth/session';
 import { issuePass, undoSale, checkDonorPassCount, markPendingPaymentReceived, checkPaymentReferenceUniquenessAction } from './actions';
 import { updatePassDonorDetails } from '@/app/(dashboard)/guests/actions';
 import { numberToIndianWords } from '@/lib/format-utils';
-import { getWhatsAppUrl } from '@/lib/whatsapp';
+import { getWhatsAppUrl, formatPendingPaymentReminder } from '@/lib/whatsapp';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -26,7 +26,8 @@ import {
   Minus,
   Check,
   Edit3,
-  UserCheck
+  UserCheck,
+  Copy
 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
@@ -49,6 +50,7 @@ interface SellClientProps {
   currentUser: AuthUser;
   initialHolds?: any[];
   pendingSales: PendingSaleItem[];
+  upiVpa?: string;
 }
 
 export function SellClient({
@@ -56,6 +58,7 @@ export function SellClient({
   sellers,
   currentUser,
   pendingSales: initialPendingSales,
+  upiVpa = 'hrudhayamlive@indianbank',
 }: SellClientProps) {
   // Top level active tab: 'sell' | 'pending'
   const [activeTab, setActiveTab] = useState<'sell' | 'pending'>('sell');
@@ -675,7 +678,6 @@ export function SellClient({
                     if (band.id === 'band_3500') priceColorClass = 'text-[#A78BFA]';
                     if (band.id === 'band_2500') priceColorClass = 'text-[#2DD4BF]';
                     if (band.id === 'band_1500') priceColorClass = 'text-[#EC4899]';
-                    if (band.id === 'band_pp') priceColorClass = 'text-[#38BDF8]';
 
                     return (
                       <button
@@ -1274,7 +1276,7 @@ export function SellClient({
                 </span>
               </div>
               <p className="text-xs text-slate-300">
-                These passes have been issued with physical serials, but payment is not yet confirmed. Once money is in hand/bank, click <strong>"Mark received"</strong> to credit your group's competition total.
+                These passes have been issued with physical serials, but payment is not yet confirmed. Click <strong>"Remind (WhatsApp)"</strong> on any card to send an instant bulk reminder to the buyer, or click <strong>"Mark received"</strong> once payment is verified.
               </p>
             </div>
 
@@ -1314,7 +1316,7 @@ export function SellClient({
 
                       {/* Card Action Buttons */}
                       {!isExpanded && (
-                        <div className="flex items-center gap-3 pt-1">
+                        <div className="flex flex-wrap items-center gap-2.5 pt-1">
                           <Button
                             type="button"
                             onClick={() => {
@@ -1322,9 +1324,46 @@ export function SellClient({
                               setInlineRefNo(sale.reference_no || '');
                               setInlineMode(sale.mode as PaymentMode || 'upi');
                             }}
-                            className="h-10 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md shadow-emerald-950/30"
+                            className="h-10 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md shadow-emerald-950/30 cursor-pointer"
                           >
                             Mark received
+                          </Button>
+
+                          <Button
+                            type="button"
+                            onClick={() => {
+                              const reminderMsg = formatPendingPaymentReminder({
+                                donorOrSponsorName: sale.donor_name,
+                                amount: sale.total_amount,
+                                category: `${sale.quantity}x ${sale.band_label} Pass${sale.quantity > 1 ? 'es' : ''}${sale.serials.length > 0 ? ` (Serials: ${sale.serials.join(', ')})` : ''}`,
+                                upiVpa,
+                              });
+                              const url = getWhatsAppUrl(sale.donor_phone, reminderMsg);
+                              window.open(url, '_blank');
+                            }}
+                            className="h-10 px-4 bg-[#25D366]/20 hover:bg-[#25D366]/30 text-[#25D366] border border-[#25D366]/40 font-bold text-xs rounded-xl shadow-sm gap-1.5 cursor-pointer"
+                          >
+                            <Send className="w-3.5 h-3.5" />
+                            <span>Remind (WhatsApp)</span>
+                          </Button>
+
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => {
+                              const reminderMsg = formatPendingPaymentReminder({
+                                donorOrSponsorName: sale.donor_name,
+                                amount: sale.total_amount,
+                                category: `${sale.quantity}x ${sale.band_label} Pass${sale.quantity > 1 ? 'es' : ''}${sale.serials.length > 0 ? ` (Serials: ${sale.serials.join(', ')})` : ''}`,
+                                upiVpa,
+                              });
+                              navigator.clipboard.writeText(reminderMsg);
+                              toast.success('Reminder message copied to clipboard!');
+                            }}
+                            className="h-10 px-3 border-slate-800 bg-[#102030] hover:bg-slate-800 text-slate-400 hover:text-white text-xs font-semibold rounded-xl cursor-pointer"
+                            title="Copy reminder text"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
                           </Button>
 
                           <Button
@@ -1335,7 +1374,7 @@ export function SellClient({
                               setEditDonorName(sale.donor_name);
                               setEditDonorPhone(sale.donor_phone);
                             }}
-                            className="h-10 px-4 border-slate-800 bg-[#102030] hover:bg-slate-800 text-slate-300 text-xs font-semibold rounded-xl"
+                            className="h-10 px-4 border-slate-800 bg-[#102030] hover:bg-slate-800 text-slate-300 text-xs font-semibold rounded-xl cursor-pointer"
                           >
                             <Edit3 className="w-3.5 h-3.5 mr-1.5" />
                             <span>Edit details</span>

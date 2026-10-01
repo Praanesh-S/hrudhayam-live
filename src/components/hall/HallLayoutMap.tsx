@@ -9,7 +9,7 @@ export const CATEGORY_META: Record<SeatCategory, { label: string; price: number;
   b3500: { label: '₹3,500 — Gold', price: 3500, color: '#8B5CF6', countsToRaise: true },
   b2500: { label: '₹2,500 — Silver', price: 2500, color: '#0D9488', countsToRaise: true },
   b1500: { label: '₹1,500 — Classic Value', price: 1500, color: '#EC4899', countsToRaise: true },
-  pp: { label: '₹1,500 — Paadarivom Padipparivom', price: 1500, color: '#0284C7', countsToRaise: true },
+  pp: { label: '₹1,500 — Classic Value', price: 1500, color: '#EC4899', countsToRaise: true },
   obligation: { label: 'Special Guest / Police / Corp', price: 0, color: '#EF4444', countsToRaise: false },
   sponsor_comp: { label: 'Sponsor comp', price: 0, color: '#06B6D4', countsToRaise: false },
   blocked: { label: 'Blocked', price: 0, color: '#475569', countsToRaise: false },
@@ -82,13 +82,14 @@ export function HallLayoutMap({
     if (soldSeatMap) return soldSeatMap;
     const map = new Map<string, { soldIndex: number; totalSold: number; bandName: string; status?: 'received' | 'pending' }>();
 
-    // 1. Direct pass or sold flags on seats
-    const directSold = seats.filter((s) => s.sold || s.pass_code);
+    // 1. Direct pass or sold flags on seats (including allocated sponsor seats)
+    const directSold = seats.filter((s) => s.sold || s.pass_code || s.sponsor_id);
     directSold.forEach((s, idx) => {
+      const isSponsor = !!s.sponsor_id || s.category === 'sponsor_comp';
       map.set(s.id, {
         soldIndex: idx + 1,
         totalSold: directSold.length,
-        bandName: CATEGORY_META[s.category]?.label || 'Band',
+        bandName: isSponsor ? 'Sponsor Complimentary' : (CATEGORY_META[s.category]?.label || 'Band'),
         status: s.payment_status === 'pending' ? 'pending' : 'received',
       });
     });
@@ -100,7 +101,6 @@ export function HallLayoutMap({
         b3500: 'band_3500',
         b2500: 'band_2500',
         b1500: 'band_1500',
-        pp: 'band_pp',
       };
 
       for (const [cat, bId] of Object.entries(categoryToBandId)) {
@@ -141,7 +141,7 @@ export function HallLayoutMap({
     if (soldInfo) {
       return soldInfo.status === 'pending' ? 'pending' : 'sold';
     }
-    if (s.sold || s.pass_code) {
+    if (s.sold || s.pass_code || s.sponsor_id) {
       return s.payment_status === 'pending' ? 'pending' : 'sold';
     }
     return 'available';
@@ -212,7 +212,6 @@ export function HallLayoutMap({
           { id: 'b3500', label: '₹3.5k Gold', color: '#8B5CF6' },
           { id: 'b2500', label: '₹2.5k Silver', color: '#0D9488' },
           { id: 'b1500', label: '₹1.5k Classic', color: '#EC4899' },
-          { id: 'pp', label: '₹1.5k PP', color: '#0284C7' },
           { id: 'obligation', label: 'Obligation', color: '#EF4444' },
           { id: 'sponsor_comp', label: 'Sponsor', color: '#06B6D4' },
           { id: 'blocked', label: 'Blocked', color: '#475569' },
@@ -265,15 +264,22 @@ export function HallLayoutMap({
               const soldInfo = effectiveSoldSeatMap.get(s.id);
               const baseColor = CATEGORY_META[s.category]?.color || '#1E293B';
               const isIsolated = isSeatIsolated(s);
+              const isSponsorSeat = !!s.sponsor_id || s.category === 'sponsor_comp';
 
               let seatBg = baseColor;
               let symbol = '○';
               let ringClass = '';
 
               if (status === 'sold') {
-                seatBg = '#10B981'; // Emerald Green
-                symbol = '✓';
-                ringClass = 'ring-1 ring-emerald-300 shadow-xs shadow-emerald-500/50';
+                if (isSponsorSeat && (s.sponsor_id || s.sold)) {
+                  seatBg = '#06B6D4'; // Distinct Cyan for Allocated Sponsor
+                  symbol = '✓';
+                  ringClass = 'ring-1 ring-cyan-300 shadow-xs shadow-cyan-500/50';
+                } else {
+                  seatBg = '#10B981'; // Emerald Green
+                  symbol = '✓';
+                  ringClass = 'ring-1 ring-emerald-300 shadow-xs shadow-emerald-500/50';
+                }
               } else if (status === 'pending') {
                 seatBg = '#F59E0B'; // Amber
                 symbol = '●';
@@ -285,9 +291,9 @@ export function HallLayoutMap({
               }
 
               const tooltip = readOnly
-                ? `Row ${s.row_label} Seat ${s.seat_no} · ${status.toUpperCase()} · ${CATEGORY_META[s.category]?.label || 'Band'}${s.guest_name ? ` (${s.guest_name})` : ''}`
+                ? `Row ${s.row_label} Seat ${s.seat_no} · ${s.sponsor_id ? 'SPONSOR ALLOCATED' : status.toUpperCase()} · ${CATEGORY_META[s.category]?.label || 'Band'}${s.guest_name ? ` (${s.guest_name})` : ''}`
                 : soldInfo
-                ? `SOLD PASS (#${soldInfo.soldIndex} of ${soldInfo.totalSold} sold in ${soldInfo.bandName}) · Row ${s.row_label} Seat ${s.seat_no}`
+                ? `${s.sponsor_id ? 'SPONSOR SEAT' : 'SOLD PASS'} (#${soldInfo.soldIndex} of ${soldInfo.totalSold} in ${soldInfo.bandName}) · Row ${s.row_label} Seat ${s.seat_no}`
                 : `${s.id}: ${CATEGORY_META[s.category]?.label}${s.name ? ` (${s.name})` : ''}`;
 
               return (
@@ -304,7 +310,7 @@ export function HallLayoutMap({
                     ringClass
                   )}
                   style={{
-                    backgroundColor: readOnly ? seatBg : soldInfo ? '#10B981' : baseColor,
+                    backgroundColor: readOnly ? seatBg : soldInfo ? (isSponsorSeat ? '#06B6D4' : '#10B981') : baseColor,
                     color: status === 'sold' || status === 'pending' ? '#07111C' : '#FFFFFF',
                   }}
                 >
@@ -347,7 +353,11 @@ export function HallLayoutMap({
             <>
               <span className="flex items-center gap-1 text-emerald-400 font-extrabold bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-500/30">
                 <span className="w-3 h-3 rounded-xs bg-[#10B981] text-slate-950 font-black flex items-center justify-center text-[8px]">✓</span>
-                Sold
+                Sold Pass
+              </span>
+              <span className="flex items-center gap-1 text-cyan-400 font-extrabold bg-cyan-950/40 px-2 py-0.5 rounded border border-cyan-500/30">
+                <span className="w-3 h-3 rounded-xs bg-[#06B6D4] text-slate-950 font-black flex items-center justify-center text-[8px]">✓</span>
+                Sponsor Allocated
               </span>
               <span className="flex items-center gap-1 text-amber-400 font-extrabold bg-amber-950/40 px-2 py-0.5 rounded border border-amber-500/30">
                 <span className="w-3 h-3 rounded-xs bg-[#F59E0B] text-slate-950 font-black flex items-center justify-center text-[8px]">●</span>
@@ -369,7 +379,6 @@ export function HallLayoutMap({
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-[#8B5CF6]" /> ₹3,500</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-[#0D9488]" /> ₹2,500</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-[#EC4899]" /> ₹1,500</span>
-          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-[#0284C7]" /> ₹1,000 PP</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-[#EF4444]" /> Obligation</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-[#06B6D4]" /> Sponsor</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-[#475569]" /> Blocked</span>

@@ -266,6 +266,7 @@ export async function allocateSponsorSeats(
         .update({
           sponsor_id: sponsorId,
           guest_name: customGuest,
+          sold: true,
           payment_status: 'received',
           updated_at: new Date().toISOString(),
         })
@@ -314,6 +315,7 @@ export async function deallocateSponsorSeat(seatId: string) {
         guest_phone: null,
         guest_email: null,
         pass_code: null,
+        sold: false,
         payment_status: 'pending',
         updated_at: new Date().toISOString(),
       })

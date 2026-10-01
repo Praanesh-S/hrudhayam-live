@@ -409,15 +409,13 @@ export async function saveLayoutPlan(
       band_3500: 0,
       band_2500: 0,
       band_1500: 0,
-      band_pp: 0,
     };
 
     for (const s of seatsUpdates) {
       if (s.category === 'b5000') bandCounts.band_5000++;
       else if (s.category === 'b3500') bandCounts.band_3500++;
       else if (s.category === 'b2500') bandCounts.band_2500++;
-      else if (s.category === 'b1500') bandCounts.band_1500++;
-      else if (s.category === 'pp') bandCounts.band_pp++;
+      else if (s.category === 'b1500' || s.category === 'pp') bandCounts.band_1500++;
     }
 
     // 5. Update bands table quotas
@@ -426,7 +424,6 @@ export async function saveLayoutPlan(
       adminClient.from('bands').update({ total_allocated: bandCounts.band_3500, total_capacity: bandCounts.band_3500, updated_at: now }).eq('id', 'band_3500'),
       adminClient.from('bands').update({ total_allocated: bandCounts.band_2500, total_capacity: bandCounts.band_2500, updated_at: now }).eq('id', 'band_2500'),
       adminClient.from('bands').update({ total_allocated: bandCounts.band_1500, total_capacity: bandCounts.band_1500, updated_at: now }).eq('id', 'band_1500'),
-      adminClient.from('bands').update({ total_allocated: bandCounts.band_pp, total_capacity: bandCounts.band_pp, updated_at: now }).eq('id', 'band_pp'),
     ]);
 
     // 6. Record layout plan committed audit log
@@ -1020,12 +1017,12 @@ export async function cancelPassBySystemAdmin(passId: string, reason: string) {
 
     if (passErr) throw passErr;
 
-    // Void payment
+    // Void payment and release UTR / reference_no
     await adminClient
       .from('payments')
       .update({
         status: 'pending',
-        reference_no: `CANCELLED: ${reason.trim()}`,
+        reference_no: null,
         updated_at: now,
       })
       .eq('pass_id', passId);

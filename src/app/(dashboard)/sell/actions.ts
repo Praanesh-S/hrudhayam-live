@@ -145,9 +145,13 @@ export async function issuePass(input: IssuePassInput) {
           .ilike('reference_no', cleanRef);
 
         if (existingPayments && existingPayments.length > 0) {
-          const activeDuplicate = existingPayments.find((p: any) => !p.passes || p.passes.status !== 'cancelled');
+          const activeDuplicate = existingPayments.find((p: any) => {
+            if (!p.passes) return true;
+            const passStatus = Array.isArray(p.passes) ? p.passes[0]?.status : p.passes?.status;
+            return passStatus !== 'cancelled';
+          });
           if (activeDuplicate) {
-            const pass = (activeDuplicate as any).passes;
+            const pass = Array.isArray(activeDuplicate.passes) ? activeDuplicate.passes[0] : activeDuplicate.passes;
             return {
               success: false,
               error: `Duplicate Reference ID: Transaction reference "${cleanRef}" has already been recorded for pass ${pass?.pass_code || ''} (${pass?.donor_name || 'recorded transaction'}). UPI and Cheque reference IDs must be unique.`
@@ -209,7 +213,6 @@ export async function issuePass(input: IssuePassInput) {
       band_3500: 'b3500',
       band_2500: 'b2500',
       band_1500: 'b1500',
-      band_pp: 'pp',
     };
     const category = bandCategoryMap[bandId];
 
@@ -513,12 +516,12 @@ export async function undoSale(passId: string, undoToken: string) {
 
     if (updateError) throw updateError;
 
-    // Void associated payments
+    // Void associated payments and release reference_no
     await adminClient
       .from('payments')
       .update({
         status: 'pending',
-        reference_no: 'CANCELLED_UNDO',
+        reference_no: null,
         updated_at: now.toISOString(),
       })
       .in('pass_id', passIds);
@@ -728,11 +731,14 @@ export async function markPendingPaymentReceived(
           .ilike('reference_no', cleanRef);
 
         if (existing && existing.length > 0) {
-          const foreignMatch = existing.find(
-            (p: any) => !ids.includes(p.id) && (!p.passes || p.passes.status !== 'cancelled')
-          );
+          const foreignMatch = existing.find((p: any) => {
+            if (ids.includes(p.id)) return false;
+            if (!p.passes) return true;
+            const passStatus = Array.isArray(p.passes) ? p.passes[0]?.status : p.passes?.status;
+            return passStatus !== 'cancelled';
+          });
           if (foreignMatch) {
-            const pass = (foreignMatch as any).passes;
+            const pass = Array.isArray(foreignMatch.passes) ? foreignMatch.passes[0] : foreignMatch.passes;
             return {
               success: false,
               error: `Duplicate Reference ID: "${cleanRef}" has already been recorded for pass ${pass?.pass_code || ''} (${pass?.donor_name || 'another transaction'}). Reference IDs must be unique.`
@@ -894,9 +900,13 @@ export async function checkPaymentReferenceUniquenessAction(
 
     const { data: existing } = await query;
     if (existing && existing.length > 0) {
-      const activeMatch = existing.find((p: any) => !p.passes || p.passes.status !== 'cancelled');
+      const activeMatch = existing.find((p: any) => {
+        if (!p.passes) return true;
+        const passStatus = Array.isArray(p.passes) ? p.passes[0]?.status : p.passes?.status;
+        return passStatus !== 'cancelled';
+      });
       if (activeMatch) {
-        const pass = (activeMatch as any).passes;
+        const pass = Array.isArray(activeMatch.passes) ? activeMatch.passes[0] : activeMatch.passes;
         return {
           isUnique: false,
           error: `Reference ID "${cleanRef}" has already been used in another transaction (${pass?.pass_code || 'Pass'} - ${pass?.donor_name || 'Donor'}). Reference IDs must be unique.`

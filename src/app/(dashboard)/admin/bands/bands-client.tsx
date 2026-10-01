@@ -39,7 +39,7 @@ const CATEGORY_META: Record<SeatCategory, { label: string; price: number; color:
   b3500: { label: '₹3,500 — Gold', price: 3500, color: '#8B5CF6', countsToRaise: true },
   b2500: { label: '₹2,500 — Silver', price: 2500, color: '#0D9488', countsToRaise: true },
   b1500: { label: '₹1,500 — Classic Value', price: 1500, color: '#EC4899', countsToRaise: true },
-  pp: { label: '₹1,500 — Paadarivom Padipparivom', price: 1500, color: '#0284C7', countsToRaise: true },
+  pp: { label: '₹1,500 — Classic Value', price: 1500, color: '#EC4899', countsToRaise: true },
   obligation: { label: 'Special Guest / Police / Corp', price: 0, color: '#EF4444', countsToRaise: false },
   sponsor_comp: { label: 'Sponsor comp', price: 0, color: '#06B6D4', countsToRaise: false },
   blocked: { label: 'Blocked', price: 0, color: '#475569', countsToRaise: false },
@@ -145,7 +145,6 @@ export function BandsClient({
       b3500: 0,
       b2500: 0,
       b1500: 0,
-      pp: 0,
     };
 
     const reservedCounts: Record<string, { count: number; named: number }> = {
@@ -167,7 +166,9 @@ export function BandsClient({
         if (s.section === 'Ground Floor') groundMoney += price;
         else balconyMoney += price;
 
-        if (soldCounts[s.category] !== undefined) {
+        if (s.category === 'pp') {
+          soldCounts.b1500++;
+        } else if (soldCounts[s.category] !== undefined) {
           soldCounts[s.category]++;
         }
       } else if (reservedCounts[s.category]) {
@@ -183,8 +184,7 @@ export function BandsClient({
       soldCounts.b5000 * 5000 +
       soldCounts.b3500 * 3500 +
       soldCounts.b2500 * 2500 +
-      soldCounts.b1500 * 1500 +
-      soldCounts.pp * 1500;
+      soldCounts.b1500 * 1500;
 
     return {
       groundMoney,
@@ -207,7 +207,6 @@ export function BandsClient({
       b3500: 'band_3500',
       b2500: 'band_2500',
       b1500: 'band_1500',
-      pp: 'band_pp',
     };
 
     for (const [cat, bId] of Object.entries(categoryToBandId)) {
@@ -549,7 +548,6 @@ export function BandsClient({
               <option value="b3500">₹3,500 — Gold</option>
               <option value="b2500">₹2,500 — Silver</option>
               <option value="b1500">₹1,500 — Classic Value</option>
-              <option value="pp">₹1,500 — Paadarivom Padipparivom</option>
               <option value="obligation">Obligation (Special Guest / Police / Corp)</option>
               <option value="sponsor_comp">Sponsor comp</option>
               <option value="blocked">Blocked</option>
@@ -760,33 +758,6 @@ export function BandsClient({
                         {sold} sold
                       </span>
                       <span className="font-mono font-bold text-white">/ {summary.soldCounts.b1500}</span>
-                    </div>
-                  </button>
-                );
-              })()}
-
-              {/* PP */}
-              {(() => {
-                const b = bands.find((x) => x.id === 'band_pp' || x.id.includes('pp'));
-                const sold = b?.sold_count || 0;
-                const isSelected = isolatedFilter === 'pp';
-                return (
-                  <button
-                    type="button"
-                    onClick={() => setIsolatedFilter(isSelected ? 'all' : 'pp')}
-                    className={cn(
-                      "w-full flex justify-between items-center text-left p-1.5 rounded-xl transition-all cursor-pointer",
-                      isSelected ? "bg-sky-500/20 ring-1 ring-sky-400" : "hover:bg-slate-800/40"
-                    )}
-                  >
-                    <span className="flex items-center gap-1.5 font-bold text-white">
-                      <span className="w-2.5 h-2.5 rounded-xs bg-[#0284C7]" /> ₹1,500 PP
-                    </span>
-                    <div className="text-right flex items-center gap-1.5">
-                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold text-[10px]">
-                        {sold} sold
-                      </span>
-                      <span className="font-mono font-bold text-white">/ {summary.soldCounts.pp}</span>
                     </div>
                   </button>
                 );

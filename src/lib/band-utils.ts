@@ -153,7 +153,7 @@ export async function generateUniquePassCode(supabase: SupabaseClient): Promise<
  * Rule R7: Participating clubs are ring-fenced and excluded from competition/revenue calculations.
  */
 export async function fetchEventSummaryMetrics(supabase: SupabaseClient) {
-  const [bands, passesRes, sponsorsRes, protectedRes, settingsRes, clubsRes] = await Promise.all([
+  const [bands, passesRes, sponsorsRes, protectedRes, settingsRes, clubsRes, sponsorSeatsRes] = await Promise.all([
     fetchBandsWithMetrics(supabase),
     supabase
       .from('passes')
@@ -172,6 +172,10 @@ export async function fetchEventSummaryMetrics(supabase: SupabaseClient) {
     supabase
       .from('participating_clubs')
       .select('id, entry_fee, passes_value, net_contribution'),
+    supabase
+      .from('seats')
+      .select('id, sponsor_id')
+      .not('sponsor_id', 'is', null),
   ]);
 
   const allPasses = passesRes.data || [];
@@ -186,6 +190,7 @@ export async function fetchEventSummaryMetrics(supabase: SupabaseClient) {
   const clubSold = clubPasses.length;
   const totalRemaining = bands.reduce((sum, b) => sum + (b.remaining_count || 0), 0);
   const totalCheckedIn = allPasses.filter(p => p.status === 'used').length;
+  const allocatedSponsorSeats = sponsorSeatsRes.data?.length || 0;
 
   let totalPassesCollected = 0;
   let totalPassesPending = 0;
@@ -233,6 +238,7 @@ export async function fetchEventSummaryMetrics(supabase: SupabaseClient) {
     clubSold,
     totalRemaining,
     totalCheckedIn,
+    allocatedSponsorSeats,
     totalPassesCollected,
     totalPassesPending,
     sponsorsReceived,

@@ -66,10 +66,6 @@ export async function addParticipatingClub(input: AddClubInput) {
 
     for (const item of passesMix) {
       if (item.count > 0) {
-        if (item.bandId === 'band_pp') {
-          return { success: false, error: 'Programme Pass (PP) is not available for participating club complimentary passes.' };
-        }
-
         const band = bandMap.get(item.bandId);
         if (!band) {
           return { success: false, error: `Invalid band ID: ${item.bandId}` };

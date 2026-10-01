@@ -107,7 +107,7 @@ export async function deletePassAction(
         .from('payments')
         .update({
           status: 'pending',
-          reference_no: `CANCELLED: ${reason}`,
+          reference_no: null,
           updated_at: now,
         })
         .eq('pass_id', passId);

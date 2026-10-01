@@ -33,8 +33,7 @@ interface ClubsClientProps {
 export function ClubsClient({ clubs, bands, members }: ClubsClientProps) {
   const [showAddForm, setShowAddForm] = useState(false);
 
-  // Exclude PP from participating club complimentary passes per specification
-  const eligibleBands = bands.filter((b) => b.id !== 'band_pp');
+  const eligibleBands = bands;
 
   // Form fields
   const [clubName, setClubName] = useState('');

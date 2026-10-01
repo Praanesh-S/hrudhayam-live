@@ -70,8 +70,8 @@ export default async function SellPage() {
     membersQuery = membersQuery.order('group_id');
   }
 
-  // 2. Fetch in parallel: bands, sellers, active holds, venue seats, and pending payments
-  const [bands, membersRes, activeHoldsRes, seats, pendingPaymentsRes] = await Promise.all([
+  // 2. Fetch in parallel: bands, sellers, active holds, venue seats, pending payments, and UPI settings
+  const [bands, membersRes, activeHoldsRes, seats, pendingPaymentsRes, upiRes] = await Promise.all([
     fetchBandsWithMetrics(adminClient),
     membersQuery,
     adminClient
@@ -119,7 +119,14 @@ export default async function SellPage() {
       .eq('status', 'pending')
       .neq('pass.status', 'cancelled')
       .order('created_at', { ascending: false }),
+    adminClient
+      .from('system_settings')
+      .select('value')
+      .eq('key', 'upi_vpa')
+      .maybeSingle(),
   ]);
+
+  const upiVpa = String(upiRes?.data?.value || 'hrudhayamlive@indianbank').replace(/"/g, '');
 
   const eligibleSellers = membersRes.data || [];
   const activeHolds = activeHoldsRes.data || [];
@@ -183,6 +190,7 @@ export default async function SellPage() {
         currentUser={user}
         initialHolds={activeHolds || []}
         pendingSales={pendingSales}
+        upiVpa={upiVpa}
       />
     </div>
   );
