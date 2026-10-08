@@ -3,6 +3,7 @@ import { getSessionUser } from '@/lib/auth/session';
 import { createAdminClient } from '@/lib/supabase/admin';
 import ExcelJS from 'exceljs';
 import { fetchBandsWithMetrics } from '@/lib/band-utils';
+import { fetchAllPaginated } from '@/lib/db-utils';
 
 export async function GET() {
   try {
@@ -14,17 +15,20 @@ export async function GET() {
     const adminClient = createAdminClient();
 
     // Fetch all tables
-    const [bands, passesRes, membersRes, sponsorsRes, clubsRes] = await Promise.all([
+    const [bands, passes, membersRes, sponsorsRes, clubsRes] = await Promise.all([
       fetchBandsWithMetrics(adminClient),
-      adminClient
-        .from('passes')
-        .select(`
-          *,
-          band:bands(label, price),
-          seller:members(full_name, groups(name)),
-          payments(mode, amount, reference_no, status)
-        `)
-        .order('created_at', { ascending: false }),
+      fetchAllPaginated((from, to) =>
+        adminClient
+          .from('passes')
+          .select(`
+            *,
+            band:bands(label, price),
+            seller:members(full_name, groups(name)),
+            payments(mode, amount, reference_no, status)
+          `, { count: 'exact' })
+          .order('created_at', { ascending: false })
+          .range(from, to)
+      ),
       adminClient
         .from('members')
         .select('*, groups(name)')
@@ -39,8 +43,6 @@ export async function GET() {
         .select('*')
         .order('created_at'),
     ]);
-
-    const passes = passesRes.data || [];
     const members = membersRes.data || [];
     const sponsors = sponsorsRes.data || [];
     const clubs = clubsRes.data || [];

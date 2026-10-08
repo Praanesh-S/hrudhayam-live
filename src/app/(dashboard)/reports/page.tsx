@@ -4,6 +4,7 @@ import { requireUser } from '@/lib/auth/guards';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { ReportsClient } from './reports-client';
 import { fetchBandsWithMetrics } from '@/lib/band-utils';
+import { fetchAllPaginated } from '@/lib/db-utils';
 
 export const metadata = {
   title: 'Reports & Reconciliation | Hrudhayam LIVE',
@@ -14,17 +15,20 @@ export default async function ReportsPage() {
   const adminClient = createAdminClient();
 
   // Fetch all reports data in parallel
-  const [bands, passesRes, groupsRes, membersRes, sponsorsRes, clubsRes] = await Promise.all([
+  const [bands, passes, groupsRes, membersRes, sponsorsRes, clubsRes] = await Promise.all([
     fetchBandsWithMetrics(adminClient),
-    adminClient
-      .from('passes')
-      .select(`
-        *,
-        band:bands(*),
-        seller:members(id, full_name, group_id, group:groups(name)),
-        payment:payments(*)
-      `)
-      .order('created_at', { ascending: false }),
+    fetchAllPaginated((from, to) =>
+      adminClient
+        .from('passes')
+        .select(`
+          *,
+          band:bands(*),
+          seller:members(id, full_name, group_id, group:groups(name)),
+          payment:payments(*)
+        `, { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .range(from, to)
+    ),
     adminClient
       .from('groups')
       .select('*')
@@ -44,7 +48,6 @@ export default async function ReportsPage() {
       .order('created_at', { ascending: false }),
   ]);
 
-  const passes = passesRes.data || [];
   const groups = groupsRes.data || [];
   const members = membersRes.data || [];
   const sponsors = sponsorsRes.data || [];

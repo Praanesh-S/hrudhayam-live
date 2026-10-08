@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { requireSuperOrSystemAdmin } from '@/lib/auth/guards';
 import { logAudit } from '@/lib/audit';
 import { revalidatePath } from 'next/cache';
+import { fetchAllPaginated } from '@/lib/db-utils';
 
 /**
  * Super Admin Prize Snapshot (§19.8).
@@ -19,10 +20,16 @@ export async function takePrizeSnapshot(name: string) {
     }
 
     // 1. Fetch live members & groups
-    const [{ data: members }, { data: groups }, { data: passes }, { data: sponsors }] = await Promise.all([
+    const [{ data: members }, { data: groups }, passes, { data: sponsors }] = await Promise.all([
       adminClient.from('members').select('id, full_name, group_id, is_group_admin, is_active').eq('is_active', true),
       adminClient.from('groups').select('id, name'),
-      adminClient.from('passes').select('seller_member_id, status, source, payments(amount, status)').neq('status', 'cancelled'),
+      fetchAllPaginated((from, to) =>
+        adminClient
+          .from('passes')
+          .select('seller_member_id, status, source, payments(amount, status)', { count: 'exact' })
+          .neq('status', 'cancelled')
+          .range(from, to)
+      ),
       adminClient.from('sponsors').select('brought_by_member_id, amount, status'),
     ]);
 

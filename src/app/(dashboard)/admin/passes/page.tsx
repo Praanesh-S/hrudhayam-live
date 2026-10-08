@@ -4,6 +4,7 @@ import { getSessionUser } from '@/lib/auth/session';
 import { redirect } from 'next/navigation';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { AdminPassesClient } from './passes-client';
+import { fetchAllPaginated } from '@/lib/db-utils';
 
 export const metadata = {
   title: 'Pass Operations (System Admin) | Hrudhayam LIVE',
@@ -24,17 +25,19 @@ export default async function AdminPassesPage() {
     .select('id, label, price, total_allocated, sort_order')
     .order('sort_order');
 
-  // Fetch recent passes
-  const { data: recentPasses } = await adminClient
-    .from('passes')
-    .select(`
-      *,
-      band:bands(id, label, price),
-      seller:members(id, full_name, groups(name)),
-      payments(id, mode, amount, reference_no, status)
-    `)
-    .order('created_at', { ascending: false })
-    .limit(1000);
+  // Fetch all passes (paginated to bypass 1,000 row server limit)
+  const recentPasses = await fetchAllPaginated((from, to) =>
+    adminClient
+      .from('passes')
+      .select(`
+        *,
+        band:bands(id, label, price),
+        seller:members(id, full_name, groups(name)),
+        payments(id, mode, amount, reference_no, status)
+      `, { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(from, to)
+  );
 
   return (
     <div className="flex flex-col gap-6 max-w-5xl mx-auto pb-16">

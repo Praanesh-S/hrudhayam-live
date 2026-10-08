@@ -1,6 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { Band } from './types';
 import crypto from 'crypto';
+import { fetchAllPaginated } from './db-utils';
 
 /**
  * Fetch all bands with live aggregated metrics derived from passes, payments, and soft holds.
@@ -18,24 +19,23 @@ export async function fetchBandsWithMetrics(supabase: SupabaseClient): Promise<B
     return [];
   }
 
-  // 2. Fetch active passes
-  const { data: passesData, error: passesError } = await supabase
-    .from('passes')
-    .select(`
-      id,
-      band_id,
-      price,
-      status,
-      payments (
-        amount,
-        status
-      )
-    `)
-    .neq('status', 'cancelled');
-
-  if (passesError) {
-    console.error('Error fetching passes for metrics:', passesError);
-  }
+  // 2. Fetch active passes (paginated to bypass PostgREST 1,000 row server limit)
+  const activePasses = await fetchAllPaginated((from, to) =>
+    supabase
+      .from('passes')
+      .select(`
+        id,
+        band_id,
+        price,
+        status,
+        payments (
+          amount,
+          status
+        )
+      `, { count: 'exact' })
+      .neq('status', 'cancelled')
+      .range(from, to)
+  );
 
   // 3. Fetch active soft holds
   const nowIso = new Date().toISOString();
@@ -49,7 +49,6 @@ export async function fetchBandsWithMetrics(supabase: SupabaseClient): Promise<B
     console.error('Error fetching soft holds for metrics:', holdsError);
   }
 
-  const activePasses = passesData || [];
   const activeHolds = holdsData || [];
 
   // Group passes by band_id
@@ -153,12 +152,15 @@ export async function generateUniquePassCode(supabase: SupabaseClient): Promise<
  * Rule R7: Participating clubs are ring-fenced and excluded from competition/revenue calculations.
  */
 export async function fetchEventSummaryMetrics(supabase: SupabaseClient) {
-  const [bands, passesRes, sponsorsRes, protectedRes, settingsRes, clubsRes, sponsorSeatsRes] = await Promise.all([
+  const [bands, allPasses, sponsorsRes, protectedRes, settingsRes, clubsRes, sponsorSeatsRes] = await Promise.all([
     fetchBandsWithMetrics(supabase),
-    supabase
-      .from('passes')
-      .select('id, status, source, payments(amount, status)')
-      .neq('status', 'cancelled'),
+    fetchAllPaginated((from, to) =>
+      supabase
+        .from('passes')
+        .select('id, status, source, payments(amount, status)', { count: 'exact' })
+        .neq('status', 'cancelled')
+        .range(from, to)
+    ),
     supabase
       .from('sponsors')
       .select('id, amount, status'),
@@ -178,7 +180,6 @@ export async function fetchEventSummaryMetrics(supabase: SupabaseClient) {
       .not('sponsor_id', 'is', null),
   ]);
 
-  const allPasses = passesRes.data || [];
   // Exclude participating club passes from member competition metrics per §11
   const normalPasses = allPasses.filter(p => p.source !== 'participating_club');
   const clubPasses = allPasses.filter(p => p.source === 'participating_club');

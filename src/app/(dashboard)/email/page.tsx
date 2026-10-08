@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic';
 import { requireUser } from '@/lib/auth/guards';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { WhatsAppHubClient } from './email-client';
+import { fetchAllPaginated } from '@/lib/db-utils';
 
 export const metadata = {
   title: 'WhatsApp Communications Hub | Hrudhayam LIVE',
@@ -40,43 +41,45 @@ export default async function EmailPage() {
     .select('*')
     .order('sort_order', { ascending: true });
 
-  // 5. Fetch all passes with donor details
-  let passesQuery = adminClient
-    .from('passes')
-    .select(`
-      id,
-      pass_code,
-      physical_serial,
-      serial_no,
-      donor_name,
-      donor_phone,
-      donor_email,
-      band_id,
-      row_label,
-      created_at,
-      bands (
+  // 5. Fetch all passes with donor details (paginated to support > 1000 passes)
+  const passes = await fetchAllPaginated((from, to) => {
+    let passesQuery = adminClient
+      .from('passes')
+      .select(`
         id,
-        label,
-        price
-      ),
-      seller:members (
-        id,
-        full_name,
-        group_id,
-        groups (
+        pass_code,
+        physical_serial,
+        serial_no,
+        donor_name,
+        donor_phone,
+        donor_email,
+        band_id,
+        row_label,
+        created_at,
+        bands (
           id,
-          name
+          label,
+          price
+        ),
+        seller:members (
+          id,
+          full_name,
+          group_id,
+          groups (
+            id,
+            name
+          )
         )
-      )
-    `)
-    .neq('status', 'cancelled')
-    .order('created_at', { ascending: false });
+      `, { count: 'exact' })
+      .neq('status', 'cancelled')
+      .order('created_at', { ascending: false });
 
-  if (!isSuperAdmin && user.groupId) {
-    passesQuery = passesQuery.eq('seller.group_id', user.groupId);
-  }
+    if (!isSuperAdmin && user.groupId) {
+      passesQuery = passesQuery.eq('seller.group_id', user.groupId);
+    }
 
-  const { data: passes } = await passesQuery;
+    return passesQuery.range(from, to);
+  });
 
   // 6. Fetch recent logged campaigns
   const { data: recentCampaigns } = await adminClient

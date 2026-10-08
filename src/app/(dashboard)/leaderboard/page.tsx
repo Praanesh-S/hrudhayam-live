@@ -4,6 +4,7 @@ import { getSessionUser } from '@/lib/auth/session';
 import { redirect } from 'next/navigation';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { LeaderboardClient } from './leaderboard-client';
+import { fetchAllPaginated } from '@/lib/db-utils';
 
 export const metadata = {
   title: 'Competition Leaderboard | Hrudhayam LIVE',
@@ -16,10 +17,16 @@ export default async function LeaderboardPage() {
   const adminClient = createAdminClient();
 
   // 1. Fetch members & groups
-  const [{ data: members }, { data: groups }, { data: passes }, { data: sponsors }, { data: snapshots }] = await Promise.all([
+  const [{ data: members }, { data: groups }, passes, { data: sponsors }, { data: snapshots }] = await Promise.all([
     adminClient.from('members').select('id, full_name, group_id, is_group_admin, is_active').eq('is_active', true),
     adminClient.from('groups').select('id, name').order('id'),
-    adminClient.from('passes').select('seller_member_id, status, source, payments(amount, status)').neq('status', 'cancelled'),
+    fetchAllPaginated((from, to) =>
+      adminClient
+        .from('passes')
+        .select('seller_member_id, status, source, payments(amount, status)', { count: 'exact' })
+        .neq('status', 'cancelled')
+        .range(from, to)
+    ),
     adminClient.from('sponsors').select('brought_by_member_id, amount, status'),
     adminClient.from('leaderboard_snapshots').select('*').order('taken_at', { ascending: false }),
   ]);

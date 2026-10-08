@@ -4,6 +4,7 @@ import { getSessionUser } from '@/lib/auth/session';
 import { redirect } from 'next/navigation';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { PaymentsClient } from './payments-client';
+import { fetchAllPaginated } from '@/lib/db-utils';
 
 export const metadata = {
   title: 'Payments & Collections | Hrudhayam LIVE',
@@ -15,35 +16,38 @@ export default async function PaymentsPage() {
 
   const adminClient = createAdminClient();
 
-  // Fetch payments with linked pass, sponsor, and club
-  const { data: paymentsData } = await adminClient
-    .from('payments')
-    .select(`
-      *,
-      pass:passes(
-        id,
-        pass_code,
-        donor_name,
-        donor_phone,
-        status,
-        band:bands(label)
-      ),
-      sponsor:sponsors(
-        id,
-        sponsor_name,
-        contact_name,
-        contact_phone,
-        tier,
-        status
-      ),
-      club:participating_clubs(
-        id,
-        club_name,
-        contact_name,
-        contact_phone
-      )
-    `)
-    .order('created_at', { ascending: false });
+  // Fetch payments with linked pass, sponsor, and club (paginated to handle > 1000 rows)
+  const paymentsData = await fetchAllPaginated((from, to) =>
+    adminClient
+      .from('payments')
+      .select(`
+        *,
+        pass:passes(
+          id,
+          pass_code,
+          donor_name,
+          donor_phone,
+          status,
+          band:bands(label)
+        ),
+        sponsor:sponsors(
+          id,
+          sponsor_name,
+          contact_name,
+          contact_phone,
+          tier,
+          status
+        ),
+        club:participating_clubs(
+          id,
+          club_name,
+          contact_name,
+          contact_phone
+        )
+      `, { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(from, to)
+  );
 
   // Fetch UPI VPA from settings
   const { data: upiSetting } = await adminClient

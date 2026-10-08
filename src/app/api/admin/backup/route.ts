@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth/session';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { fetchAllPaginated } from '@/lib/db-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -64,31 +65,39 @@ export async function GET(request: Request) {
       return NextResponse.json({ success: true, backups });
     }
 
-    // 2. Fetch all critical tables in parallel (including participating_clubs)
+    // 2. Fetch all critical tables in parallel (paginated for large tables: seats, passes, payments, audit_logs)
     const [
       bandsRes,
       rowsRes,
-      seatsRes,
-      passesRes,
-      paymentsRes,
+      seatsData,
+      passesData,
+      paymentsData,
       sponsorsRes,
       clubsRes,
       membersRes,
       groupsRes,
       protectedBlocksRes,
-      auditLogsRes,
+      auditLogsData,
     ] = await Promise.all([
       adminClient.from('bands').select('*').order('price', { ascending: false }),
       adminClient.from('rows').select('*').order('display_order', { ascending: true }),
-      adminClient.from('seats').select('*').order('seat_number', { ascending: true }),
-      adminClient.from('passes').select('*').order('created_at', { ascending: false }),
-      adminClient.from('payments').select('*').order('created_at', { ascending: false }),
+      fetchAllPaginated((from, to) =>
+        adminClient.from('seats').select('*', { count: 'exact' }).order('seat_number', { ascending: true }).range(from, to)
+      ),
+      fetchAllPaginated((from, to) =>
+        adminClient.from('passes').select('*', { count: 'exact' }).order('created_at', { ascending: false }).range(from, to)
+      ),
+      fetchAllPaginated((from, to) =>
+        adminClient.from('payments').select('*', { count: 'exact' }).order('created_at', { ascending: false }).range(from, to)
+      ),
       adminClient.from('sponsors').select('*').order('created_at', { ascending: false }),
       adminClient.from('participating_clubs').select('*').order('created_at', { ascending: false }),
       adminClient.from('members').select('*').order('created_at', { ascending: false }),
       adminClient.from('groups').select('*').order('name', { ascending: true }),
       adminClient.from('protected_blocks').select('*').order('created_at', { ascending: false }),
-      adminClient.from('audit_logs').select('*').order('created_at', { ascending: false }).limit(2000),
+      fetchAllPaginated((from, to) =>
+        adminClient.from('audit_logs').select('*', { count: 'exact' }).order('created_at', { ascending: false }).range(from, to)
+      ),
     ]);
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -105,28 +114,28 @@ export async function GET(request: Request) {
       counts: {
         bands: bandsRes.data?.length || 0,
         rows: rowsRes.data?.length || 0,
-        seats: seatsRes.data?.length || 0,
-        passes: passesRes.data?.length || 0,
-        payments: paymentsRes.data?.length || 0,
+        seats: seatsData.length,
+        passes: passesData.length,
+        payments: paymentsData.length,
         sponsors: sponsorsRes.data?.length || 0,
         participating_clubs: clubsRes.data?.length || 0,
         members: membersRes.data?.length || 0,
         groups: groupsRes.data?.length || 0,
         protected_blocks: protectedBlocksRes.data?.length || 0,
-        audit_logs: auditLogsRes.data?.length || 0,
+        audit_logs: auditLogsData.length,
       },
       data: {
         bands: bandsRes.data || [],
         rows: rowsRes.data || [],
-        seats: seatsRes.data || [],
-        passes: passesRes.data || [],
-        payments: paymentsRes.data || [],
+        seats: seatsData,
+        passes: passesData,
+        payments: paymentsData,
         sponsors: sponsorsRes.data || [],
         participating_clubs: clubsRes.data || [],
         members: membersRes.data || [],
         groups: groupsRes.data || [],
         protected_blocks: protectedBlocksRes.data || [],
-        audit_logs: auditLogsRes.data || [],
+        audit_logs: auditLogsData,
       },
     };
 

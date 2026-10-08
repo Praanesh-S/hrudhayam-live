@@ -1,4 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js';
+import { fetchAllPaginated } from './db-utils';
 
 export interface TeamMetric {
   groupId: number;
@@ -23,36 +24,37 @@ export async function fetchTeamMetrics(supabase: SupabaseClient): Promise<TeamMe
   const [
     { data: groupsData, error: groupsErr },
     { data: membersData, error: membersErr },
-    { data: passesData, error: passesErr },
+    passes,
   ] = await Promise.all([
     supabase.from('groups').select('id, name').order('id', { ascending: true }),
     supabase
       .from('members')
       .select('id, full_name, group_id, is_group_admin, is_active')
       .eq('is_active', true),
-    supabase
-      .from('passes')
-      .select(`
-        id,
-        seller_member_id,
-        price,
-        status,
-        source,
-        payments (
-          amount,
-          status
-        )
-      `)
-      .neq('status', 'cancelled'),
+    fetchAllPaginated((from, to) =>
+      supabase
+        .from('passes')
+        .select(`
+          id,
+          seller_member_id,
+          price,
+          status,
+          source,
+          payments (
+            amount,
+            status
+          )
+        `, { count: 'exact' })
+        .neq('status', 'cancelled')
+        .range(from, to)
+    ),
   ]);
 
   if (groupsErr) console.error('Error fetching groups for team metrics:', groupsErr);
   if (membersErr) console.error('Error fetching members for team metrics:', membersErr);
-  if (passesErr) console.error('Error fetching passes for team metrics:', passesErr);
 
   const groups = groupsData || [];
   const members = membersData || [];
-  const passes = passesData || [];
 
   // Map member ID to member object (current team assignment)
   const memberMap = new Map<number, (typeof members)[0]>();
