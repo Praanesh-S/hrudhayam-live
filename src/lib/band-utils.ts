@@ -248,6 +248,7 @@ export async function fetchEventSummaryMetrics(supabase: SupabaseClient) {
     totalCollected,
     totalPending,
     totalRaised,
+    totalCollectable: totalCollected + totalPending,
     totalProtectedSeats,
     stationCost,
     targetStations,

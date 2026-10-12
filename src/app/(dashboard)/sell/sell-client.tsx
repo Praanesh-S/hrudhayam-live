@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import { Band, PaymentMode, PaymentStatus, SeatData } from '@/lib/types';
 import { AuthUser } from '@/lib/auth/session';
-import { issuePass, undoSale, checkDonorPassCount, markPendingPaymentReceived, checkPaymentReferenceUniquenessAction } from './actions';
+import { issuePass, undoSale, checkDonorPassCount, markPendingPaymentReceived, checkPaymentReferenceUniquenessAction, updatePendingSaleAmount } from './actions';
 import { updatePassDonorDetails } from '@/app/(dashboard)/guests/actions';
 import { numberToIndianWords } from '@/lib/format-utils';
 import { getWhatsAppUrl, formatPendingPaymentReminder } from '@/lib/whatsapp';
@@ -132,10 +133,19 @@ export function SellClient({
   const [inlineMode, setInlineMode] = useState<PaymentMode>('upi');
   const [isMarkingReceived, setIsMarkingReceived] = useState<boolean>(false);
 
-  // Edit Donor modal state
+  const router = useRouter();
+
+  // Edit Pending Payment Amount modal state
+  const [editingAmountSale, setEditingAmountSale] = useState<PendingSaleItem | null>(null);
+  const [newAmountInput, setNewAmountInput] = useState<string>('');
+  const [amountReasonInput, setAmountReasonInput] = useState<string>('');
+  const [isSavingAmount, setIsSavingAmount] = useState<boolean>(false);
+
+  // Edit Donor modal state (supports name, phone, and amount)
   const [editingSale, setEditingSale] = useState<PendingSaleItem | null>(null);
   const [editDonorName, setEditDonorName] = useState<string>('');
   const [editDonorPhone, setEditDonorPhone] = useState<string>('');
+  const [editDonorAmount, setEditDonorAmount] = useState<string>('');
   const [isSavingEdit, setIsSavingEdit] = useState<boolean>(false);
 
   // Ensure default selected band is valid
@@ -501,7 +511,49 @@ export function SellClient({
     }
   };
 
-  // Handle Save Edited Donor Details
+  // Open dedicated Edit Amount dialog
+  const handleOpenEditAmount = (sale: PendingSaleItem) => {
+    setEditingAmountSale(sale);
+    setNewAmountInput(String(sale.total_amount));
+    setAmountReasonInput('');
+  };
+
+  // Save updated amount
+  const handleSaveAmount = async () => {
+    if (!editingAmountSale) return;
+    const parsedAmount = Math.max(0, Math.round(Number(newAmountInput)));
+    if (isNaN(parsedAmount)) {
+      toast.error('Please enter a valid amount (₹).');
+      return;
+    }
+
+    setIsSavingAmount(true);
+    try {
+      const res = await updatePendingSaleAmount(
+        editingAmountSale.payment_ids,
+        parsedAmount,
+        amountReasonInput
+      );
+      if (res.success) {
+        toast.success(`Pending amount for ${editingAmountSale.donor_name} updated to ₹${parsedAmount.toLocaleString('en-IN')}`);
+        setPendingSales((prev) =>
+          prev.map((s) =>
+            s.id === editingAmountSale.id ? { ...s, total_amount: parsedAmount } : s
+          )
+        );
+        setEditingAmountSale(null);
+        router.refresh();
+      } else {
+        toast.error(res.error || 'Failed to update pending amount.');
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Error updating amount.');
+    } finally {
+      setIsSavingAmount(false);
+    }
+  };
+
+  // Handle Save Edited Donor Details (also updates amount if adjusted)
   const handleSaveDonorEdit = async () => {
     if (!editingSale) return;
     if (!editDonorName.trim() || !editDonorPhone.trim()) {
@@ -522,16 +574,40 @@ export function SellClient({
           break;
         }
       }
+
+      let updatedAmount = editingSale.total_amount;
+      if (editDonorAmount !== '' && !isNaN(Number(editDonorAmount))) {
+        const parsedAmount = Math.max(0, Math.round(Number(editDonorAmount)));
+        if (parsedAmount !== editingSale.total_amount) {
+          const amountRes = await updatePendingSaleAmount(
+            editingSale.payment_ids,
+            parsedAmount,
+            'Edited from donor details modal'
+          );
+          if (amountRes.success) {
+            updatedAmount = parsedAmount;
+          } else {
+            toast.error(amountRes.error || 'Failed to update amount.');
+          }
+        }
+      }
+
       if (allGood) {
-        toast.success('Donor details updated.');
+        toast.success('Sale details updated successfully.');
         setPendingSales((prev) =>
           prev.map((s) =>
             s.id === editingSale.id
-              ? { ...s, donor_name: editDonorName.trim(), donor_phone: editDonorPhone.trim() }
+              ? {
+                  ...s,
+                  donor_name: editDonorName.trim(),
+                  donor_phone: editDonorPhone.trim(),
+                  total_amount: updatedAmount,
+                }
               : s
           )
         );
         setEditingSale(null);
+        router.refresh();
       }
     } catch (err: any) {
       toast.error(err.message || 'Could not update details.');
@@ -1309,9 +1385,19 @@ export function SellClient({
                           </div>
                         </div>
 
-                        <span className="text-2xl font-black text-amber-400 tracking-tight shrink-0">
-                          ₹{sale.total_amount.toLocaleString('en-IN')}
-                        </span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-2xl font-black text-amber-400 tracking-tight font-mono">
+                            ₹{sale.total_amount.toLocaleString('en-IN')}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditAmount(sale)}
+                            className="p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 transition-all cursor-pointer"
+                            title="Edit pending amount to collect"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
 
                       {/* Card Action Buttons */}
@@ -1327,6 +1413,16 @@ export function SellClient({
                             className="h-10 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md shadow-emerald-950/30 cursor-pointer"
                           >
                             Mark received
+                          </Button>
+
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => handleOpenEditAmount(sale)}
+                            className="h-10 px-3.5 border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-xs font-bold rounded-xl gap-1.5 cursor-pointer shadow-sm"
+                          >
+                            <CreditCard className="w-3.5 h-3.5 text-amber-400" />
+                            <span>Edit amount (₹)</span>
                           </Button>
 
                           <Button
@@ -1373,6 +1469,7 @@ export function SellClient({
                               setEditingSale(sale);
                               setEditDonorName(sale.donor_name);
                               setEditDonorPhone(sale.donor_phone);
+                              setEditDonorAmount(String(sale.total_amount));
                             }}
                             className="h-10 px-4 border-slate-800 bg-[#102030] hover:bg-slate-800 text-slate-300 text-xs font-semibold rounded-xl cursor-pointer"
                           >
@@ -1509,10 +1606,10 @@ export function SellClient({
         <DialogContent className="bg-[#102030] border border-slate-800 text-white max-w-md rounded-2xl">
           <DialogHeader>
             <DialogTitle className="text-lg font-black text-white">
-              Edit Donor Details
+              Edit Donor & Payment Details
             </DialogTitle>
             <DialogDescription className="text-slate-400 text-xs mt-1">
-              Update name and mobile number for this pending sale.
+              Update name, mobile number, and pending amount for this sale.
             </DialogDescription>
           </DialogHeader>
 
@@ -1534,6 +1631,34 @@ export function SellClient({
                 className="h-11 bg-[#0B1724] border-slate-800 text-white rounded-xl"
               />
             </div>
+
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center">
+                <Label className="text-xs font-semibold text-slate-200">Pending Amount to Collect (₹)</Label>
+                <button
+                  type="button"
+                  onClick={() => setEditDonorAmount('0')}
+                  className="text-[11px] text-purple-400 hover:text-purple-300 font-bold"
+                >
+                  Set Complimentary (₹0)
+                </button>
+              </div>
+              <div className="relative">
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">₹</span>
+                <Input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={editDonorAmount}
+                  onChange={(e) => setEditDonorAmount(e.target.value)}
+                  className="h-11 pl-8 bg-[#0B1724] border-slate-800 text-amber-400 font-mono font-bold text-base rounded-xl"
+                  placeholder="0 for complimentary"
+                />
+              </div>
+              <p className="text-[11px] text-slate-400">
+                Adjust receivable amount for discount or set ₹0 for complimentary.
+              </p>
+            </div>
           </div>
 
           <DialogFooter>
@@ -1553,6 +1678,127 @@ export function SellClient({
             >
               {isSavingEdit ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
               Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dedicated Adjust Pending Payment Amount Dialog */}
+      <Dialog open={!!editingAmountSale} onOpenChange={(open) => !open && setEditingAmountSale(null)}>
+        <DialogContent className="bg-[#102030] border border-slate-800 text-white max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-black text-white flex items-center gap-2">
+              <CreditCard className="w-5 h-5 text-amber-400" />
+              <span>Adjust Pending Payment Amount</span>
+            </DialogTitle>
+            <DialogDescription className="text-slate-400 text-xs mt-1">
+              Change receivable amount for <strong>{editingAmountSale?.donor_name}</strong> ({editingAmountSale?.quantity} pass{editingAmountSale?.quantity && editingAmountSale.quantity > 1 ? 'es' : ''} · {editingAmountSale?.band_label}).
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Current / Standard Details */}
+            <div className="p-3 bg-[#0B1724] rounded-xl border border-slate-800/80 space-y-1.5 text-xs">
+              <div className="flex justify-between text-slate-400">
+                <span>Standard Quota Price:</span>
+                <span className="font-mono text-slate-300">
+                  ₹{((editingAmountSale?.band_price || 0) * (editingAmountSale?.quantity || 1)).toLocaleString('en-IN')}
+                </span>
+              </div>
+              <div className="flex justify-between text-slate-400">
+                <span>Currently Recorded Pending:</span>
+                <span className="font-mono text-amber-400 font-bold">
+                  ₹{editingAmountSale?.total_amount.toLocaleString('en-IN')}
+                </span>
+              </div>
+            </div>
+
+            {/* New Amount Input */}
+            <div className="space-y-2">
+              <Label className="text-xs font-bold text-slate-200">
+                New Amount to Collect (₹) <span className="text-red-400">*</span>
+              </Label>
+              <div className="relative">
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-base">₹</span>
+                <Input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={newAmountInput}
+                  onChange={(e) => setNewAmountInput(e.target.value)}
+                  className="h-12 pl-8 bg-[#0B1724] border-slate-700 text-white font-mono text-lg font-bold rounded-xl focus:border-amber-500"
+                  placeholder="0 for complimentary"
+                  autoFocus
+                />
+              </div>
+
+              {/* Quick preset pills */}
+              <div className="flex flex-wrap gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setNewAmountInput('0')}
+                  className="px-2.5 py-1 rounded-lg text-xs font-bold bg-purple-950/60 border border-purple-700/50 text-purple-300 hover:bg-purple-900/60 transition-colors cursor-pointer"
+                >
+                  🎁 Complimentary (₹0)
+                </button>
+                {editingAmountSale && (editingAmountSale.band_price * editingAmountSale.quantity) !== Number(newAmountInput) && (
+                  <button
+                    type="button"
+                    onClick={() => setNewAmountInput(String(editingAmountSale.band_price * editingAmountSale.quantity))}
+                    className="px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700 transition-colors cursor-pointer"
+                  >
+                    Reset to Full (₹{(editingAmountSale.band_price * editingAmountSale.quantity).toLocaleString('en-IN')})
+                  </button>
+                )}
+              </div>
+
+              {/* Words description */}
+              {Number(newAmountInput) > 0 ? (
+                <p className="text-xs text-amber-300 font-medium pt-1">
+                  {numberToIndianWords(Number(newAmountInput))}
+                </p>
+              ) : Number(newAmountInput) === 0 ? (
+                <p className="text-xs text-purple-300 font-medium pt-1">
+                  🎁 Complimentary / Free passes — ₹0 collection expected.
+                </p>
+              ) : null}
+            </div>
+
+            {/* Optional Reason / Note */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-slate-300">
+                Reason / Notes (Optional)
+              </Label>
+              <Input
+                value={amountReasonInput}
+                onChange={(e) => setAmountReasonInput(e.target.value)}
+                placeholder="e.g. Last-minute discount, sponsor guest, complimentary"
+                className="h-10 bg-[#0B1724] border-slate-800 text-white text-xs rounded-xl"
+              />
+            </div>
+
+            <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-[11px] text-slate-300 leading-relaxed">
+              ℹ️ Updating this amount updates the database records for this transaction. The main dashboard financial tally and team collections will immediately reflect this adjusted receivable amount.
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setEditingAmountSale(null)}
+              className="border-slate-800 bg-[#0B1724] text-slate-300 hover:bg-slate-800 rounded-xl text-xs"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={isSavingAmount || newAmountInput === '' || Number(newAmountInput) < 0}
+              onClick={handleSaveAmount}
+              className="bg-[#E58327] hover:bg-amber-600 text-slate-950 font-black rounded-xl text-xs gap-1.5"
+            >
+              {isSavingAmount ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+              <span>Save & Update Amount</span>
             </Button>
           </DialogFooter>
         </DialogContent>

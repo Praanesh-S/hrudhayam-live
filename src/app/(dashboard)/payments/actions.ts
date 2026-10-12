@@ -102,3 +102,15 @@ export async function markPaymentReceived(paymentId: string, referenceNo: string
     return { success: false, error: err.message || 'Failed to update payment.' };
   }
 }
+
+/**
+ * Update amount for a specific payment record in Payments & Collections.
+ */
+export async function updatePaymentAmountAction(
+  paymentId: string,
+  newAmount: number,
+  reason?: string
+) {
+  const { updatePendingSaleAmount } = await import('@/app/(dashboard)/sell/actions');
+  return updatePendingSaleAmount([paymentId], newAmount, reason);
+}

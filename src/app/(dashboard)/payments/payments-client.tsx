@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { AuthUser } from '@/lib/auth/session';
-import { markPaymentReceived } from './actions';
+import { markPaymentReceived, updatePaymentAmountAction } from './actions';
 import { formatPendingPaymentReminder, getWhatsAppUrl } from '@/lib/whatsapp';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,9 +16,19 @@ import {
   Send, 
   Loader2, 
   AlertCircle,
-  FileCheck
+  FileCheck,
+  Pencil,
+  Coins
 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
 
 interface PaymentsClientProps {
   payments: any[];
@@ -26,8 +37,14 @@ interface PaymentsClientProps {
 }
 
 export function PaymentsClient({ payments, upiVpa }: PaymentsClientProps) {
+  const router = useRouter();
+  const [currentPayments, setCurrentPayments] = useState<any[]>(payments);
   const [filter, setFilter] = useState<'all' | 'pending' | 'received'>('all');
   const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    setCurrentPayments(payments);
+  }, [payments]);
 
   // Confirm payment modal
   const [confirmingPayment, setConfirmingPayment] = useState<any | null>(null);
@@ -35,6 +52,63 @@ export function PaymentsClient({ payments, upiVpa }: PaymentsClientProps) {
   const [selectedMode, setSelectedMode] = useState<string>('upi');
   const [isLoading, setIsLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Edit pending amount modal
+  const [editingPaymentAmount, setEditingPaymentAmount] = useState<any | null>(null);
+  const [newPaymentAmountInput, setNewPaymentAmountInput] = useState<string>('');
+  const [amountReasonInput, setAmountReasonInput] = useState<string>('');
+  const [isSavingAmount, setIsSavingAmount] = useState<boolean>(false);
+
+  const handleOpenEditAmount = (payment: any) => {
+    setEditingPaymentAmount(payment);
+    setNewPaymentAmountInput(payment.amount !== undefined ? String(payment.amount) : '0');
+    setAmountReasonInput('');
+  };
+
+  const handleSavePaymentAmount = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!editingPaymentAmount) return;
+
+    const val = Number(newPaymentAmountInput);
+    if (isNaN(val) || val < 0) {
+      setStatusMessage({ type: 'error', text: 'Please enter a valid non-negative amount.' });
+      return;
+    }
+
+    setIsSavingAmount(true);
+    setStatusMessage(null);
+
+    const res = await updatePaymentAmountAction(
+      editingPaymentAmount.id,
+      val,
+      amountReasonInput.trim() || undefined
+    );
+    setIsSavingAmount(false);
+
+    if (res.success) {
+      const pName =
+        editingPaymentAmount.pass?.donor_name ||
+        editingPaymentAmount.sponsor?.sponsor_name ||
+        editingPaymentAmount.club?.club_name ||
+        'Donor';
+      setStatusMessage({
+        type: 'success',
+        text: `Amount updated to ₹${val.toLocaleString('en-IN')} for ${pName}.`,
+      });
+      setCurrentPayments((prev) =>
+        prev.map((p) =>
+          p.id === editingPaymentAmount.id ? { ...p, amount: val } : p
+        )
+      );
+      setEditingPaymentAmount(null);
+      router.refresh();
+    } else {
+      setStatusMessage({
+        type: 'error',
+        text: res.error || 'Failed to update payment amount.',
+      });
+    }
+  };
 
   const handleConfirm = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,15 +122,23 @@ export function PaymentsClient({ payments, upiVpa }: PaymentsClientProps) {
 
     if (res.success) {
       setStatusMessage({ type: 'success', text: 'Payment confirmed as received!' });
+      setCurrentPayments((prev) =>
+        prev.map((p) =>
+          p.id === confirmingPayment.id
+            ? { ...p, status: 'received', reference_no: referenceNo.trim(), mode: selectedMode }
+            : p
+        )
+      );
       setConfirmingPayment(null);
       setReferenceNo('');
+      router.refresh();
     } else {
       setStatusMessage({ type: 'error', text: res.error || 'Failed to confirm payment.' });
     }
   };
 
   // Filter payments
-  const filteredPayments = payments.filter((p) => {
+  const filteredPayments = currentPayments.filter((p) => {
     const matchesFilter = filter === 'all' || p.status === filter;
     const name = p.pass?.donor_name || p.sponsor?.sponsor_name || p.club?.club_name || '';
     const phone = p.pass?.donor_phone || p.sponsor?.contact_phone || p.club?.contact_phone || '';
@@ -74,13 +156,15 @@ export function PaymentsClient({ payments, upiVpa }: PaymentsClientProps) {
   });
 
   // KPI Metrics
-  const totalReceived = payments
+  const totalReceived = currentPayments
     .filter((p) => p.status === 'received')
     .reduce((sum, p) => sum + (p.amount || 0), 0);
 
-  const totalPending = payments
+  const totalPending = currentPayments
     .filter((p) => p.status === 'pending')
     .reduce((sum, p) => sum + (p.amount || 0), 0);
+
+  const totalCollectable = totalReceived + totalPending;
 
   return (
     <div className="space-y-6">
@@ -93,7 +177,22 @@ export function PaymentsClient({ payments, upiVpa }: PaymentsClientProps) {
       )}
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-[#131F2E] border border-amber-500/30 p-5 rounded-2xl shadow-lg">
+          <div className="flex justify-between items-center">
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+              Total Collectable
+            </span>
+            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-400">
+              Target
+            </span>
+          </div>
+          <div className="text-3xl font-black text-white font-mono mt-1">
+            ₹{totalCollectable.toLocaleString('en-IN')}
+          </div>
+          <span className="text-xs text-slate-400 mt-1 block">Confirmed + Pending Receivables</span>
+        </div>
+
         <div className="bg-[#131F2E] border border-slate-800 p-5 rounded-2xl">
           <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
             Total Confirmed Received
@@ -101,17 +200,17 @@ export function PaymentsClient({ payments, upiVpa }: PaymentsClientProps) {
           <div className="text-3xl font-black text-emerald-400 font-mono mt-1">
             ₹{totalReceived.toLocaleString('en-IN')}
           </div>
-          <span className="text-xs text-slate-500">Verified with bank / cash vouchers</span>
+          <span className="text-xs text-slate-500 mt-1 block">Verified with bank / cash vouchers</span>
         </div>
 
         <div className="bg-[#131F2E] border border-slate-800 p-5 rounded-2xl">
           <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-            Total Pending Pledges
+            Total Pending Receivables
           </span>
           <div className="text-3xl font-black text-[#E8913A] font-mono mt-1">
             ₹{totalPending.toLocaleString('en-IN')}
           </div>
-          <span className="text-xs text-slate-500">Follow-up required</span>
+          <span className="text-xs text-slate-500 mt-1 block">Active follow-up pledges</span>
         </div>
 
         <div className="bg-[#131F2E] border border-slate-800 p-5 rounded-2xl">
@@ -291,14 +390,35 @@ export function PaymentsClient({ payments, upiVpa }: PaymentsClientProps) {
 
                 <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto border-t sm:border-t-0 pt-3 sm:pt-0 border-slate-800">
                   <div className="text-left sm:text-right">
-                    <div className="text-2xl font-black font-mono text-[#E8913A]">
-                      ₹{p.amount?.toLocaleString('en-IN')}
+                    <div className="flex items-center gap-1.5 sm:justify-end">
+                      <div className="text-2xl font-black font-mono text-[#E8913A]">
+                        ₹{p.amount?.toLocaleString('en-IN')}
+                      </div>
+                      {!isReceived && (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditAmount(p)}
+                          title="Edit pending amount to collect"
+                          className="p-1 rounded-md text-slate-400 hover:text-amber-400 hover:bg-amber-400/10 transition-colors"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
 
                   <div className="flex items-center gap-2">
                     {!isReceived && (
                       <>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleOpenEditAmount(p)}
+                          className="bg-[#1A2839] hover:bg-[#253950] border-slate-700 text-amber-400 font-bold text-xs h-9 px-3 rounded-xl gap-1"
+                        >
+                          <Pencil className="w-3.5 h-3.5" /> Edit (₹)
+                        </Button>
+
                         {phone && (
                           <a
                             href={getWhatsAppUrl(phone, reminderMsg)}
@@ -330,6 +450,99 @@ export function PaymentsClient({ payments, upiVpa }: PaymentsClientProps) {
           })
         )}
       </div>
+
+      {/* Dedicated Adjust Pending Payment Amount Dialog */}
+      <Dialog open={!!editingPaymentAmount} onOpenChange={(open) => !open && setEditingPaymentAmount(null)}>
+        <DialogContent className="bg-[#102030] border border-slate-800 text-white max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-black text-white flex items-center gap-2">
+              <CreditCard className="w-5 h-5 text-amber-400" />
+              <span>Adjust Pending Payment Amount</span>
+            </DialogTitle>
+            <DialogDescription className="text-slate-400 text-xs mt-1">
+              Change receivable amount for{' '}
+              <strong>
+                {editingPaymentAmount?.pass?.donor_name ||
+                  editingPaymentAmount?.sponsor?.sponsor_name ||
+                  editingPaymentAmount?.club?.club_name ||
+                  'Donor'}
+              </strong>{' '}
+              ({editingPaymentAmount?.pass ? `Pass ${editingPaymentAmount.pass.pass_code}` : 'Pending Pledge'}).
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleSavePaymentAmount} className="space-y-4 py-2">
+            <div className="p-3 bg-[#0B1724] rounded-xl border border-slate-800/80 space-y-1 text-xs">
+              <div className="flex justify-between text-slate-400">
+                <span>Currently Recorded Amount:</span>
+                <span className="font-mono text-amber-400 font-bold">
+                  ₹{editingPaymentAmount?.amount?.toLocaleString('en-IN')}
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs font-bold text-slate-200">
+                New Amount to Collect (₹) <span className="text-red-400">*</span>
+              </Label>
+              <div className="relative">
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-base">₹</span>
+                <Input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={newPaymentAmountInput}
+                  onChange={(e) => setNewPaymentAmountInput(e.target.value)}
+                  className="h-12 pl-8 bg-[#0B1724] border-slate-700 text-white font-mono text-lg font-bold rounded-xl focus:border-amber-500"
+                  placeholder="0 for complimentary"
+                  autoFocus
+                />
+              </div>
+
+              <div className="flex flex-wrap gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setNewPaymentAmountInput('0')}
+                  className="px-2.5 py-1 rounded-lg text-xs font-bold bg-purple-950/60 border border-purple-700/50 text-purple-300 hover:bg-purple-900/60 transition-colors cursor-pointer"
+                >
+                  🎁 Complimentary (₹0)
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold text-slate-300">
+                Reason / Note for Change (optional)
+              </Label>
+              <Input
+                placeholder="e.g. Last-minute discount, Complimentary pass, Concession..."
+                value={amountReasonInput}
+                onChange={(e) => setAmountReasonInput(e.target.value)}
+                className="h-10 bg-[#0B1724] border-slate-700 text-white rounded-xl text-xs"
+              />
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setEditingPaymentAmount(null)}
+                className="border-slate-800 bg-[#0B1724] text-slate-300 hover:bg-slate-800 rounded-xl text-xs"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={isSavingAmount || !newPaymentAmountInput}
+                className="bg-[#E58327] hover:bg-amber-600 text-slate-950 font-black rounded-xl text-xs"
+              >
+                {isSavingAmount ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
+                Save Amount
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

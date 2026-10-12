@@ -921,3 +921,143 @@ export async function checkPaymentReferenceUniquenessAction(
   }
 }
 
+/**
+ * Update Pending Payment Amount for a transaction or individual pass(es).
+ * Supports discounts, negotiated rates, and complimentary tickets (₹0).
+ * Updates both public.payments.amount and public.passes.price, splits evenly across bulk passes,
+ * and records an immutable audit log.
+ */
+export async function updatePendingSaleAmount(
+  paymentIds: string[],
+  newTotalAmount: number,
+  reason?: string
+) {
+  try {
+    const user = await requireUser();
+    const adminClient = createAdminClient();
+
+    if (!paymentIds || !Array.isArray(paymentIds) || paymentIds.length === 0) {
+      return { success: false, error: 'No payment IDs provided.' };
+    }
+
+    const cleanAmount = Math.max(0, Math.round(Number(newTotalAmount)));
+    if (isNaN(cleanAmount)) {
+      return { success: false, error: 'Please provide a valid amount (₹).' };
+    }
+
+    // 1. Fetch payments and linked passes
+    const { data: payments, error: fetchErr } = await adminClient
+      .from('payments')
+      .select('*, passes(*)')
+      .in('id', paymentIds);
+
+    if (fetchErr || !payments || payments.length === 0) {
+      return { success: false, error: 'Payment records not found.' };
+    }
+
+    // 2. Permission check: Group Admin can only edit within their team
+    if (user.role !== 'super_admin' && user.role !== 'system_admin' && user.groupId) {
+      for (const p of payments) {
+        const pass = (p as any).passes;
+        if (pass?.seller_member_id) {
+          const { data: seller } = await adminClient
+            .from('members')
+            .select('group_id')
+            .eq('id', pass.seller_member_id)
+            .single();
+          if (seller && seller.group_id !== user.groupId) {
+            return { success: false, error: 'You can only edit pending amounts for your own team.' };
+          }
+        }
+      }
+    }
+
+    // 3. Ensure payments are pending (cannot alter already received funds without separate refund/reversal)
+    const alreadyReceived = payments.filter((p) => p.status === 'received');
+    if (alreadyReceived.length > 0) {
+      return {
+        success: false,
+        error: 'Cannot edit amount for payments that are already marked as received.',
+      };
+    }
+
+    // 4. Calculate distribution across payments
+    const count = payments.length;
+    const baseAmount = Math.floor(cleanAmount / count);
+    const remainder = cleanAmount - (baseAmount * count);
+    const now = new Date().toISOString();
+
+    const oldTotal = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
+    const donorName = (payments[0] as any)?.passes?.donor_name || 'Donor';
+
+    // 5. Update each payment and linked pass
+    for (let i = 0; i < count; i++) {
+      const p = payments[i];
+      const itemAmount = i === 0 ? baseAmount + remainder : baseAmount;
+      const oldAmount = p.amount || 0;
+
+      const { error: payErr } = await adminClient
+        .from('payments')
+        .update({
+          amount: itemAmount,
+          legacy_discount_data: {
+            original_amount: oldAmount,
+            adjusted_amount: itemAmount,
+            adjusted_at: now,
+            adjusted_by: user.fullName || user.id,
+            reason: reason?.trim() || null,
+          },
+          updated_at: now,
+        })
+        .eq('id', p.id);
+
+      if (payErr) {
+        console.error('Error updating payment amount:', payErr);
+        throw payErr;
+      }
+
+      if (p.pass_id) {
+        await adminClient
+          .from('passes')
+          .update({
+            price: itemAmount,
+            updated_at: now,
+          })
+          .eq('id', p.pass_id);
+      } else if (p.sponsor_id) {
+        await adminClient
+          .from('sponsors')
+          .update({
+            amount: itemAmount,
+            updated_at: now,
+          })
+          .eq('id', p.sponsor_id);
+      }
+    }
+
+    // 6. Record audit log
+    await logAudit(user.id, 'PENDING_AMOUNT_UPDATED', 'payments', paymentIds[0], {
+      donor_name: donorName,
+      payment_ids: paymentIds,
+      pass_count: count,
+      old_total: oldTotal,
+      new_total: cleanAmount,
+      reason: reason?.trim() || 'Amount adjustment (discount/complimentary)',
+      adjusted_by: user.fullName || user.id,
+    });
+
+    // 7. Revalidate all financial views
+    revalidatePath('/sell');
+    revalidatePath('/payments');
+    revalidatePath('/dashboard');
+    revalidatePath('/leaderboard');
+    revalidatePath('/reports');
+    revalidatePath('/guests');
+
+    return { success: true, updatedAmount: cleanAmount };
+  } catch (err: any) {
+    console.error('Error updating pending sale amount:', err);
+    return { success: false, error: err.message || 'Failed to update pending amount.' };
+  }
+}
+

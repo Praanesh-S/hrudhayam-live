@@ -15,7 +15,9 @@ import {
   PlusCircle, 
   Heart,
   Trophy,
-  Download
+  Download,
+  CheckCircle2,
+  ArrowRight
 } from 'lucide-react';
 
 export const metadata = {
@@ -37,6 +39,11 @@ export default async function DashboardPage() {
 
   const occupancyPercent = metrics.totalCapacity > 0
     ? Math.round((metrics.totalSold / metrics.totalCapacity) * 100)
+    : 0;
+
+  const totalCollectable = metrics.totalCollectable || (metrics.totalCollected + metrics.totalPending);
+  const collectionPercent = totalCollectable > 0
+    ? Math.min(100, Math.round((metrics.totalCollected / totalCollectable) * 100))
     : 0;
 
   return (
@@ -81,6 +88,74 @@ export default async function DashboardPage() {
         </div>
       </div>
 
+      {/* 2. Post-Concert Financial Collection & Tally Overview */}
+      <div className="bg-gradient-to-r from-[#131F2E] via-[#16273b] to-[#131F2E] p-6 rounded-3xl border border-amber-500/30 shadow-2xl space-y-5">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="space-y-1.5">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold tracking-wider uppercase">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>Concert Concluded • Financial Tally Active</span>
+            </div>
+            <h2 className="text-2xl font-black text-white tracking-tight">
+              Total Amount Collectable
+            </h2>
+            <p className="text-xs text-slate-400 max-w-xl">
+              Real-time financial tally combining verified collections and active pending pledges (reflecting discounts and complimentary passes).
+            </p>
+          </div>
+
+          <div className="text-left md:text-right bg-[#0B1724]/80 px-5 py-3 rounded-2xl border border-slate-800">
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Total Collectable Target</span>
+            <div className="text-3xl sm:text-4xl font-black text-[#E8913A] font-mono tracking-tight mt-0.5">
+              ₹{totalCollectable.toLocaleString('en-IN')}
+            </div>
+            <span className="text-[11px] text-slate-400 font-medium">
+              Confirmed ₹{metrics.totalCollected.toLocaleString('en-IN')} + Pending ₹{metrics.totalPending.toLocaleString('en-IN')}
+            </span>
+          </div>
+        </div>
+
+        {/* Realization Bar & Action Pills */}
+        <div className="space-y-2 pt-3 border-t border-slate-800">
+          <div className="flex justify-between items-center text-xs">
+            <span className="text-slate-300 font-medium">
+              Realized Collection Progress: <strong className="text-emerald-400 font-mono">{collectionPercent}%</strong>
+            </span>
+            <span className="text-slate-400 font-mono text-[11px]">
+              ₹{metrics.totalCollected.toLocaleString('en-IN')} / ₹{totalCollectable.toLocaleString('en-IN')}
+            </span>
+          </div>
+          <div className="w-full bg-slate-900 h-2.5 rounded-full overflow-hidden border border-slate-800">
+            <div 
+              className="bg-gradient-to-r from-emerald-500 to-[#E8913A] h-full transition-all duration-500" 
+              style={{ width: `${collectionPercent}%` }} 
+            />
+          </div>
+          <div className="flex flex-wrap items-center justify-between text-xs text-slate-400 pt-1 gap-2">
+            <div className="flex items-center gap-4 flex-wrap">
+              <span className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 inline-block" />
+                <span>Confirmed Collected: <strong className="text-emerald-400 font-mono font-bold">₹{metrics.totalCollected.toLocaleString('en-IN')}</strong></span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-[#E8913A] inline-block" />
+                <span>Pending Receivables: <strong className="text-[#E8913A] font-mono font-bold">₹{metrics.totalPending.toLocaleString('en-IN')}</strong></span>
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <Link href="/sell" className="inline-flex items-center gap-1 text-xs font-bold text-amber-400 hover:text-amber-300">
+                <span>Adjust Pending Amounts</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </Link>
+              <span className="text-slate-700">|</span>
+              <Link href="/payments" className="inline-flex items-center gap-1 text-xs font-bold text-emerald-400 hover:text-emerald-300">
+                <span>Payments & Collections</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* 3. Top High-Level Campaign KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -109,12 +184,17 @@ export default async function DashboardPage() {
           </div>
         </div>
 
-        <div className="bg-[#131F2E] border border-slate-800 p-5 rounded-2xl">
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Available Remaining</span>
-          <div className="text-3xl font-black text-emerald-400 font-mono mt-1">
-            {metrics.totalRemaining}
+        <div className="bg-[#131F2E] border border-amber-500/30 p-5 rounded-2xl shadow-lg">
+          <div className="flex justify-between items-center">
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Collectable</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-400">
+              Finance
+            </span>
           </div>
-          <span className="text-[11px] text-slate-400 mt-3 block">Across 4 Price Bands</span>
+          <div className="text-3xl font-black text-white font-mono mt-1 truncate">
+            ₹{totalCollectable.toLocaleString('en-IN')}
+          </div>
+          <span className="text-[11px] text-slate-400 mt-3 block">Collected + Pending Receivables</span>
         </div>
 
         <div className="bg-[#131F2E] border border-slate-800 p-5 rounded-2xl">
